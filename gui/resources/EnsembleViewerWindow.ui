@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Form</class>
+ <widget class="QWidget" name="Form">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>728</width>
+    <height>609</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout_2">
+   <item>
+    <layout class="QVBoxLayout" name="verticalLayout" stretch="0,1,1">
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <item>
+        <widget class="QToolButton" name="toolScan">
+         <property name="text">
+          <string>Scan</string>
+         </property>
+         <property name="autoRaise">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QToolButton" name="toolComposite">
+         <property name="text">
+          <string>Cmpste</string>
+         </property>
+         <property name="autoRaise">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="Line" name="line">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QToolButton" name="toolFindFormula">
+         <property name="text">
+          <string>Fmla</string>
+         </property>
+         <property name="autoRaise">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QToolButton" name="toolMeasureLoss">
+         <property name="text">
+          <string>NLoss</string>
+         </property>
+         <property name="autoRaise">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QToolButton" name="toolClear">
+         <property name="text">
+          <string>...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="MSPlotWidget" name="ms1_plot" native="true"/>
+     </item>
+     <item>
+      <widget class="MSPlotWidget" name="ms2_plot" native="true"/>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayout_2">
+     <property name="bottomMargin">
+      <number>0</number>
+     </property>
+     <item>
+      <spacer name="horizontalSpacer_2">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="checkShowMiscPlots">
+       <property name="text">
+        <string>Show misc. plots</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="verticalLayout_3">
+     <property name="topMargin">
+      <number>0</number>
+     </property>
+     <item>
+      <widget class="QTabWidget" name="tabWidget">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <property name="tabBarAutoHide">
+        <bool>false</bool>
+       </property>
+       <widget class="QWidget" name="tab">
+        <attribute name="title">
+         <string>Chromatogram</string>
+        </attribute>
+        <layout class="QVBoxLayout" name="verticalLayout_4" stretch="1,0">
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="ChromPlotWidget" name="chromPlotWidget" native="true"/>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_3">
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QCheckBox" name="checkNormalize">
+             <property name="text">
+              <string>Normalize</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="checkDiff">
+             <property name="text">
+              <string>Diff</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="horizontalSpacer_3">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+       <widget class="QWidget" name="tab_2">
+        <attribute name="title">
+         <string>Correlation Plot</string>
+        </attribute>
+        <layout class="QVBoxLayout" name="verticalLayout_5">
+         <item>
+          <widget class="PlotWidget" name="corrPlotWidget" native="true"/>
+         </item>
+        </layout>
+       </widget>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+  <action name="actionScan">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Scan</string>
+   </property>
+   <property name="shortcut">
+    <string>Shift+S</string>
+   </property>
+  </action>
+  <action name="actionFindFormula">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Fmla</string>
+   </property>
+   <property name="shortcut">
+    <string>Shift+F</string>
+   </property>
+  </action>
+  <action name="actionMeasureLoss">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>NLoss</string>
+   </property>
+   <property name="shortcut">
+    <string>Shift+L</string>
+   </property>
+  </action>
+  <action name="actionComposite">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Cmpste</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+C</string>
+   </property>
+  </action>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>MSPlotWidget</class>
+   <extends>QWidget</extends>
+   <header>gui.widgets.MSPlotWidget</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ChromPlotWidget</class>
+   <extends>QWidget</extends>
+   <header>gui.widgets.ChromPlotWidget</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>PlotWidget</class>
+   <extends>QWidget</extends>
+   <header>pyqtgraph</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>checkShowMiscPlots</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>tabWidget</receiver>
+   <slot>setVisible(bool)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>645</x>
+     <y>244</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>466</x>
+     <y>265</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>
