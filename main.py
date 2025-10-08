@@ -6,10 +6,6 @@ from PyQt5.QtWidgets import QApplication
 
 import sys
 
-print(
-        f"Hi. __name__: {__name__}"
-)
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
