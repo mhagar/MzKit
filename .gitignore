@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# PyCharm
+.idea
+
+# Virtual environments
+.venv
+
+# data files
+*.mzML
+*.mzml
+*.mzk
+*.ms
+*.csv
+
+# Scratch
+trash
+making_rogers_plots
+Notes.md
+
+
+

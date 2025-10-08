@@ -1,0 +1,13 @@
+name: MzKit
+
+dependencies:
+
+  - numpy=2.2
+  - pyqtgraph=0.13.7
+  - pip=25.1
+  - scipy=1.15.1
+  - pandas=2.2.3
+  - pip:
+      - PyQt5==5.15
+      - PyQt5-stubs==5.15.6
+      - pyopenms==3.3.0
