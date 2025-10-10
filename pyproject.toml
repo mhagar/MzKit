@@ -9,4 +9,10 @@ dependencies = [
     "pyopenms>=3.4.0",
     "pyqtgraph>=0.13.7",
     "scipy<=1.15.1",
+    "scipy-stubs==1.16.2.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
 ]
