@@ -508,7 +508,7 @@ class SampleViewer(
             uuid = self.selected_spectrum_sample_uuid
 
         injection = self.model.getSample(uuid).injection
-        scan_array = injection.get_scan_array(ms_level)
+        scan_array: 'ScanArray' = injection.get_scan_array(ms_level)
 
         spectrum_array: SpectrumArray = scan_array.get_spectrum(
             scan_num=idx,

@@ -22,7 +22,7 @@ TEST_SOLN_2_MZK_PATH = Path(
 
 # Cycloheximide M+H
 TARGET_MZ = 282.17024
-TARGET_RT = 147
+TARGET_RT = 145
 
 
 @pytest.fixture
