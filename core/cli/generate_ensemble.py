@@ -61,24 +61,33 @@ def get_cofeature_ensembles(
     ensembles: list[Ensemble] = []
     for search_ftr_ptr in search_ftr_ptrs:
         # This conditiona lis just for testing:
-        if use_rel_intsy:
-            print("UNGROUPED ENSEMBLE")
-            ensemble = get_ungrouped_ensemble(
-                injection=injection,
-                search_ftr_ptr=search_ftr_ptr,
-                min_intsy=min_intsy,
-            )
+        # if use_rel_intsy:
+        #     print("UNGROUPED ENSEMBLE")
+        #     ensemble = get_ungrouped_ensemble(
+        #         injection=injection,
+        #         search_ftr_ptr=search_ftr_ptr,
+        #         min_intsy=min_intsy,
+        #     )
+        #
+        # else:
+        #     print("GROUPED ENSEMBLE")
+        #     ensemble = get_cofeature_ensemble(
+        #         injection=injection,
+        #         min_intsy=min_intsy,
+        #         ms1_corr_threshold=ms1_corr_threshold,
+        #         ms2_corr_threshold=ms2_corr_threshold,
+        #         search_ftr_ptr=search_ftr_ptr,
+        #         use_rel_intsy=use_rel_intsy,
+        #     )
 
-        else:
-            print("GROUPED ENSEMBLE")
-            ensemble = get_cofeature_ensemble(
-                injection=injection,
-                min_intsy=min_intsy,
-                ms1_corr_threshold=ms1_corr_threshold,
-                ms2_corr_threshold=ms2_corr_threshold,
-                search_ftr_ptr=search_ftr_ptr,
-                use_rel_intsy=use_rel_intsy,
-            )
+        ensemble = get_cofeature_ensemble(
+            injection=injection,
+            min_intsy=min_intsy,
+            ms1_corr_threshold=ms1_corr_threshold,
+            ms2_corr_threshold=ms2_corr_threshold,
+            search_ftr_ptr=search_ftr_ptr,
+            use_rel_intsy=use_rel_intsy,
+        )
 
         ensembles.append(
             ensemble

@@ -6,8 +6,9 @@ import uuid
 from typing import Literal, Optional, TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import NDArray
 
-from core.utils.array_types import to_spec_arr, to_chrom_arr
+from core.utils.array_types import to_spec_arr, to_ensemble_arr
 
 if TYPE_CHECKING:
     from core.data_structs import(
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
         EnsembleUUID
     )
 
-    from core.utils.array_types import SpectrumArray
+    from core.utils.array_types import SpectrumArray, ChromArray, EnsembleArray
 
 @dataclass
 class Ensemble:
@@ -35,11 +36,11 @@ class Ensemble:
     base_scan_num: int = field(init=False, repr=False)
 
     # Calculated and cached on demand
-    _ms1_spectrum: 'SpectrumArray' = field(
-        default=None, init=False, repr=False
+    _ms1_cofeature_mz_lane_idxs: np.ndarray[int, ...] = field(
+        default=None, init=False, repr=False,
     )
-    _ms2_spectrum: 'SpectrumArray' = field(
-        default=None, init=False, repr=False
+    _ms2_cofeature_mz_lane_idxs: np.ndarray[int, ...] = field(
+        default=None, init=False, repr=False,
     )
 
     def __repr__(self):
@@ -79,21 +80,62 @@ class Ensemble:
         self.injection = injection
         self._populate_attrs()
 
+
     def get_spectrum(
         self,
         ms_level: Literal[1, 2],
-    ) -> 'SpectrumArray':
-        spec: 'SpectrumArray' = {
-            1: self._ms1_spectrum,
-            2: self._ms2_spectrum,
-        }[ms_level]
+        scan_num: Optional[int] = None,
+        scan_rt: Optional[float] = None,
+    ) -> NDArray:
+        scan_array = self._get_scan_array(ms_level)
 
-        if not spec:
-            spec: 'SpectrumArray' = self._generate_spectrum(
-                ms_level=ms_level,
+        if not scan_num:
+            if not scan_rt:
+                raise ValueError(
+                    "Neither scan_idx nor scan_rt arguments given"
+                )
+
+            scan_num = scan_array.rt_to_scan_num(
+                scan_rt
             )
 
-        return spec
+        # Get mz lane idxs corresponding to the ftr_ptrs in this ensemble
+        mz_lane_idxs: NDArray[int] = self._get_mz_lane_idxs(ms_level)
+        spec = scan_array.get_spectrum(scan_num)
+
+        if mz_lane_idxs.size == 0:
+            # TODO: Sometimes an ensemble has no MS2 features..?
+            print("EMPTY SPEC!!")
+            return spec
+
+        return spec[mz_lane_idxs]
+
+
+    def _get_mz_lane_idxs(
+        self,
+        ms_level: Literal[1, 2],
+        force_refresh: bool = False,
+    ) -> NDArray[int]:
+        """
+        Returns the mz_lane idxs of the ftr_ptrs comprising
+        this ensemble. This retrieval is done only once, then
+        cached for later use, unless 'force_refresh' is True
+        """
+        # Select based on MS1 or MS2
+        mz_lane_idxs, cofeatures = {
+            1: (self._ms1_cofeature_mz_lane_idxs, self.ms1_cofeatures),
+            2: (self._ms2_cofeature_mz_lane_idxs, self.ms2_cofeatures),
+        }[ms_level]
+
+        if not force_refresh and mz_lane_idxs:
+            return mz_lane_idxs
+
+        mz_lane_idxs: NDArray[int] = np.array(
+            [x.mz_lane_idx for x in cofeatures]
+        )
+
+        return mz_lane_idxs
+
 
     def get_chromatograms(
         self,
@@ -199,8 +241,12 @@ class Ensemble:
         self,
         ms_level: Literal[1, 2],
     ) -> 'SpectrumArray':
-        scan_array = self._get_scan_array(ms_level=ms_level)
-        ftr_ptrs = self._get_cofeatures(ms_level=ms_level)
+        scan_array = self._get_scan_array(
+            ms_level=ms_level
+        )
+        ftr_ptrs = self._get_cofeatures(
+            ms_level=ms_level
+        )
 
         mz_values: list[float] = []
         intsy_values: list[float] = []
@@ -217,9 +263,3 @@ class Ensemble:
             mz_arr=np.array(mz_values),
             intsy_arr=np.array(intsy_values),
         )
-
-        # print(
-        #     f"base_scan_num: {self.base_scan_num}"
-        # )
-
-        # return scan_array.get_spectrum(self.base_scan_num)

@@ -255,9 +255,12 @@ class ScanArray:
         )
 
     def get_spectrum(
-            self,
-            scan_num: Optional[int] = None,
+        self,
+        scan_num: Optional[int] = None,
     ) -> SpectrumArray:
+        """
+        Given a scan number, retrieves the spectrum corresponding to that scan
+        """
         return to_spec_arr(
             mz_arr=self.mz_arr_csc._getcol(scan_num).toarray().flatten(),
             intsy_arr=self.intsy_arr_csc._getcol(scan_num).toarray().flatten(),
@@ -281,6 +284,10 @@ class ScanArray:
         mass_lane_idx: int,
         scan_idxs: Optional[np.ndarray[...,]] = None,
     ) -> 'FeaturePointer':
+        """
+        'Low level API' - makes a feature pointer using mass_lane_idx
+        and scan_idx.
+        """
         if scan_idxs is None:
             scan_idxs = np.arange(
                 0,
@@ -292,6 +299,47 @@ class ScanArray:
             scan_idxs=scan_idxs,
             source_array_uuid=self.uuid,
             source_array_shape=self.mz_arr.shape,
+        )
+
+    def extract_feature_pointer(
+        self,
+        target_mz: float,
+        mz_window: float,
+        target_rt: float,
+        rt_window: float,
+    ) -> 'FeaturePointer':
+        """
+        Given a target mz/window and target rt/window, generates a
+        feature pointer
+        """
+        # Get mz lane idxs
+        mz_lane_idxs: np.ndarray = np.where(
+            np.abs(
+                target_mz - self.mz_lane_label
+            ) < mz_window
+        )[0]
+
+        # Get the one with highest intsy
+        mz_lane_idx: int = mz_lane_idxs[
+            (
+                self.intsy_arr[mz_lane_idxs]
+                .max(1)     # Get max of each mz lane
+                .argmax()   # Get the mz lane with highest max
+            )
+        ]
+
+        # Get scan idxs
+        rts: np.ndarray = self.rt_arr[
+            np.abs(self.rt_arr - target_rt) < rt_window
+        ]
+
+        scan_idxs: np.ndarray[int] = np.array(
+            [self.rt_to_scan_num(rt) for rt in rts],
+        )
+
+        return self.make_feature_pointer(
+            mass_lane_idx=mz_lane_idx,
+            scan_idxs=scan_idxs,
         )
 
     def __repr__(self):

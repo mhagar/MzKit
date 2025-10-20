@@ -48,7 +48,12 @@ def find_cofeatures_within_scan_array(
         scan_end=search_target.scan_end,
         use_rel_intsy=use_rel_intsy,
     )
-    search_xic = search_target.get_intensity_values(scan_array)
+    search_xic = search_target.get_intensity_values(
+        scan_array
+    )
+
+    if use_rel_intsy:
+        search_xic /= search_xic.max()
 
     # Calculate their Pearson correlation coeffs against search_target xic
     correlations = _calculate_pearson_correlations(
@@ -150,23 +155,55 @@ def _filter_candidates_by_correlation(
 
 def _calculate_pearson_correlations(
     candidate_xics: np.ndarray[..., ...],
-    search_xic: np.ndarray[...,],
+    search_xic: np.ndarray,
+    min_nonzero_overlap: int = 4,  # TODO: Expose to user
 ) -> np.ndarray:
-    candidate_xics_centered = (
-        candidate_xics -
-        candidate_xics.mean(
-            axis=1,
-            keepdims=True,
-        )
-    )
+    """
+    Calculate Pearson correlation considering only non-zero elements.
 
-    search_xic_centered = search_xic - search_xic.mean()
-    numerator = np.dot(candidate_xics_centered, search_xic_centered)
-    denominator = np.sqrt(
-        np.sum(candidate_xics_centered ** 2, axis=1)
-        * np.sum(search_xic_centered ** 2)
-    )
-    correlations = numerator / denominator
+    :param candidate_xics: 2D array of candidate XICs (n_candidates x n_timepoints)
+    :param search_xic: 1D array of the search XIC (n_timepoints)
+    :param min_nonzero_overlap: Minimum number of overlapping non-zero elements
+                                 required for a valid correlation (default: 3)
+    :return: Array of correlation coefficients (NaN for insufficient overlap)
+    """
+    n_candidates = candidate_xics.shape[0]
+    correlations = np.full(n_candidates, np.nan)
+
+    for i in range(n_candidates):
+        candidate_xic = candidate_xics[i]
+
+        # Find positions where both arrays are non-zero
+        nonzero_mask = (candidate_xic != 0) & (search_xic != 0)
+        n_overlap = np.sum(nonzero_mask)
+
+        # If insufficient overlap, leave as NaN
+        if n_overlap < min_nonzero_overlap:
+            continue
+
+        # Extract non-zero overlapping values
+        candidate_nonzero = candidate_xic[nonzero_mask]
+        search_nonzero = search_xic[nonzero_mask]
+
+        # Calculate means of non-zero elements
+        candidate_mean = candidate_nonzero.mean()
+        search_mean = search_nonzero.mean()
+
+        # Center the values
+        candidate_centered = candidate_nonzero - candidate_mean
+        search_centered = search_nonzero - search_mean
+
+        # Calculate correlation
+        numerator = np.dot(candidate_centered, search_centered)
+        denominator = np.sqrt(
+            np.sum(candidate_centered ** 2) * np.sum(search_centered ** 2)
+        )
+
+        # Avoid division by zero
+        if denominator == 0:
+            correlations[i] = np.nan
+        else:
+            correlations[i] = numerator / denominator
 
     return correlations
 
@@ -244,6 +281,8 @@ def find_cofeatures_across_scan_array(
     search_xic: np.ndarray[...,] = search_target.get_intensity_values(
         source_scan_array,
     )
+    if use_rel_intsy:
+        search_xic /= search_xic.max()
 
     interp_search_xic: np.ndarray = np.interp(
         x=rt_target,
@@ -273,6 +312,9 @@ def find_cofeatures_across_scan_array(
                 scan_idxs=target_scan_idxs, # type: ignore
             ),
         )
+
+    if len(matching_cofeatures) == 0:
+        print('hi')
 
     return matching_cofeatures
 

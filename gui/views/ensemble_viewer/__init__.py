@@ -1,21 +1,27 @@
-import numpy as np
 from PyQt5 import QtWidgets, QtCore
+from PyQt5.QtCore import Qt
 import pyqtgraph as pg
 
 from core.data_structs import Ensemble
-from gui.widgets.ChromPlotWidget import ChromGraphicItem
 from gui.resources.EnsembleViewerWindow import Ui_Form
 from gui.views.ensemble_viewer.tools import (
     ToolType, ToolStage, Mode,
     ToolManager,
 )
-from gui.views.ensemble_viewer.find_formula import Controller as FmlaCtrlr
+from gui.views.ensemble_viewer.find_formula import FindFormulaController
+from gui.views.ensemble_viewer.tool_controllers import (
+    BaseToolController,
+    MeasureLossController,
+)
+from gui.views.ensemble_viewer.plot_managers import (
+    ChromatogramPlotManager,
+    SpectrumPlotManager,
+)
 
 from typing import TYPE_CHECKING, Optional, Literal
 
 if TYPE_CHECKING:
     from core.interfaces.data_sources import SampleDataSource
-    from gui.widgets.MSPlotWidget import MSPlotWidget
 
 
 class EnsembleViewer(
@@ -33,13 +39,24 @@ class EnsembleViewer(
         self.setupUi(self)
         self.data_source = data_source
         self.tool_manager = ToolManager()
-        self.find_formula_ctlr = FmlaCtrlr(self)
 
         self.ensemble: Optional['Ensemble'] = None
 
-        self.base_chrom: Optional[np.ndarray] = None
-        self.ms1_chroms: list[np.ndarray] = []
-        self.ms2_chroms: list[np.ndarray] = []
+        # Plot managers
+        self.chrom_manager = ChromatogramPlotManager(
+            chrom_plot_widget=self.chromPlotWidget,
+            corr_plot_widget=self.corrPlotWidget,
+        )
+        self.spectrum_manager = SpectrumPlotManager(
+            ms1_plot_widget=self.ms1_plot,
+            ms2_plot_widget=self.ms2_plot,
+        )
+
+        # Tool controllers
+        self.tool_controllers: dict[ToolType, BaseToolController] = {
+            ToolType.FINDFORMULA: FindFormulaController(self),
+            ToolType.MEASURELOSS: MeasureLossController(self),
+        }
 
         self._setup_plots()
         self._setup_actions()
@@ -48,49 +65,33 @@ class EnsembleViewer(
         self._hide_misc_plots()
 
     def _connect_signals(self):
-        self.ms1_plot.sigMSSignalClicked.connect(
+        # Connect spectrum manager signals
+        self.spectrum_manager.sigMS1SignalClicked.connect(
             self.on_ms1_signal_clicked
         )
 
-        self.ms2_plot.sigMSSignalClicked.connect(
+        self.spectrum_manager.sigMS2SignalClicked.connect(
             self.on_ms2_signal_clicked
         )
 
+        # Connect transform checkboxes
         self.checkNormalize.clicked.connect(
-            self.update_chromatogram_plot
+            self._on_transform_settings_changed
         )
 
-        self.checkNormalize.clicked.connect(
-            self.populate_chromatogram_plot
+        self.checkDiff.clicked.connect(
+            self._on_transform_settings_changed
         )
 
         # *** TOOLS ***
-        self.find_formula_ctlr.sigSignalSelected.connect(
-            self._update_signal_selection_graphics
-        )
-
-        self.find_formula_ctlr.sigSelectionCleared.connect(
-            self._clear_signal_selection_graphics
-        )
-
-        # FOR TESTING:
-        self.tool_manager.sigToolChanged.connect(
-            lambda tool: print(
-                f"Tool changed to: {tool}"
+        # Connect all tool controller signals
+        for controller in self.tool_controllers.values():
+            controller.sigSignalSelected.connect(
+                self._update_signal_selection_graphics
             )
-        )
-
-        self.tool_manager.sigStageChanged.connect(
-            lambda stage: print(
-                f"Stage changed to: {stage}"
+            controller.sigSelectionCleared.connect(
+                self._clear_signal_selection_graphics
             )
-        )
-
-        self.tool_manager.sigModeChanged.connect(
-            lambda mode: print(
-                f"Mode changed to: {mode}"
-            )
-        )
 
     def _setup_plots(self):
         """
@@ -205,21 +206,17 @@ class EnsembleViewer(
         tool: ToolType,
     ):
         """
-        Controls this widget's behaviour when tool is changed
+        Controls this widget's behaviour when tool is changed.
+        Delegates to the appropriate tool controller.
         """
         if tool == ToolType.NONE:
             return
 
-        match tool:
-            case ToolType.FINDFORMULA:
-                self.tool_manager.request_next_stage()
+        # Delegate to the tool controller
+        controller = self.tool_controllers.get(tool)
+        if controller:
+            controller.on_activated()
 
-            case ToolType.MEASURELOSS:
-                pass
-
-        print(
-            f"EnsembleViewer: changed to {tool}"
-        )
         self._update_tool_buttons()
         self._clear_signal_selection_graphics()
 
@@ -227,21 +224,33 @@ class EnsembleViewer(
         self,
         stage: ToolStage,
     ):
-        print(
-            f"EnsembleViewer: changed to {stage}"
-        )
+        """
+        Notify active tool controller of stage change
+        """
         self._update_tool_buttons()
+
+        # Notify active controller
+        active_tool = self.tool_manager.active_tool
+        controller = self.tool_controllers.get(active_tool)
+        if controller:
+            controller.on_stage_changed(stage)
 
     def on_tool_mode_changed(
         self,
         mode: Mode
     ):
-        print(
-            f"EnsembleViewer: changed to {mode}"
-        )
         self._update_tool_buttons()
 
     def on_tool_reset(self):
+        """
+        Called when tool is reset/cancelled
+        """
+        # Notify active controller
+        active_tool = self.tool_manager.active_tool
+        controller = self.tool_controllers.get(active_tool)
+        if controller:
+            controller.on_cancelled()
+
         self._update_tool_buttons()
         self._clear_signal_selection_graphics()
 
@@ -281,11 +290,11 @@ class EnsembleViewer(
     ):
         self.ensemble = ensemble
 
-        self.base_chrom = self.ensemble.get_base_chromatogram(ms_level=1)
-        self.ms1_chroms = self.ensemble.get_chromatograms(ms_level=1)
-        self.ms1_chroms = self.ensemble.get_chromatograms(ms_level=1)
+        # Update plot managers with ensemble
+        self.chrom_manager.set_ensemble(ensemble)
+        self.spectrum_manager.set_ensemble(ensemble)
 
-        self.populate_plots()
+        self.initialize_plots()
 
     def _hide_misc_plots(self):
         self.checkShowMiscPlots.setChecked(False)
@@ -295,132 +304,59 @@ class EnsembleViewer(
         self.checkShowMiscPlots.setChecked(True)
         self.tabWidget.setVisible(True)
 
-    def populate_plots(
+    def initialize_plots(
         self,
     ):
         if not self.ensemble:
             return
 
-        self.populate_spectrum_plot()
-        self.populate_chromatogram_plot()
-        # self.populate_correlation_plot()
+        self._update_transform_settings()
 
-    def populate_spectrum_plot(self):
-        # Add spectrum arrays
-        for i, plot in enumerate(
-            [self.ms1_plot, self.ms2_plot, ]
-        ):
-            plot.setSpectrumArray(
-                self.ensemble.get_spectrum(ms_level=i + 1)  # type: ignore
-            )
-
-    def populate_chromatogram_plot(self):
-        self.chromPlotWidget.setChromArray(
-            self._apply_chrom_transforms(self.base_chrom)
+        # Populate plots using managers
+        self.spectrum_manager.populate_spectrum_plot(
+            scan_rt=self.ensemble.peak_rt
+        )
+        self.chrom_manager.populate_chromatogram_plot(
+            peak_rt=self.ensemble.peak_rt
         )
 
-    def update_chromatogram_plot(
+        # Connect chromatogram selector signal
+        self.chromPlotWidget.pi.selection_indicator.sigPositionChanged.connect(
+            self.onChromatogramSelectorMoved
+        )
+
+    def onChromatogramSelectorMoved(
         self,
+        slide_selector: 'pg.InfiniteLine',
     ):
-        # Repopulate chromatogram plot
-        self.chromPlotWidget.clearPeaks()
-        colors = {
-            1: 'm',
-            2: 'g',
-        }
-
-        for idx, chrom in enumerate(self.ms1_chroms):
-            self.chromPlotWidget.addPeak(
-                        chrom=self._apply_chrom_transforms(chrom),
-                        uuid=idx,
-                        color=colors[1],
-                    )
-
-        for idx, chrom in enumerate(self.ms2_chroms):
-            idx += len(self.ms1_chroms)
-            self.chromPlotWidget.addPeak(
-                chrom=self._apply_chrom_transforms(chrom),
-                uuid=idx,
-                color=colors[2],
-            )
-
-    def _apply_chrom_transforms(
-        self,
-        chrom: np.ndarray,
-    ) -> np.ndarray:
         """
-        Applies transforms based on which checkboxes are activated
-        (i.e. normalize, diff,)
+        Called when user moves the chromatogram selector
         """
-        _chrom = chrom.copy()
-        if self._normalize_is_checked():
-            _chrom = _normalize_chrom_arr(chrom)
+        new_xpos = slide_selector.getXPos()
 
-        if self._diff_is_checked():
-            _chrom = _diff_chrom_arr(chrom)
+        if new_xpos != self.chrom_manager.selected_rt:
 
-        return _chrom
+            self.spectrum_manager.populate_spectrum_plot(scan_rt=new_xpos)
+            self.chrom_manager.selected_rt = new_xpos
 
-    def _normalize_is_checked(self) -> bool:
-        return self.checkNormalize.isChecked()
-
-    def _diff_is_checked(self) -> bool:
-        return self.checkDiff.isChecked()
-
-    def populate_correlation_plot(self):
+    def _on_transform_settings_changed(self):
         """
-        Populates a 'correlation plot' where X is the
-        intensity of the base cofeature, and Y is the intensity of the
-        target co feature
-        :return:
+        Called when normalize or diff checkboxes change
         """
-        self.corrPlotWidget.plotItem.clear()
+        self._update_transform_settings()
+        self.chrom_manager.populate_chromatogram_plot(
+            peak_rt=self.ensemble.peak_rt
+        )
+        self.chrom_manager.update_chromatogram_plot()
 
-        colors = {
-            1: (255, 0, 255),  # Magenta
-            2: (0, 255, 0),    # Green
-        }
-
-        # Get base feature chrom
-        base_chrom = self.ensemble.get_base_chromatogram(ms_level=1)
-        base_intsy = self.ensemble.base_intsy
-
-        for ms_level in (1, 2):
-            ms_level: Literal[1, 2]
-
-            chroms = self.ensemble.get_chromatograms(
-                ms_level=ms_level,
-            )
-
-            for chrom in chroms:
-
-                ref_arr, tgt_arr = _match_chrom_arrys(
-                    reference_chrom=base_chrom, # type: ignore
-                    target_chrom=chrom, # type: ignore
-                    normalize=True,
-                )
-
-                opacity: int = max(
-                    int(
-                        255 * max(chrom['intsy']) / base_intsy
-                    ),
-
-                    20,
-                )
-
-                pen = pg.mkPen(
-                    *colors[ms_level], opacity
-                )
-
-                chrom_graphic = ChromGraphicItem(
-                    intsy_arr=tgt_arr['intsy'],
-                    rt_arr=ref_arr['intsy'],  # Note how I'm filling rt arg with intsy
-                    pen=pen,
-                )
-
-                self.corrPlotWidget.addItem(
-                    chrom_graphic
-                )
+    def _update_transform_settings(self):
+        """
+        Update the chromatogram manager with current transform settings
+        """
+        self.chrom_manager.set_transform_settings(
+            normalize=self.checkNormalize.isChecked(),
+            diff=self.checkDiff.isChecked(),
+        )
 
     def on_ms1_signal_clicked(
         self,
@@ -430,51 +366,59 @@ class EnsembleViewer(
         Called when user clicks on a signal in the MS1 spectrum
         """
         spec_idx, mz = data
-        print(
-            f"Clicked: {data}"
-        )
 
         if not spec_idx:
             return
 
-        self.find_formula_ctlr.handle_ms_signal_clicked(
-            data=data,
-            ms_level=1,
-        )
+        # Delegate to active tool controller
+        active_tool = self.tool_manager.active_tool
+        controller = self.tool_controllers.get(active_tool)
+        if controller:
+            controller.handle_ms_signal_clicked(
+                data=data,
+                ms_level=1,
+            )
 
-        self.ms1_chroms = self.ensemble.get_chromatograms(
+        # Get chromatograms and update manager
+        ms1_chroms = self.ensemble.get_chromatograms(
             ms_level=1,
             idxs=slice(spec_idx, spec_idx + 1),
         )
+        self.chrom_manager.set_ms1_chroms(ms1_chroms)
 
-        self.update_chromatogram_plot()
+        self.chrom_manager.update_chromatogram_plot()
+        self.chrom_manager.update_correlation_plot()
 
     def on_ms2_signal_clicked(
         self,
         data: tuple[int, float], # [spec_idx, mz_float]
     ):
         """
-        Called when user clicks on a signal in the MS1 spectrum
+        Called when user clicks on a signal in the MS2 spectrum
         """
         spec_idx, mz = data
-        print(
-            f"Clicked: {data}"
-        )
 
         if not spec_idx:
             return
 
-        self.find_formula_ctlr.handle_ms_signal_clicked(
-            data=data,
-            ms_level=2,
-        )
+        # Delegate to active tool controller
+        active_tool = self.tool_manager.active_tool
+        controller = self.tool_controllers.get(active_tool)
+        if controller:
+            controller.handle_ms_signal_clicked(
+                data=data,
+                ms_level=2,
+            )
 
-        self.ms2_chroms = self.ensemble.get_chromatograms(
+        # Get chromatograms and update manager
+        ms2_chroms = self.ensemble.get_chromatograms(
             ms_level=2,
             idxs=slice(spec_idx, spec_idx + 1),
         )
+        self.chrom_manager.set_ms2_chroms(ms2_chroms)
 
-        self.update_chromatogram_plot()
+        self.chrom_manager.update_correlation_plot()
+        self.chrom_manager.update_chromatogram_plot()
 
     def _update_signal_selection_graphics(
         self,
@@ -486,125 +430,58 @@ class EnsembleViewer(
         Called whenever user selects/deselects a signal.
         Called with `level = None` if user switches from MS1 <-> MS2 spectrum
         """
-        # Get the plot widget the selection is in
-        plot_widget: 'MSPlotWidget' = {
-            1: self.ms1_plot,
-            2: self.ms2_plot,
-            None: None,
-        }.get(level)
-
-        if not plot_widget:
+        if not level:
             return
 
-        # Tell MSPlotWidget to add/remove marker
-        match is_selected:
-            case True:
-                plot_widget.add_signal_marker(
-                    spec_idx=data[0]
-                )
-
-            case False:
-                plot_widget.remove_signal_marker(
-                    spec_idx=data[0]
-                )
-
+        # Delegate to spectrum manager
+        if is_selected:
+            self.spectrum_manager.add_signal_marker(
+                spec_idx=data[0],
+                ms_level=level,
+            )
+        else:
+            self.spectrum_manager.remove_signal_marker(
+                spec_idx=data[0],
+                ms_level=level,
+            )
 
     def _clear_signal_selection_graphics(self):
-        for plot_widget in (self.ms1_plot, self.ms2_plot):
-            plot_widget: 'MSPlotWidget'
-            plot_widget.clear_signal_markers()
+        """Clear all signal selection markers"""
+        self.spectrum_manager.clear_signal_markers()
 
+    def keyPressEvent(self, event):
+        """
+        Intercepts key press events:
+        - Escape to exit tool modes
+        - Enter to accept tool config
+        """
+        if event.key() == Qt.Key_Escape:
+            if self.tool_manager.active_tool != ToolType.NONE:
+                # Cancel current tool and return to view mode
+                self.tool_manager.request_cancel()
+                event.accept()
+                return
 
-def _match_chrom_arrys(
-    reference_chrom: np.ndarray[float],
-    target_chrom: np.ndarray[float],
-    normalize: bool,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Given a reference chrom_array and a target chrom_array,
-    returns a slice where the two chroms overlap in time.
+        elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            self._on_press_enter()
+            event.accept()
+            return
 
-    :param reference_chrom:
-    :param target_chrom:
-    :param normalize: If true, normalizes intensities of both chroms
-    such that their maximum intsy = 1
-    :return:
-    """
-    # Slice two arrays into just the overlapping regions
-    (ref_start, ref_end), (tgt_start, tgt_end) = _find_overlap_region(
-        reference_chrom['rt'],
-        target_chrom['rt'],
-    )
+        # Pass event for normal handling
+        super().keyPressEvent(event)
 
-    ref_arr = reference_chrom[ref_start: ref_end].copy()
-    tgt_arr = target_chrom[tgt_start: tgt_end].copy()
+    def _on_press_enter(
+        self,
+    ):
+        """
+        Called when user hits Enter.
+        Delegates to active tool controller.
+        """
+        if not self.tool_manager.active_stage == ToolStage.SELECTING:
+            return
 
-    # Normalize both of them to 1
-    if normalize:
-        ref_arr['intsy'] = ref_arr['intsy'] / max(ref_arr['intsy'])
-        tgt_arr['intsy'] = tgt_arr['intsy'] / max(tgt_arr['intsy'])
-
-    return ref_arr, tgt_arr
-
-
-def _find_overlap_region(
-    arr_a: np.ndarray[float],
-    arr_b: np.ndarray[float],
-) -> Optional[tuple[tuple, tuple]]:
-    """
-    Returns indices where arr_a and arr_b overlap in values,
-    assuming that both arrays contain monotonically increasing elements
-
-    (i.e. represent successive retention time values)
-    """
-    start = max(arr_a[0], arr_b[0])
-    end = min(arr_a[-1], arr_b[-1])
-
-    if start > end:
-        return None  # No overlap
-
-    # Find indices for overlapping region
-    a_start_idx = np.searchsorted(
-        arr_a, start, side='left',
-    )
-
-    a_end_idx = np.searchsorted(
-        arr_a, end, side='right',
-    )
-
-    b_start_idx = np.searchsorted(
-        arr_b, start, side='left',
-    )
-
-    b_end_idx = np.searchsorted(
-        arr_b, end, side='right',
-    )
-
-    return (a_start_idx, a_end_idx), (b_start_idx, b_end_idx)
-
-
-def _normalize_chrom_arr(
-    chrom: np.ndarray
-) -> np.ndarray:
-    """
-    Returns a chrom array that's been normalized such that
-    maximum intensity = 1.0
-    """
-    arr = chrom.copy()
-    arr['intsy'] = arr['intsy']/max(arr['intsy'])
-
-    return arr
-
-
-def _diff_chrom_arr(
-    chrom: np.ndarray
-) -> np.ndarray:
-    """
-    Returns a chrom array that's been 'differentiated'
-    by subtracting each intsy value from the next
-    """
-    arr = chrom.copy()
-    arr['intsy'] = np.diff(arr['intsy'], append=0.0)
-
-    return arr
-
+        # Delegate to active tool controller
+        active_tool = self.tool_manager.active_tool
+        controller = self.tool_controllers.get(active_tool)
+        if controller:
+            controller.on_enter_pressed()

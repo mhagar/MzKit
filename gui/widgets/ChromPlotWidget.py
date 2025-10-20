@@ -190,7 +190,27 @@ class ChromPlotWidget(pg.PlotWidget):
         """
         Adds a slider widget that can be used to select specific scans
         """
-        self.pi.setSliderSelector(xpos=xpos)
+        self.pi.setSliderSelector(
+            xpos=xpos
+        )
+
+    def setSliderSelectorMovable(
+        self,
+        enabled: bool,
+    ):
+        """
+        Makes the slider selector widget movable/unmovable
+        """
+        self.pi.selection_indicator.setMovable(enabled)
+        if enabled:
+            self.pi.selection_indicator.setHoverPen(
+                pg.mkPen('yellow')
+            )
+
+        if not enabled:
+            self.pi.selection_indicator.setHoverPen(
+                None
+            )
 
     def setSelectionIndicator(
         self,

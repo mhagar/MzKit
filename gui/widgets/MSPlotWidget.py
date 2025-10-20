@@ -120,9 +120,9 @@ class MSPlotWidget(pg.PlotWidget):
         signal_marker = pg.TargetItem(
             pos=(mz, intsy),
             movable=False,
-            symbol='t',
-            brush=pg.mkBrush('r'),
-            pen=pg.mkPen('r'),
+            # symbol='t',
+            # brush=pg.mkBrush('r'),
+            # pen=pg.mkPen('r'),
         )
 
         self.signal_markers[spec_idx] = signal_marker

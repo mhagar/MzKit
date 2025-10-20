@@ -255,28 +255,28 @@ class SampleController(QtCore.QObject):
         self,
         ensembles: list['Ensemble'],
     ):
-        print("Sending SIRIUS input to clipboard")
-
-        app = QtWidgets.QApplication.instance()
-        clipboard = app.clipboard()
-
-        output = []
-        for idx, ensemble in enumerate( ensembles ):
-            output.append(f">compound {idx}")
-            output.append(f">parentmass {ensemble.base_mz}")
-            output.append("")
-            output.append(">ms1")
-            output += _format_spectrum_array(
-                arr=ensemble.get_spectrum(ms_level=1)
-            )
-
-            output.append("")
-            output.append(">collision 60")
-            output += _format_spectrum_array(
-                arr=ensemble.get_spectrum(ms_level=2)
-            )
-
-        clipboard.setText("\n".join(output))
+        # print("Sending SIRIUS input to clipboard")
+        #
+        # app = QtWidgets.QApplication.instance()
+        # clipboard = app.clipboard()
+        #
+        # output = []
+        # for idx, ensemble in enumerate( ensembles ):
+        #     output.append(f">compound {idx}")
+        #     output.append(f">parentmass {ensemble.base_mz}")
+        #     output.append("")
+        #     output.append(">ms1")
+        #     output += _format_spectrum_array(
+        #         arr=ensemble.get_spectrum(ms_level=1)
+        #     )
+        #
+        #     output.append("")
+        #     output.append(">collision 60")
+        #     output += _format_spectrum_array(
+        #         arr=ensemble.get_spectrum(ms_level=2)
+        #     )
+        #
+        # clipboard.setText("\n".join(output))
 
         # self._plot_ensemble_spectra(ensembles[0])
         self.sigViewEnsemble.emit(ensembles[0])
@@ -289,56 +289,57 @@ class SampleController(QtCore.QObject):
         """
         Temporary function; need to work fast to make shit for roger
         """
-        pg.setConfigOption('background', 'w')
-        pg.setConfigOption('foreground', 'k')
-        for i in [1, 2]:
-            i: Literal[1, 2]
-            print(f"Showing MS{i} plot")
-            spec_array = ensemble.get_spectrum(ms_level=i)
-
-            mz, intsy = zero_pad_arrays(
-                spec_array['mz'],
-                spec_array['intsy'],
-            )
-
-            pg.plot(
-                mz,
-                intsy,
-                connect='pairs',
-                title=f'MS{i} plot',
-            )
-
-        print("Showing chrom plot")
-        scan_array = ensemble.injection.get_scan_array(1)
-        bpc_array = scan_array.get_bpc(
-            mz_range=(
-                ensemble.base_mz - 0.05,
-                ensemble.base_mz + 0.05,
-            ),
-            # rt_range=(
-            #     ensemble.peak_rt - 50,
-            #     ensemble.peak_rt + 50
-            # )
-        )
-
-
-        pw = pg.plot(
-            title='Ensemble Plot'
-        )
-        for ftr_ptr in ensemble.ms1_cofeatures:
-            if ftr_ptr.get_max_intsy(scan_array) < 2e3:
-                continue
-
-            intsy = ftr_ptr.get_intensity_values(scan_array)
-            rt = ftr_ptr.get_retention_times(scan_array)
-
-            pw.plot(
-                rt,
-                intsy,
-                symbol='o',
-                symbolSize=2,
-                symbolPen=None,
-            )
+        return
+        # pg.setConfigOption('background', 'w')
+        # pg.setConfigOption('foreground', 'k')
+        # for i in [1, 2]:
+        #     i: Literal[1, 2]
+        #     print(f"Showing MS{i} plot")
+        #     spec_array = ensemble.get_spectrum(ms_level=i)
+        #
+        #     mz, intsy = zero_pad_arrays(
+        #         spec_array['mz'],
+        #         spec_array['intsy'],
+        #     )
+        #
+        #     pg.plot(
+        #         mz,
+        #         intsy,
+        #         connect='pairs',
+        #         title=f'MS{i} plot',
+        #     )
+        #
+        # print("Showing chrom plot")
+        # scan_array = ensemble.injection.get_scan_array(1)
+        # bpc_array = scan_array.get_bpc(
+        #     mz_range=(
+        #         ensemble.base_mz - 0.05,
+        #         ensemble.base_mz + 0.05,
+        #     ),
+        #     # rt_range=(
+        #     #     ensemble.peak_rt - 50,
+        #     #     ensemble.peak_rt + 50
+        #     # )
+        # )
+        #
+        #
+        # pw = pg.plot(
+        #     title='Ensemble Plot'
+        # )
+        # for ftr_ptr in ensemble.ms1_cofeatures:
+        #     if ftr_ptr.get_max_intsy(scan_array) < 2e3:
+        #         continue
+        #
+        #     intsy = ftr_ptr.get_intensity_values(scan_array)
+        #     rt = ftr_ptr.get_retention_times(scan_array)
+        #
+        #     pw.plot(
+        #         rt,
+        #         intsy,
+        #         symbol='o',
+        #         symbolSize=2,
+        #         symbolPen=None,
+        #     )
 
 
     def get_samples_by_index(
