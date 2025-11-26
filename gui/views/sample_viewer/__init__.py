@@ -106,6 +106,7 @@ class SampleViewer(
         self._add_status_bar()
         self._setup_views()
         self._setup_tool_signals()
+        self._setup_manual_xic_signals()
 
 
     # ***CONFIGURATION/QT SIGNALS***
@@ -135,7 +136,6 @@ class SampleViewer(
         self.viewSampleTree.setModel(
             self.model,
         )
-
 
         # Configure chrom plot stack view
         self.viewSampleStack.setModel(
@@ -249,6 +249,15 @@ class SampleViewer(
         # Fingerprint visibility toggling:
         self.toolFprint.setDefaultAction(
             self.actionToggleFprint
+        )
+
+    def _setup_manual_xic_signals(self):
+        self.spinExtractTarget.valueChanged.connect(
+            self.on_manual_extraction_region_entry
+        )
+
+        self.spinExtractWindow.valueChanged.connect(
+            self.on_manual_extraction_region_entry
         )
 
     # ***STATE TOGGLING***
@@ -559,8 +568,23 @@ class SampleViewer(
             case XICMode.BPC:
                 self.viewSampleStack.set_extraction_range(region)
 
+
             case XICMode.XIC:
                 self.viewSampleStack.set_extraction_range(region)
+
+    def on_manual_extraction_region_entry(self):
+        """
+        Called when user manually changes the spinners
+        """
+        # Calculate what the display region would be
+        region = (
+            self.spinExtractTarget.value() - self.spinExtractWindow.value(),
+            self.spinExtractTarget.value() + self.spinExtractWindow.value(),
+        )
+        self.plotMS.move_region_selector(
+            region
+        )
+
 
     # ***FINGERPRINT***
     def show_fprint_display_params_menu(self):
@@ -814,8 +838,6 @@ class SampleViewer(
                     item.setCheckState(
                         Qt.CheckState.Checked
                     )
-
-
 
     def request_ensemble_generation(
         self,

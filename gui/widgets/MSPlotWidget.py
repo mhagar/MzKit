@@ -15,6 +15,7 @@ from PyQt5 import QtCore, QtGui
 from PyQt5.QtCore import QRectF
 
 from typing import Optional
+import uuid
 
 
 class MSPlotWidget(pg.PlotWidget):
@@ -49,7 +50,7 @@ class MSPlotWidget(pg.PlotWidget):
                 }
             ),
         )
-        self.setBackground(None)
+        # self.setBackground(None)
         self.pi : MSPlotItem = self.getPlotItem()
 
         self.sigSpectrumArrayChanged.connect(
@@ -108,7 +109,6 @@ class MSPlotWidget(pg.PlotWidget):
         :param spec_idx:
         :return:
         """
-        print('adding signal marker')
         spectrum_array = self.pi.spectrum_array
 
         if spectrum_array is None:
@@ -120,9 +120,6 @@ class MSPlotWidget(pg.PlotWidget):
         signal_marker = pg.TargetItem(
             pos=(mz, intsy),
             movable=False,
-            # symbol='t',
-            # brush=pg.mkBrush('r'),
-            # pen=pg.mkPen('r'),
         )
 
         self.signal_markers[spec_idx] = signal_marker
@@ -144,6 +141,62 @@ class MSPlotWidget(pg.PlotWidget):
             self.pi.removeItem(signal_marker)
 
         self.signal_markers.clear()
+
+
+    # Anchored label API methods
+    def add_anchored_label(
+        self,
+        spec_idx: int,
+        text: str,
+        label_id: Optional[str] = None,
+    ) -> str:
+        """
+        Adds an anchored label at the specified spectrum array index.
+
+        :param spec_idx: Index into the current spectrum_array
+        :param text: Text content for the label (e.g., chemical formula)
+        :param label_id: Optional unique identifier. Auto-generated if not provided.
+        :return: The label_id of the created label
+        """
+        return self.pi.label_manager.add_anchored_label(
+            spec_idx,
+            text,
+            label_id,
+        )
+
+    def remove_anchored_label(
+        self,
+        label_id: str,
+    ) -> bool:
+        """
+        Removes an anchored label by its ID.
+
+        :param label_id: The unique identifier of the label to remove
+        :return: True if label was found and removed, False otherwise
+        """
+        return self.pi.label_manager.remove_anchored_label(label_id)
+
+    def update_anchored_label(
+        self,
+        label_id: str,
+        text: Optional[str] = None,
+        spec_idx: Optional[int] = None,
+    ) -> bool:
+        """
+        Updates an existing anchored label's text and/or position.
+
+        :param label_id: The unique identifier of the label to update
+        :param text: New text content (if None, keeps existing text)
+        :param spec_idx: New spectrum index (if None, keeps existing position)
+        :return: True if label was found and updated, False otherwise
+        """
+        return self.pi.label_manager.update_anchored_label(label_id, text, spec_idx)
+
+    def clear_anchored_labels(self) -> None:
+        """
+        Removes all anchored labels from the plot.
+        """
+        self.pi.label_manager.clear_anchored_labels()
 
 
     def on_extraction_region_changed(
@@ -268,7 +321,7 @@ class MSPlotWidget(pg.PlotWidget):
                     QtCore.Qt.CrossCursor
                 )
 
-        if spectrum_idx:
+        if spectrum_idx is not None:
             self.hovered_ms_signal = (spectrum_idx, mz)
             self.sigMSSignalHovered.emit(self.hovered_ms_signal)
 
@@ -281,7 +334,9 @@ class MSPlotWidget(pg.PlotWidget):
     def MSSignalClicked(
         self,
     ):
-        self.sigMSSignalClicked.emit(self.hovered_ms_signal)
+        self.sigMSSignalClicked.emit(
+            self.hovered_ms_signal
+        )
 
         match self._tool_type:
             case ToolType.GETCOMPOUND:
@@ -384,6 +439,8 @@ class MSPlotItem(pg.PlotItem):
         spectrum_array: SpectrumArray
     ) -> None:
         self.spectrum_array = spectrum_array
+        # Clear anchored labels when spectrum changes
+        self.label_manager.clear_anchored_labels()
         self.plot_widget.sigSpectrumArrayChanged.emit()
 
 
@@ -682,6 +739,9 @@ class MSLabelManager:
         self.absolute_intsy_threshold = 0
         self.peak_data: Optional[SpectrumArray] = None
 
+        # Anchored labels - user-controlled annotations tied to spectrum indices
+        self.anchored_labels: dict[str, dict] = {}
+
         # Connect to view change signals
         vb = self.plotitem.vb
         vb.sigRangeChanged.connect(self.on_view_changed)
@@ -731,6 +791,128 @@ class MSLabelManager:
                 data['intsy'].max() * self.intsy_threshold
         )
 
+    def add_anchored_label(
+            self,
+            spec_idx: int,
+            text: str,
+            label_id: Optional[str] = None,
+    ) -> str:
+        """
+        Adds an anchored label at the specified spectrum array index.
+
+        :param spec_idx: Index into the current spectrum_array
+        :param text: Text content for the label (e.g., chemical formula)
+        :param label_id: Optional unique identifier. Auto-generated if not provided.
+        :return: The label_id of the created label
+        """
+        if self.peak_data is None or self.peak_data['mz'].size == 0:
+            raise ValueError("No spectrum data available")
+
+        if spec_idx < 0 or spec_idx >= len(self.peak_data['mz']):
+            raise IndexError(f"spec_idx {spec_idx} out of range for spectrum array")
+
+        # Generate label_id if not provided
+        if label_id is None:
+            label_id = str(uuid.uuid4())
+
+        # Get position from spectrum array
+        mz: float = self.peak_data['mz'][spec_idx]
+        intsy: float = self.peak_data['intsy'][spec_idx]
+
+        # Convert newlines to HTML line breaks
+        html_text = text.replace('\n', '<br>')
+
+        # Create the text item
+        textitem = create_textitem(
+            text=html_text,
+            pos=(mz, intsy),
+            level=1.5,
+        )
+
+        # Add to plot
+        self.plotitem.addItem(textitem)
+
+        # Store in anchored labels
+        self.anchored_labels[label_id] = {
+            'spec_idx': spec_idx,
+            'text': text,
+            'textitem': textitem,
+        }
+
+        return label_id
+
+    def remove_anchored_label(
+            self,
+            label_id: str,
+    ) -> bool:
+        """
+        Removes an anchored label by its ID.
+
+        :param label_id: The unique identifier of the label to remove
+        :return: True if label was found and removed, False otherwise
+        """
+        if label_id not in self.anchored_labels:
+            return False
+
+        # Remove from plot
+        label_data = self.anchored_labels[label_id]
+        self.plotitem.removeItem(label_data['textitem'])
+
+        # Remove from storage
+        del self.anchored_labels[label_id]
+
+        return True
+
+    def update_anchored_label(
+            self,
+            label_id: str,
+            text: Optional[str] = None,
+            spec_idx: Optional[int] = None,
+    ) -> bool:
+        """
+        Updates an existing anchored label's text and/or position.
+
+        :param label_id: The unique identifier of the label to update
+        :param text: New text content (if None, keeps existing text)
+        :param spec_idx: New spectrum index (if None, keeps existing position)
+        :return: True if label was found and updated, False otherwise
+        """
+        if label_id not in self.anchored_labels:
+            return False
+
+        if self.peak_data is None or self.peak_data['mz'].size == 0:
+            raise ValueError("No spectrum data available")
+
+        label_data = self.anchored_labels[label_id]
+
+        # Update text if provided
+        if text is not None:
+            label_data['text'] = text
+            # Convert newlines to HTML line breaks
+            html_text = text.replace('\n', '<br>')
+            label_data['textitem'].setHtml(html_text)
+
+        # Update position if provided
+        if spec_idx is not None:
+            if spec_idx < 0 or spec_idx >= len(self.peak_data['mz']):
+                raise IndexError(f"spec_idx {spec_idx} out of range for spectrum array")
+
+            label_data['spec_idx'] = spec_idx
+            mz = self.peak_data['mz'][spec_idx]
+            intsy = self.peak_data['intsy'][spec_idx]
+            label_data['textitem'].setPos(mz, intsy)
+
+        return True
+
+    def clear_anchored_labels(self) -> None:
+        """
+        Removes all anchored labels from the plot.
+        """
+        for label_data in self.anchored_labels.values():
+            self.plotitem.removeItem(label_data['textitem'])
+
+        self.anchored_labels.clear()
+
     def check_peak_overlap(
             self,
             label_bounds: QRectF
@@ -758,10 +940,14 @@ class MSLabelManager:
         self.update_visibility()
 
     def update_visibility(self):
+        # Ensure anchored labels are always visible
+        for label_data in self.anchored_labels.values():
+            label_data['textitem'].setVisible(True)
+
         if not self.labels:
             return
 
-        # Reset visibility
+        # Reset visibility for auto-generated labels
         for label in self.labels:
             label.setVisible(True)
 
@@ -777,6 +963,7 @@ class MSLabelManager:
         visible_bounds = []
         hidden_count = 0
 
+        # Only apply overlap detection to auto-generated labels
         for label in working_labels:
             label: pg.TextItem
             current_bounds = self.get_label_bounds(label)
@@ -786,7 +973,7 @@ class MSLabelManager:
                 label.setVisible(False)
                 hidden_count += 1
                 continue
-            
+
             # Check for overlap with peaks
             if self.check_peak_overlap(current_bounds):
                 label.setVisible(False)

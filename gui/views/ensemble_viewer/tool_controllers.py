@@ -11,15 +11,13 @@ if TYPE_CHECKING:
 
 class BaseToolController(QtCore.QObject):
     """
-    Base class for tool controllers.
-
     Each tool should extend this class and override the methods
-    to implement tool-specific behavior.
+    to implement tool-specific behavior
     """
-
-    # Signals that tool controllers can emit
     sigSignalSelected = QtCore.pyqtSignal(
-        tuple,  # data (spec_idx, mz)
+        float,  # mz
+        float,  # intsy
+        int,    # spec_idx
         int,    # ms_level
         bool,   # is_selected
     )
@@ -64,7 +62,7 @@ class BaseToolController(QtCore.QObject):
 
     def handle_ms_signal_clicked(
         self,
-        data: tuple[int, float],
+        data: tuple[float, float, int],  # mz, intsy, spec_idx
         ms_level: Literal[1, 2],
     ):
         """
@@ -77,8 +75,6 @@ class BaseToolController(QtCore.QObject):
 class MeasureLossController(BaseToolController):
     """
     Controller for the 'Measure Loss' tool.
-
-    This is a stub implementation - expand as needed.
     """
 
     def __init__(

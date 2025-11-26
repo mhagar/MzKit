@@ -9,6 +9,7 @@ from core.data_structs.scan_array import (
 # from core.utils.array_types import to_spec_arr, SpectrumArray
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import uuid
 from typing import Optional, TYPE_CHECKING
 
@@ -148,6 +149,13 @@ class Injection:
                     f"Warning: requested MS{ms_level} ScanArray, but currently "
                     f"only MS1 and MS2 are supported."
                 )
+
+    @property
+    def name(self) -> str:
+        """
+        Returns the filename stripped of any suffixes
+        """
+        return Path(self.filename).stem
 
 
     def __repr__(self):

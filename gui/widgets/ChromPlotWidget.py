@@ -32,7 +32,7 @@ class ChromPlotWidget(pg.PlotWidget):
                 }
             ),
         )
-        self.setBackground(None)
+        # self.setBackground(None)
         self.pi: ChromPlotItem = self.getPlotItem()
 
         # Set up floating label

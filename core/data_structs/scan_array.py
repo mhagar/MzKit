@@ -307,7 +307,7 @@ class ScanArray:
         mz_window: float,
         target_rt: float,
         rt_window: float,
-    ) -> 'FeaturePointer':
+    ) -> Optional['FeaturePointer']:
         """
         Given a target mz/window and target rt/window, generates a
         feature pointer
@@ -318,6 +318,9 @@ class ScanArray:
                 target_mz - self.mz_lane_label
             ) < mz_window
         )[0]
+
+        if mz_lane_idxs.size == 0:
+            return None
 
         # Get the one with highest intsy
         mz_lane_idx: int = mz_lane_idxs[
@@ -332,6 +335,9 @@ class ScanArray:
         rts: np.ndarray = self.rt_arr[
             np.abs(self.rt_arr - target_rt) < rt_window
         ]
+
+        if rts.size == 0:
+            return None
 
         scan_idxs: np.ndarray[int] = np.array(
             [self.rt_to_scan_num(rt) for rt in rts],
@@ -525,6 +531,9 @@ def build_features_masscube(
         ftr.array['mz'][0] = spec_mz
         ftr.array['intsy'][0] = spec_intsy
         ftr.array['rt'][0] = spectra[0].getRT()
+
+        if spec_intsy == 0:
+            continue
 
         wip_features.append(ftr)
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 def get_project_root() -> Path:
     """
-    Get the project root directory (where your main script/package lives)
+    Where main script/package lives
     :return:
     """
     return Path(__file__).parent.parent.parent  # Depends on where this file is
@@ -67,6 +67,7 @@ def load_config() -> configparser.ConfigParser:
                 default_config_template_path,
                 config_path,
             )
+            load_config()
         else:
             raise FileNotFoundError(
                 f"Unable to find default configuration template."

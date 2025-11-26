@@ -81,7 +81,14 @@
        <item>
         <widget class="QToolButton" name="toolClear">
          <property name="text">
-          <string>...</string>
+          <string>CLEAR</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QToolButton" name="toolExportSpec">
+         <property name="text">
+          <string>EXPORT</string>
          </property>
         </widget>
        </item>
@@ -178,6 +185,13 @@
              </property>
             </spacer>
            </item>
+           <item>
+            <widget class="QToolButton" name="toolExportChrom">
+             <property name="text">
+              <string>EXPORT</string>
+             </property>
+            </widget>
+           </item>
           </layout>
          </item>
         </layout>
@@ -239,6 +253,22 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+C</string>
+   </property>
+  </action>
+  <action name="actionExportSpec">
+   <property name="text">
+    <string>ExportSpec</string>
+   </property>
+   <property name="shortcut">
+    <string>Shift+E</string>
+   </property>
+  </action>
+  <action name="actionExportChrom">
+   <property name="text">
+    <string>ExportChrom</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+E</string>
    </property>
   </action>
  </widget>

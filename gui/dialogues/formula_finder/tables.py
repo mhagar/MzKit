@@ -1,9 +1,13 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt5.QtGui import QTextDocument
+from PyQt5.QtCore import QSize
 import pandas as pd
 import logging
 
 logger = logging.getLogger()
 
+# Hardcoded for now
+MAX_MASS = 4000
 
 class FormulaFinderInputTable(QtWidgets.QTableWidget):
     # Signal for programmatic data updates
@@ -42,6 +46,11 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
         # Show grid lines and banded rows
         self.setStyleSheet(
             "gridline-color: gray;"
+        )
+
+        # Set selection behaviour to select *Rows*
+        self.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
 
         self.setAlternatingRowColors(True)
@@ -102,15 +111,18 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
         Make intensity column non-editable when only one row exists
         (i.e. no isotope envelope to define!)
         """
-        is_single_row = self.rowCount() == 1
+        has_single_row = self.rowCount() == 1
 
         for row in range(self.rowCount()):
             intensity_item = self.item(row, 1)
+
             if intensity_item:
-                if is_single_row:
+
+                if has_single_row:
                     intensity_item.setFlags(
                         intensity_item.flags() & ~QtCore.Qt.ItemIsEditable
                     )
+
                 else:
                     intensity_item.setFlags(
                         intensity_item.flags() | QtCore.Qt.ItemIsEditable
@@ -188,8 +200,13 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
         self,
         values: list[tuple[float, float]],
     ) -> bool:
+
         # If there are no signals, invalidate
         if not values:
+            return False
+
+        # If any signal is larger than MAX_MASS, invalidate
+        if any([x[0] > MAX_MASS for x in values]):
             return False
 
         # If there's only one row, then only check m/z value
@@ -197,7 +214,7 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
             if values[0][0] != 0.0:
                 return True
 
-        # I there's more than one row, return false if any values are 0.0
+        # If there's more than one row, return false if any values are 0.0
         for mz, intsy in values:
             if mz == 0.0 or intsy == 0.0:
                 return False
@@ -219,22 +236,41 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
     def _paste_from_clipboard(self):
         """
         Paste data from clipboard using pandas
+
+        Handles two cases:
+        - Single number: Sets as m/z with intensity 100.0
+        - Table with 2+ columns: Uses first two columns as m/z and intensity
         """
         try:
-            # Read clipboard data
+            # Read clipboard data without expecting headers
             df = pd.read_clipboard(
-                engine='python'
+                engine='python',
+                header=None
             )
 
-            # Ensure at least 2 columns
-            if df.shape[1] < 2:
+            # Handle single value case (1x1 DataFrame)
+            if df.shape == (1, 1):
+                single_value = float(df.iloc[0, 0])
+                data = [(single_value, 100.0)]
+
+            # Reject single column with multiple rows
+            elif df.shape[1] == 1 and df.shape[0] > 1:
                 logger.warning(
-                    "Clipboard data must have at least 2 columns (m/z, intensity)"
+                    "Clipboard contains single column with multiple rows. "
+                    "Please provide both m/z and intensity values for multiple entries."
                 )
                 return
 
-            # Take first two columns as m/z and intensity
-            data = df.iloc[:, :2].values
+            # Handle table case (2+ columns)
+            elif df.shape[1] >= 2:
+                # Take first two columns as m/z and intensity
+                data = df.iloc[:, :2].values
+
+            else:
+                logger.warning(
+                    "Clipboard data format not recognized."
+                )
+                return
 
             # Clear current table and populate with clipboard data
             self.setRowCount(len(data))
@@ -254,6 +290,14 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
             # Update intensity column state
             self._update_intensity_column_state()
 
+        except pd.errors.EmptyDataError:
+            logger.warning(
+                "Clipboard is empty or contains no valid data."
+            )
+        except ValueError as e:
+            logger.warning(
+                f"Clipboard contains invalid numeric data: {e}"
+            )
         except Exception as e:
             logger.warning(
                 f"Failed to paste from clipboard: {e}"
@@ -269,13 +313,22 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
         if not data:
             return
 
+        self.setRowCount(0)  # Clear table
+
         self.setRowCount(
             len(data)
         )
 
         for row, (mz, intensity) in enumerate(data):
-            mz_item = QtWidgets.QTableWidgetItem(str(mz))
+            mz_item = QtWidgets.QTableWidgetItem(f"{mz:.5f}")
+            mz_item.setTextAlignment(
+                QtCore.Qt.AlignmentFlag.AlignCenter
+            )
+
             intensity_item = QtWidgets.QTableWidgetItem(str(intensity))
+            intensity_item.setTextAlignment(
+                QtCore.Qt.AlignmentFlag.AlignCenter
+            )
 
             self.setItem(row, 0, mz_item)
             self.setItem(row, 1, intensity_item)
@@ -287,4 +340,40 @@ class FormulaFinderInputTable(QtWidgets.QTableWidget):
         # Update intensity column state
         self._update_intensity_column_state()
 
-    
+
+class HTMLDelegate(QtWidgets.QStyledItemDelegate):
+    """
+    Delegate that renders HTML content in table cells.
+    Useful for displaying chemical formulae with subscripts.
+    """
+
+    def paint(self, painter, option, index):
+        """Paint the cell with HTML rendering"""
+        self.initStyleOption(option, index)
+
+        # QTextDocument for rendering HTML
+        doc = QTextDocument()
+        doc.setHtml(option.text)
+        doc.setTextWidth(option.rect.width())
+
+        # Clear the text from the option to prevent default drawing
+        option.text = ""
+
+        # Draw the background and focus rect
+        style = option.widget.style() if option.widget else QtWidgets.QStyle()
+        style.drawControl(QtWidgets.QStyle.CE_ItemViewItem, option, painter, option.widget)
+
+        # Draw the HTML content
+        painter.save()
+        painter.translate(option.rect.topLeft())
+        doc.drawContents(painter)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        """
+        Calculate the size hint for the cell
+        """
+        doc = QTextDocument()
+        doc.setHtml(index.data())
+        doc.setTextWidth(option.rect.width() if option.rect.width() > 0 else 100)
+        return QSize(int(doc.idealWidth()), int(doc.size().height()))

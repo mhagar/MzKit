@@ -1,8 +1,12 @@
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt
 import pyqtgraph as pg
+import numpy as np
+from pyqtgraph import exporters
 
-from core.data_structs import Ensemble
+from core.data_structs import Ensemble, IonAnnotation
+from core.utils.spectrum_export import to_sirius_ms, to_mgf
+from core.utils.config import load_config
 from gui.resources.EnsembleViewerWindow import Ui_Form
 from gui.views.ensemble_viewer.tools import (
     ToolType, ToolStage, Mode,
@@ -17,11 +21,16 @@ from gui.views.ensemble_viewer.plot_managers import (
     ChromatogramPlotManager,
     SpectrumPlotManager,
 )
+from gui.dialogues.CompoundExportWizard import NCICompoundExportWizard
 
+from pathlib import Path
+import json
 from typing import TYPE_CHECKING, Optional, Literal
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
     from core.interfaces.data_sources import SampleDataSource
+    from find_mfs import FormulaCandidate
 
 
 class EnsembleViewer(
@@ -33,14 +42,21 @@ class EnsembleViewer(
 
     def __init__(
         self,
-        data_source: 'SampleDataSource'
+        data_source: 'SampleDataSource',
+        config: Optional['ConfigParser'] = None
     ):
         super().__init__()
         self.setupUi(self)
         self.data_source = data_source
+
+        # TODO: TEMPORARY. NEED TO REFACTOR WINDOW MGMT
+        self.config = load_config()
+        # self.config = config
         self.tool_manager = ToolManager()
 
         self.ensemble: Optional['Ensemble'] = None
+
+        self.wizard: Optional['NCICompoundExportWizard'] = None
 
         # Plot managers
         self.chrom_manager = ChromatogramPlotManager(
@@ -84,7 +100,7 @@ class EnsembleViewer(
         )
 
         # *** TOOLS ***
-        # Connect all tool controller signals
+        # Connect all generic tool controller signals
         for controller in self.tool_controllers.values():
             controller.sigSignalSelected.connect(
                 self._update_signal_selection_graphics
@@ -92,6 +108,11 @@ class EnsembleViewer(
             controller.sigSelectionCleared.connect(
                 self._clear_signal_selection_graphics
             )
+
+        # Connect signal for when formula finder assigns a formula
+        self.tool_controllers[ToolType.FINDFORMULA].sigFormulaAssigned.connect(
+            self.add_formula_annotation
+        )
 
     def _setup_plots(self):
         """
@@ -149,6 +170,21 @@ class EnsembleViewer(
 
         # Initialize in Composite mode
         self.actionComposite.trigger()
+
+        # Set up EXPORT buttons
+        self.toolExportSpec.setDefaultAction(
+            self.actionExportSpec
+        )
+        self.actionExportSpec.triggered.connect(
+            self.show_export_cmpd_wizard
+        )
+
+        # self.toolExportChrom.setDefaultAction(
+        #     self.actionExportChrom
+        # )
+        # self.actionExportChrom.triggered.connect(
+        #     self.export_chromatogram
+        # )
 
     def _setup_tool_listeners(self):
         """
@@ -360,19 +396,25 @@ class EnsembleViewer(
 
     def on_ms1_signal_clicked(
         self,
-        data: tuple[int, float], # [spec_idx, mz_float]
+        data: tuple[float, float, int], # mz, intsy, spec_idx
     ):
         """
         Called when user clicks on a signal in the MS1 spectrum
         """
-        spec_idx, mz = data
+        mz, intsy, spec_idx = data
 
-        if not spec_idx:
+        print(
+            f"Selected: {data}"
+        )
+
+        if spec_idx is None:
             return
 
         # Delegate to active tool controller
         active_tool = self.tool_manager.active_tool
-        controller = self.tool_controllers.get(active_tool)
+        controller = self.tool_controllers.get(
+            active_tool
+        )
         if controller:
             controller.handle_ms_signal_clicked(
                 data=data,
@@ -391,14 +433,14 @@ class EnsembleViewer(
 
     def on_ms2_signal_clicked(
         self,
-        data: tuple[int, float], # [spec_idx, mz_float]
+        data: tuple[float, float, int], # [spec_idx, mz_float]
     ):
         """
         Called when user clicks on a signal in the MS2 spectrum
         """
-        spec_idx, mz = data
+        mz, intsy, spec_idx = data
 
-        if not spec_idx:
+        if spec_idx is None:
             return
 
         # Delegate to active tool controller
@@ -422,7 +464,9 @@ class EnsembleViewer(
 
     def _update_signal_selection_graphics(
         self,
-        data: tuple[int, float],
+        mz: float,
+        intsy: float,
+        spec_idx: int,
         level: Literal[1, 2, None],
         is_selected: bool,
     ):
@@ -436,12 +480,12 @@ class EnsembleViewer(
         # Delegate to spectrum manager
         if is_selected:
             self.spectrum_manager.add_signal_marker(
-                spec_idx=data[0],
+                spec_idx=spec_idx,
                 ms_level=level,
             )
         else:
             self.spectrum_manager.remove_signal_marker(
-                spec_idx=data[0],
+                spec_idx=spec_idx,
                 ms_level=level,
             )
 
@@ -485,3 +529,179 @@ class EnsembleViewer(
         controller = self.tool_controllers.get(active_tool)
         if controller:
             controller.on_enter_pressed()
+
+    def add_formula_annotation(
+        self,
+        formula_candidate: 'FormulaCandidate',
+        ms_level,
+        cofeature_idxs,
+    ):
+        if not self.ensemble:
+            return
+
+        annotation: IonAnnotation = self.ensemble.add_ion_annot(
+            cofeature_idxs=cofeature_idxs,
+            ms_level=ms_level,
+            formula=formula_candidate,
+            label="",
+        )
+
+        # Add annotation to MS plot appropriate
+        ms_plot = {
+            1: self.ms1_plot,
+            2: self.ms2_plot,
+        }[ms_level]
+
+        ms_plot.add_anchored_label(
+            spec_idx=cofeature_idxs[0],
+            text=annotation.format_string,
+        )
+
+    def show_export_cmpd_wizard(self):
+        self.wizard = NCICompoundExportWizard()
+        self.wizard.show()
+        self.wizard.sigCompoundExportParamsGiven.connect(
+            self.handle_export_request
+        )
+
+    def handle_export_request(
+        self,
+        params: dict
+    ):
+        compound_path = Path(params['export_dir']) / params['compound_name']
+        compound_path.mkdir(exist_ok=True)
+
+        # Save MS1/MS2 spectra
+        self.export_spectrum(
+            compound_path
+        )
+
+        # Save chromatogram .svg
+        self.export_chromatogram(
+            compound_path
+        )
+
+        # Save everything else:
+        self.export_cmpd_metadata(
+            params, compound_path
+        )
+
+        print(
+            f"Compound saved to {compound_path}"
+        )
+
+
+    def export_spectrum(
+        self,
+        directory: Path,
+    ):
+        """
+        Rough placeholder, need roger's plots asap
+        """
+        # Shit out .svgs
+        for ms_level, plot_item in [
+            ('ms1', self.ms1_plot.pi),
+            ('ms2', self.ms2_plot.pi),
+        ]:
+            svg_exporter = exporters.SVGExporter(
+                plot_item
+            )
+
+            filename = Path(directory) / f'{self.ensemble.format_string}_{ms_level}.svg'
+            svg_exporter.export(
+                filename
+            )
+
+            print(
+                f"Exported {filename}"
+            )
+
+        # Shit out .ms file
+        ms1_spec_arr = self.ensemble.get_spectrum(
+            ms_level=1,
+            scan_rt=self.spectrum_manager.selected_rt,
+        )
+
+        # This ought to be user-configured but whatever
+        base_mz = ms1_spec_arr["mz"][
+            np.argmax(ms1_spec_arr["intsy"])
+        ]
+
+        ms2_spec_arr = self.ensemble.get_spectrum(
+            ms_level=2,
+            scan_rt=self.spectrum_manager.selected_rt,
+        )
+
+        sirius_format = to_sirius_ms(
+            compound=self.ensemble.format_string,
+            parent_mz=base_mz,
+            ms1_spec_arr=ms1_spec_arr,
+            ms2_spec_arr=ms2_spec_arr,
+        )
+
+        mgf_format = f"{
+        to_mgf(
+            pepmass=base_mz,
+            charge=1,  # TODO: make user configurable
+            mslevel=1,
+            spec_arr=ms1_spec_arr,
+            metadata={
+                'TITLE': self.ensemble.format_string
+            },
+        )}\n{
+        to_mgf(
+            pepmass=base_mz,
+            charge=1,  # TODO: make user configurable
+            mslevel=2,
+            spec_arr=ms2_spec_arr,
+            metadata={
+                'TITLE': self.ensemble.format_string
+            },
+        )}\n"
+
+        # Save as .mgf and .ms
+        ms_files = [
+            (sirius_format, f"{self.ensemble.format_string}.ms"),
+            (mgf_format, f"{self.ensemble.format_string}.mgf"),
+        ]
+        for contents, filename in ms_files:
+            with open(Path(directory) / filename, 'w') as f:
+                f.write(contents)
+
+            print(
+                f"Exported {Path(directory) / filename}"
+            )
+
+
+    def export_chromatogram(
+        self,
+        directory: Path,
+    ):
+        """
+        Rough placeholder, need roger's plots asap
+        """
+        svg_exporter = exporters.SVGExporter(
+            self.chromPlotWidget.pi
+        )
+
+        filename = Path(directory) / f'{self.ensemble.format_string}_chromatogram.svg'
+        svg_exporter.export(
+            filename
+        )
+
+        print(
+            f"Exported {filename}"
+        )
+
+
+    def export_cmpd_metadata(
+        self,
+        params: dict,
+        directory: Path,
+    ):
+        file_path = directory / "metadata.json"
+
+        with open(file_path, 'w') as f:
+            json.dump(params, f, indent=2)
+
+

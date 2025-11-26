@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'EnsembleViewerWindow.ui'
+# Form implementation generated from reading ui file 'gui/resources/EnsembleViewerWindow.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.11
 #
@@ -47,6 +47,9 @@ class Ui_Form(object):
         self.toolClear = QtWidgets.QToolButton(Form)
         self.toolClear.setObjectName("toolClear")
         self.horizontalLayout.addWidget(self.toolClear)
+        self.toolExportSpec = QtWidgets.QToolButton(Form)
+        self.toolExportSpec.setObjectName("toolExportSpec")
+        self.horizontalLayout.addWidget(self.toolExportSpec)
         self.verticalLayout.addLayout(self.horizontalLayout)
         self.ms1_plot = MSPlotWidget(Form)
         self.ms1_plot.setObjectName("ms1_plot")
@@ -91,6 +94,9 @@ class Ui_Form(object):
         self.horizontalLayout_3.addWidget(self.checkDiff)
         spacerItem2 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         self.horizontalLayout_3.addItem(spacerItem2)
+        self.toolExportChrom = QtWidgets.QToolButton(self.tab)
+        self.toolExportChrom.setObjectName("toolExportChrom")
+        self.horizontalLayout_3.addWidget(self.toolExportChrom)
         self.verticalLayout_4.addLayout(self.horizontalLayout_3)
         self.verticalLayout_4.setStretch(0, 1)
         self.tabWidget.addTab(self.tab, "")
@@ -116,6 +122,10 @@ class Ui_Form(object):
         self.actionComposite = QtWidgets.QAction(Form)
         self.actionComposite.setCheckable(True)
         self.actionComposite.setObjectName("actionComposite")
+        self.actionExportSpec = QtWidgets.QAction(Form)
+        self.actionExportSpec.setObjectName("actionExportSpec")
+        self.actionExportChrom = QtWidgets.QAction(Form)
+        self.actionExportChrom.setObjectName("actionExportChrom")
 
         self.retranslateUi(Form)
         self.tabWidget.setCurrentIndex(0)
@@ -129,10 +139,12 @@ class Ui_Form(object):
         self.toolComposite.setText(_translate("Form", "Cmpste"))
         self.toolFindFormula.setText(_translate("Form", "Fmla"))
         self.toolMeasureLoss.setText(_translate("Form", "NLoss"))
-        self.toolClear.setText(_translate("Form", "..."))
+        self.toolClear.setText(_translate("Form", "CLEAR"))
+        self.toolExportSpec.setText(_translate("Form", "EXPORT"))
         self.checkShowMiscPlots.setText(_translate("Form", "Show misc. plots"))
         self.checkNormalize.setText(_translate("Form", "Normalize"))
         self.checkDiff.setText(_translate("Form", "Diff"))
+        self.toolExportChrom.setText(_translate("Form", "EXPORT"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("Form", "Chromatogram"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), _translate("Form", "Correlation Plot"))
         self.actionScan.setText(_translate("Form", "Scan"))
@@ -143,6 +155,10 @@ class Ui_Form(object):
         self.actionMeasureLoss.setShortcut(_translate("Form", "Shift+L"))
         self.actionComposite.setText(_translate("Form", "Cmpste"))
         self.actionComposite.setShortcut(_translate("Form", "Ctrl+C"))
+        self.actionExportSpec.setText(_translate("Form", "ExportSpec"))
+        self.actionExportSpec.setShortcut(_translate("Form", "Shift+E"))
+        self.actionExportChrom.setText(_translate("Form", "ExportChrom"))
+        self.actionExportChrom.setShortcut(_translate("Form", "Ctrl+Shift+E"))
 from gui.widgets.ChromPlotWidget import ChromPlotWidget
 from gui.widgets.MSPlotWidget import MSPlotWidget
 from pyqtgraph import PlotWidget

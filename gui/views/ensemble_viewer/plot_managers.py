@@ -12,6 +12,7 @@ from gui.views.ensemble_viewer.utils import (
     get_pearson_coeff,
 )
 
+from numpy.typing import NDArray
 from typing import TYPE_CHECKING, Literal, Optional
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
@@ -34,6 +35,7 @@ class ChromatogramPlotManager(QtCore.QObject):
 
         self.ensemble: Optional['Ensemble'] = None
         self.base_chrom: Optional[np.ndarray] = None
+        self.background_chrom: Optional[np.ndarray] = None
         self.selected_rt: float = 0.0
 
         self.ms1_chroms: list[np.ndarray] = []
@@ -44,12 +46,22 @@ class ChromatogramPlotManager(QtCore.QObject):
         self._diff_enabled = False
 
     def set_ensemble(self, ensemble: 'Ensemble'):
-        """Set the ensemble and extract base chromatogram"""
+        """
+        Set the ensemble and extract ensemble base chromatogram,
+        and 'background' chromatogram (i.e. from injection)
+        """
         self.ensemble = ensemble
-        self.base_chrom = self.ensemble.get_base_chromatogram(ms_level=1)
+
+        self.base_chrom = self.ensemble.get_base_chromatogram(
+            ms_level=1
+        )
+
+        self.background_chrom = self.ensemble.injection.scan_array_ms1.get_bpc()
 
     def set_transform_settings(self, normalize: bool, diff: bool):
-        """Update transform settings"""
+        """
+        Update transform settings
+        """
         self._normalize_enabled = normalize
         self._diff_enabled = diff
 
@@ -63,7 +75,8 @@ class ChromatogramPlotManager(QtCore.QObject):
 
         # Set background chrom array
         self.chrom_plot.setChromArray(
-            self._apply_transforms(self.base_chrom)
+            # self._apply_transforms(self.base_chrom)
+            self._apply_transforms(self.background_chrom)
         )
 
         # Configure slider selector
@@ -71,6 +84,11 @@ class ChromatogramPlotManager(QtCore.QObject):
         self.chrom_plot.setSelectionIndicatorVisible(True)
         self.chrom_plot.setSelectionIndicator(xpos=peak_rt)
         self.selected_rt = peak_rt
+
+        # Add title
+        self.chrom_plot.update_label(
+            text=self.ensemble.format_string
+        )
 
     def update_chromatogram_plot(self):
         """
@@ -157,14 +175,21 @@ class ChromatogramPlotManager(QtCore.QObject):
                 )
 
     def set_ms1_chroms(self, chroms: list[np.ndarray]):
-        """Set MS1 chromatograms for overlay"""
+        """
+        Set MS1 chromatograms for overlay
+        """
         self.ms1_chroms = chroms
 
     def set_ms2_chroms(self, chroms: list[np.ndarray]):
-        """Set MS2 chromatograms for overlay"""
+        """
+        Set MS2 chromatograms for overlay
+        """
         self.ms2_chroms = chroms
 
-    def _apply_transforms(self, chrom: np.ndarray) -> np.ndarray:
+    def _apply_transforms(
+        self,
+        chrom: np.ndarray
+    ) -> np.ndarray:
         """
         Applies transforms based on settings
         (i.e. normalize, diff)
@@ -183,8 +208,8 @@ class SpectrumPlotManager(QtCore.QObject):
     """
     Manages MS1 and MS2 spectrum plotting and signal selection graphics
     """
-    sigMS1SignalClicked = QtCore.pyqtSignal(tuple)  # (spec_idx, mz)
-    sigMS2SignalClicked = QtCore.pyqtSignal(tuple)  # (spec_idx, mz)
+    sigMS1SignalClicked = QtCore.pyqtSignal(tuple)  # (mz, intsy, spec_idx)
+    sigMS2SignalClicked = QtCore.pyqtSignal(tuple)  # (mz, intsy, spec_idx)
 
     def __init__(
         self,
@@ -206,11 +231,16 @@ class SpectrumPlotManager(QtCore.QObject):
             self._on_ms2_clicked
         )
 
-    def set_ensemble(self, ensemble: 'Ensemble'):
-        """Set the ensemble"""
+    def set_ensemble(
+        self,
+        ensemble: 'Ensemble',
+    ):
         self.ensemble = ensemble
 
-    def populate_spectrum_plot(self, scan_rt: float):
+    def populate_spectrum_plot(
+        self,
+        scan_rt: float,
+    ):
         """
         Given a retention time, plots the ensemble spectrum
         for both MS1 and MS2
@@ -234,7 +264,9 @@ class SpectrumPlotManager(QtCore.QObject):
         spec_idx: int,
         ms_level: Literal[1, 2],
     ):
-        """Add a marker to indicate signal selection"""
+        """
+        Add a marker to indicate signal selection
+        """
         plot_widget: 'MSPlotWidget' = {
             1: self.ms1_plot,
             2: self.ms2_plot,
@@ -248,7 +280,9 @@ class SpectrumPlotManager(QtCore.QObject):
         spec_idx: int,
         ms_level: Literal[1, 2],
     ):
-        """Remove a signal selection marker"""
+        """
+        Remove a signal selection marker
+        """
         plot_widget: 'MSPlotWidget' = {
             1: self.ms1_plot,
             2: self.ms2_plot,
@@ -258,14 +292,62 @@ class SpectrumPlotManager(QtCore.QObject):
             plot_widget.remove_signal_marker(spec_idx=spec_idx)
 
     def clear_signal_markers(self):
-        """Clear all signal selection markers from both plots"""
+        """
+        Clear all signal selection markers from both plots
+        """
         self.ms1_plot.clear_signal_markers()
         self.ms2_plot.clear_signal_markers()
 
-    def _on_ms1_clicked(self, data: tuple[int, float]):
-        """Internal handler for MS1 clicks"""
-        self.sigMS1SignalClicked.emit(data)
+    def _on_ms1_clicked(
+        self,
+        data: tuple[int, float]  # spec_idx, mz
+    ):
+        """
+        Internal handler for MS1 clicks. Converts the signal
+        into from (spec_idx, mz) into (mz, intsy, spec_idx)
+        """
+        spec_idx, mz = data
+        intsy = self._get_intsy(
+            spec_idx=spec_idx,
+            ms_level=1,
+        )
 
-    def _on_ms2_clicked(self, data: tuple[int, float]):
-        """Internal handler for MS2 clicks"""
-        self.sigMS2SignalClicked.emit(data)
+        print(
+            f"Clicked: {data}"
+        )
+
+        self.sigMS1SignalClicked.emit(
+            (mz, intsy, spec_idx)
+        )
+
+    def _on_ms2_clicked(
+        self,
+        data: tuple[int, float]
+    ):
+        """
+        Internal handler for MS2 clicks
+        """
+        spec_idx, mz = data
+        intsy = self._get_intsy(
+            spec_idx=spec_idx,
+            ms_level=2,
+        )
+
+        self.sigMS2SignalClicked.emit(
+            ( mz, intsy, spec_idx )
+        )
+
+    def _get_intsy(
+        self,
+        spec_idx: int,
+        ms_level: Literal[1, 2],
+    ) -> float:
+        """
+        Patching poor signal design that's baked in to SampleViewer lmao
+        """
+        spectrum: NDArray[float] = self.ensemble.get_spectrum(
+            ms_level=ms_level,
+            scan_rt=self.selected_rt
+        )
+        intsy: float = spectrum['intsy'][spec_idx]  # type: ignore
+        return intsy

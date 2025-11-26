@@ -410,18 +410,5 @@ class SampleController(QtCore.QObject):
             )
 
 
-def _format_spectrum_array(
-    arr: 'SpectrumArray',
-) -> list[str]:
-    """
-    Bullshit function, just need to go fast
-    """
-    output = []
-    for mz, intsy in zip(
-        arr['mz'],
-        arr['intsy'],
-    ):
-        output.append(f"{mz:.5f} {intsy:.0f}")
 
-    return output
 

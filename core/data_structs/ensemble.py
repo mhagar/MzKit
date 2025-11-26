@@ -6,9 +6,12 @@ import uuid
 from typing import Literal, Optional, TYPE_CHECKING
 
 import numpy as np
+from find_mfs import FormulaCandidate
+from molmass import Formula
 from numpy.typing import NDArray
 
 from core.utils.array_types import to_spec_arr, to_ensemble_arr
+from gui.utils.formula_formatting import format_formula_obj_to_html
 
 if TYPE_CHECKING:
     from core.data_structs import(
@@ -43,9 +46,32 @@ class Ensemble:
         default=None, init=False, repr=False,
     )
 
+    # Annotations
+    mz_diffs: list['MzDiffAnnotation'] = field(
+        default_factory=list, repr=False
+    )
+
+    ion_annots: dict[int, 'IonAnnotation'] = field(
+        default_factory=dict, repr=False
+    )
+
+    ion_pair_annots: list['IonPairAnnotation'] = field(
+        default_factory=list, repr=False
+    )
+
+
     def __repr__(self):
         return (f"Ensemble({len(self.ms1_cofeatures)} ms1, "
                 f"{len(self.ms2_cofeatures)} ms2 cofeatures)")
+
+    @property
+    def format_string(self) -> str:
+        """
+        Returns a short string with injection name, retention time,
+        that kind of stuff. Useful for file naming
+        """
+        inj_name: str = self.injection.name
+        return f"{inj_name}_{self.peak_rt:.1f}s_{self.base_mz:.5f}mz"
 
     def _populate_attrs(self):
         # Find base co-feature
@@ -79,7 +105,6 @@ class Ensemble:
     ):
         self.injection = injection
         self._populate_attrs()
-
 
     def get_spectrum(
         self,
@@ -144,7 +169,7 @@ class Ensemble:
     ) -> list[np.ndarray]:
         """
         Returns a list of chrom arrays for each of the
-        cofeatures
+        cofeatures at ms_level
 
         :param ms_level:
         :param idxs: Which chromatograms to return. If none, returns all of
@@ -177,7 +202,7 @@ class Ensemble:
         ms_level: Literal[1, 2],
     ) -> np.ndarray:
         """
-        Return the chromatogram of the base feature
+        Return the chromatogram of the base feature at ms_level
         :param ms_level:
         :return:
         """
@@ -193,7 +218,7 @@ class Ensemble:
         ms_level: Literal[1, 2],
     ) -> 'ScanArray':
         """
-        Returns the ScanArray defined by this Ensemble
+        Returns the ScanArray referred to by this Ensemble
 
         If this Ensemble was
          loaded from disk, make sure `set_injection()` was
@@ -241,6 +266,9 @@ class Ensemble:
         self,
         ms_level: Literal[1, 2],
     ) -> 'SpectrumArray':
+        """
+        Generates a SpectrumArray for plotting
+        """
         scan_array = self._get_scan_array(
             ms_level=ms_level
         )
@@ -263,3 +291,164 @@ class Ensemble:
             mz_arr=np.array(mz_values),
             intsy_arr=np.array(intsy_values),
         )
+
+    def add_mz_diff_annot(
+        self,
+        cofeature_a_idx: int,
+        cofeature_b_idx: int,
+        ms_level: Literal[1, 2],
+        label: Optional[str] = None
+    ) -> 'MzDiffAnnotation':
+        """
+        Creates an MzDiffAnnotation, and also returns it
+        """
+
+        # Validate that idxs are real
+        cofeatures = self._get_cofeatures(ms_level)
+        for idx in (cofeature_a_idx, cofeature_b_idx):
+            if not (0 <= idx <len(cofeatures)):
+                raise ValueError(
+                    f"Invalid cofeature idx: {idx}, "
+                    f"Ensemble only contains {len(cofeatures)} cofeatures "
+                )
+
+        # Calc mean_delta mz
+        scan_array = self._get_scan_array(ms_level)
+        mz_a = cofeatures[cofeature_a_idx].get_mz_values(scan_array).mean()
+        mz_b = cofeatures[cofeature_b_idx].get_mz_values(scan_array).mean()
+
+        mean_delta_mz: float = abs(mz_a - mz_b)
+
+        annot = MzDiffAnnotation(
+            cofeature_a_idx=cofeature_a_idx,
+            cofeature_b_idx=cofeature_b_idx,
+            ms_level=ms_level,
+            mean_delta_mz=mean_delta_mz,
+            user_label=label,
+        )
+
+        self.mz_diffs.append(annot)
+        return annot
+
+    def add_ion_annot(
+        self,
+        cofeature_idxs: list[int],
+        ms_level: Literal[1, 2],
+        formula: FormulaCandidate,
+        label: Optional[str],
+    ) -> 'IonAnnotation':
+        """
+        Create, validate, and add an ion annotation
+        """
+        # Validate that indices are real
+        cofeatures = self._get_cofeatures(ms_level)
+        for idx in cofeature_idxs:
+            if not (0 <= idx < len(cofeatures)):
+                raise ValueError(
+                    f"Invalid cofeature_idx: {idx}. Ensemble only contains "
+                    f"{len(cofeatures)} cofeatures"
+                )
+
+        annot = IonAnnotation(
+            cofeature_idxs=cofeature_idxs,
+            ms_level=ms_level,
+            formula=formula,
+            user_label=label,
+        )
+
+        self.ion_annots[annot.uuid] = annot
+
+        return annot
+
+    def add_ion_pair_annot(
+        self,
+        ion_a_uuid: int,
+        ion_b_uuid: int,
+        relationship: Literal[
+            "adduct", "neutral_loss", "charge_state"
+        ],
+        label: Optional[str] = None,
+    ) -> 'IonPairAnnotation':
+        """
+        Create and add an IonPairAnnotation, while validating
+        """
+
+        # Validate that UUIDs are real:
+        for ion_uuid in (ion_a_uuid, ion_b_uuid):
+            if ion_a_uuid not in self.ion_annots.keys():
+                raise ValueError(
+                    f"Ion UUID {ion_uuid} not found in this ensemble"
+                )
+
+        # Determine formula difference:
+        ## TODO: THIS DOESN'T WORK FOR ADDUCTS. MUST FIX BEFORE USE
+        ion_a_formula: Formula = self.ion_annots[ion_a_uuid].formula
+        ion_b_formula: Formula = self.ion_annots[ion_b_uuid].formula
+
+        formula_diff = ion_a_formula - ion_b_formula
+
+        annot = IonPairAnnotation(
+            ion_a_uuid=ion_a_uuid,
+            ion_b_uuid=ion_b_uuid,
+            relationship=relationship,
+            formula_diff=formula_diff,
+            user_label=label,
+        )
+
+        self.ion_pair_annots.append(annot)
+
+        return annot
+
+
+####    Ensemble Annotations    ####
+
+@dataclass
+class MzDiffAnnotation:
+    """
+    A record of m/z difference between two co-features
+    """
+    cofeature_a_idx: int
+    cofeature_b_idx: int
+    ms_level: Literal[1, 2]
+    mean_delta_mz: float
+    user_label: Optional[str] = None
+
+
+@dataclass
+class IonAnnotation:
+    """
+    Claim a group of features are isotopoogues
+    """
+    cofeature_idxs: list[int]
+    ms_level: Literal[1, 2]
+    formula: FormulaCandidate
+    uuid: int = field(default=lambda: uuid.uuid4())
+    user_label: Optional[str] = None
+
+    @property
+    def format_string(self) -> str:
+        """
+        Returns an HTML-formatted string suitable for
+        display in MSPlotWidget
+        """
+        formula_html = format_formula_obj_to_html(self.formula.formula)
+        return (f"{formula_html}<br>"
+                f"{self.formula.error_ppm:.1f} ppm")
+
+
+@dataclass
+class IonPairAnnotation:
+    """
+    Claim about the relationship between two ions
+    """
+    ion_a_uuid: int
+    ion_b_uuid: int
+    relationship: Literal[
+        "adduct", "neutral_loss", "charge_state"
+    ]
+    formula_diff: Formula
+    user_label: Optional[str] = None
+
+
+
+

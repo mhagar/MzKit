@@ -5,7 +5,7 @@ from .injection import Injection
 from .analyte_table import AnalyteTable
 from .analyte import Analyte
 from .scan_array import ScanArray
-from .ensemble import Ensemble
+from .ensemble import Ensemble, IonAnnotation
 from .feature_pointer import FeaturePointer
 from .uuid_types import (
     SampleUUID, FingerprintUUID, InjectionUUID, ScanArrayUUID,
@@ -23,6 +23,7 @@ __all__ = [
     "ScanArray",
     "Ensemble",
     "EnsembleUUID",
+    "IonAnnotation",
     "SampleUUID",
     "FingerprintUUID",
     "InjectionUUID",
