@@ -78,6 +78,11 @@ def save_project(
                     savepath,
                     zf,
                 )
+                serialize_injection_ensembles(
+                    sample,
+                    savepath,
+                    zf,
+                )
 
             if sample.fingerprint:
                 serialize_fingerprint_primitives(
@@ -351,7 +356,7 @@ def deserialize_injection(
         )
         ms2_scan_array = ScanArray(**ms2_scan_array_dict)
 
-    # Finally, assemble into Injection object
+   # Finally, assemble into Injection object
     injection = Injection(
         scan_array_ms1=ms1_scan_array,
         scan_array_ms2=ms2_scan_array,
@@ -362,6 +367,14 @@ def deserialize_injection(
             ms2_scan_array_params,
         )
     )
+
+    # Load Ensembles (if they exist)
+    deserialize_injection_ensembles(
+        injection=injection,
+        loadpath=loadpath,
+        zf=zf,
+    )
+
     return injection
 
 
@@ -371,9 +384,8 @@ def deserialize_injection_ensembles(
     zf: 'zipfile.ZipFile',
 ):
     """
-    Loads injections and assigns them to the Injection object.
+    Loads ensembles and assigns them to the Injection object.
     """
-
     ensembles_path = f"{loadpath}/ensembles.pkl"
     if ensembles_path not in zf.namelist():
         return
