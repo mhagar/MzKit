@@ -10,7 +10,7 @@ from core.data_structs.scan_array import (
 
 from dataclasses import dataclass, field
 from pathlib import Path
-import uuid
+from uuid import uuid4
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ class Injection:
     filename: str
     scan_array_parameters: tuple[ScanArrayParameters, ...]
     exp: Optional[oms.MSExperiment] = None
-    uuid: 'InjectionUUID' = field(default_factory=lambda: uuid.uuid4().int)
+    uuid: 'InjectionUUID' = field(default_factory=lambda: uuid4().int)
     scan_array_ms1: Optional[ScanArray] = None
     scan_array_ms2: Optional[ScanArray] = None
     ensembles: dict['EnsembleUUID', 'Ensemble'] = field(
@@ -149,6 +149,31 @@ class Injection:
                     f"Warning: requested MS{ms_level} ScanArray, but currently "
                     f"only MS1 and MS2 are supported."
                 )
+
+    def add_ensemble(
+        self,
+        ensemble: 'Ensemble',
+    ) -> None:
+        """
+        Add and register an Ensemble to this injection
+        """
+        if ensemble.uuid in self.ensembles:
+            raise ValueError(
+                f"Ensemble already exists: {ensemble}"
+            )
+
+        ensemble.set_injection(self)
+        self.ensembles[ensemble.uuid] = ensemble
+
+    def remove_ensemble(
+        self,
+        uuid: 'EnsembleUUID',
+    ) -> None:
+        """
+        Remove an ensemble from this injection.
+        """
+        if uuid in self.ensembles:
+            del self.ensembles[uuid]
 
     @property
     def name(self) -> str:

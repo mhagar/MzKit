@@ -6,6 +6,7 @@ from core.data_structs import (
     DataRegistry,
     Sample,
     Injection,
+    Ensemble,
     Fingerprint,
     ScanArray,
 )
@@ -96,9 +97,9 @@ def save_project(
 
 
 def serialize_fingerprint_arrays(
-    sample,
-    savepath,
-    zf,
+    sample: 'Sample',
+    savepath: str,
+    zf: 'zipfile.ZipFile',
 ):
     # Write arrays (Pickle is OK; numpy arrays)
     data = {
@@ -114,9 +115,9 @@ def serialize_fingerprint_arrays(
 
 
 def serialize_fingerprint_primitives(
-    sample,
-    savepath,
-    zf,
+    sample: 'Sample',
+    savepath: str,
+    zf: 'zipfile.ZipFile',
 ):
     # Write fingerprint primitives
     fp_metadata = {
@@ -132,9 +133,9 @@ def serialize_fingerprint_primitives(
 
 
 def serialize_injection_scanarrays(
-    sample,
-    savepath,
-    zf,
+    sample: 'Sample',
+    savepath: str,
+    zf: 'zipfile.ZipFile',
 ):
     # Write ScanArrays. Using Pickle is OK here
     ms1_scan_array_dict = sample.injection.scan_array_ms1.__dict__
@@ -155,9 +156,9 @@ def serialize_injection_scanarrays(
 
 
 def serialize_injection_primitives(
-    sample,
-    savepath,
-    zf,
+    sample: 'Sample',
+    savepath: str,
+    zf: 'zipfile.ZipFile',
 ):
     # Write injection primitives
     injection_metadata = {
@@ -172,6 +173,40 @@ def serialize_injection_primitives(
             injection_metadata,
             indent=2,
         )
+    )
+
+
+def serialize_injection_ensembles(
+    sample: 'Sample',
+    savepath: str,
+    zf: 'zipfile.ZipFile',
+):
+    """
+    Serialize ensembles separately from injection objects
+    """
+    if not sample.injection.ensembles:
+        return
+
+    ensemble_data: list[dict] = []
+    for ensemble in sample.injection.ensembles.values():
+
+        # Must be serialized without injection reference
+        ensemble_dict = {
+            'uuid': ensemble.uuid,
+            'ms1_cofeatures': ensemble.ms1_cofeatures,
+            'ms2_cofeatures': ensemble.ms2_cofeatures,
+            'mz_diffs': ensemble.mz_diffs,
+            'ion_annots': ensemble.ion_annots,
+            'ion_pair_annots': ensemble.ion_pair_annots,
+            # Injection reference not serialized - will be assigned on loading
+        }
+
+        ensemble_data.append(ensemble_dict)
+
+    # Going to just use pickle for now. Lazy!!
+    zf.writestr(
+        f"{savepath}/ensembles.pkl",
+        data=pickle.dumps(ensemble_data)
     )
 
 
@@ -195,6 +230,7 @@ def serialize_sample_primitives(
             indent=2,
         )
     )
+
 
 
 # def _get_mzml_paths(
@@ -285,14 +321,17 @@ def deserialize_injection(
     injection_primitives = json.loads(
         zf.read(f"{loadpath}/injection.json")
     )
+
     ms1_scan_array_params = ScanArrayParameters(
         **injection_primitives['ms1_scan_array_params']
     )
+
     ms2_scan_array_params = None
     if injection_primitives['ms2_scan_array_params']:
         ms2_scan_array_params = ScanArrayParameters(
             **injection_primitives['ms2_scan_array_params']
         )
+
     # Load MS1 scan array
     ms1_scan_array_dict: dict = pickle.loads(
         zf.read(
@@ -300,6 +339,7 @@ def deserialize_injection(
         )
     )
     ms1_scan_array = ScanArray(**ms1_scan_array_dict)
+
     # Load MS2 scan array (if it exists)
     ms2_scan_array = None
     ms2_path = f"{loadpath}/ms2_scan_array.pkl"
@@ -310,6 +350,7 @@ def deserialize_injection(
             )
         )
         ms2_scan_array = ScanArray(**ms2_scan_array_dict)
+
     # Finally, assemble into Injection object
     injection = Injection(
         scan_array_ms1=ms1_scan_array,
@@ -322,6 +363,29 @@ def deserialize_injection(
         )
     )
     return injection
+
+
+def deserialize_injection_ensembles(
+    injection: 'Injection',
+    loadpath: str,
+    zf: 'zipfile.ZipFile',
+):
+    """
+    Loads injections and assigns them to the Injection object.
+    """
+
+    ensembles_path = f"{loadpath}/ensembles.pkl"
+    if ensembles_path not in zf.namelist():
+        return
+
+    ensemble_data: list[dict] = pickle.loads(zf.read(ensembles_path))
+
+    for e_dict in ensemble_data:
+        # Instantiate ensemble with everything but injection set:
+        ensemble = Ensemble(**e_dict)
+
+        # This will call ensemble.set_injection():
+        injection.add_ensemble(ensemble)
 
 
 def deserialize_fingerprint(
@@ -348,7 +412,10 @@ def deserialize_fingerprint(
     return fingerprint
 
 
-def deserialize_empty_sample(sample_primitives_path, zf):
+def deserialize_empty_sample(
+    sample_primitives_path: str,
+    zf: 'zipfile.ZipFile',
+):
     # Load primitives
     sample_primitives = json.loads(
         zf.read(sample_primitives_path)

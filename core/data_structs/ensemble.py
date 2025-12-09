@@ -62,7 +62,8 @@ class Ensemble:
 
     def __repr__(self):
         return (f"Ensemble({len(self.ms1_cofeatures)} ms1, "
-                f"{len(self.ms2_cofeatures)} ms2 cofeatures)")
+                f"{len(self.ms2_cofeatures)} ms2 cofeatures. "
+                f"UUID: {self.uuid})")
 
     @property
     def format_string(self) -> str:

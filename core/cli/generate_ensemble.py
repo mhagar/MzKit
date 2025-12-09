@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     )
 
 
-class InputParams(NamedTuple):
+class EnsembleExtractionParams(NamedTuple):
     search_ftr_ptr: 'FeaturePointer'
     injection: 'Injection'
     ms1_corr_threshold: float
@@ -123,9 +123,8 @@ def get_cofeature_ensemble(
         ms1_cofeatures=ms1_cofeatures,
         ms2_cofeatures=ms2_cofeatures,
     )
-    ensemble.set_injection(
-        injection
-    )
+
+    injection.add_ensemble(ensemble)
     return ensemble
 
 

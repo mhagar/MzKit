@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from core.data_structs import Sample
     from core.data_structs.fingerprint import FingerprintImportParams
     from core.data_structs.scan_array import ScanArrayParameters
-    from core.cli.generate_ensemble import InputParams as EnsembleInputParams
+    from core.cli.generate_ensemble import EnsembleExtractionParams
     import core.data_structs as data_structs
     from gui.views.sample_viewer import SampleViewer
     from gui.views.process_monitor import ProcessMonitorWindow
@@ -152,7 +152,7 @@ class MainController:
         if not sample_viewer:
             return
 
-        sample_viewer.sigEnsembleGenerationRequested.connect(
+        sample_viewer.sigEnsembleExtractionRequested.connect(
             self._handle_generate_ensemble_request
         )
 
@@ -378,7 +378,7 @@ class MainController:
 
     def _handle_generate_ensemble_request(
         self,
-        input_params: 'EnsembleInputParams',  # Qt signal is named tuple
+        input_params: 'EnsembleExtractionParams',  # Qt signal is named tuple
     ):
         self.process_controller.start_process(
             module_path="core.cli.generate_ensemble",

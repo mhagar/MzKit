@@ -28,6 +28,8 @@ class DataRegistry(
     """
     Central data registry. Stores Samples,
      and performs UUID <-> object look-ups
+
+    # TODO: Implement global Ensemble searching here
     """
     sigSampleAdded = QtCore.pyqtSignal(
         object  # Sample
