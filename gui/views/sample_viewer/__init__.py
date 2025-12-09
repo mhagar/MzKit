@@ -1,12 +1,11 @@
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt, QPointF
-import numpy as np
 
 from core.interfaces.data_sources import AnalyteTableSource
-from core.cli.generate_ensemble import InputParams as EnsembleInputParams
-from core.utils.array_types import SpectrumArray
+from gui.views.sample_viewer.ensemble_extraction import EnsembleExtractionManager
 from gui.views.sample_viewer.menus import FingerprintDisplayMenu, EnsembleExtractionSettingsMenu
 from gui.views.sample_viewer.model import SampleViewerItemModel
+from gui.views.sample_viewer.spectrum_selection import SelectionManager
 from gui.views.sample_viewer.tools import (
     ToolType, ExtractionMode,
     ToolStage, ToolManagerNew,
@@ -14,7 +13,7 @@ from gui.views.sample_viewer.tools import (
 )
 from gui.resources.SampleViewerWindow import Ui_Form
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union, Literal
 
 if TYPE_CHECKING:
     from core.data_structs import (
@@ -37,7 +36,7 @@ class SampleViewer(
     """
 
     sigMSLevelChanged = QtCore.pyqtSignal(int)
-    sigEnsembleGenerationRequested = QtCore.pyqtSignal(
+    sigEnsembleExtractionRequested = QtCore.pyqtSignal(
         object,
     )
 
@@ -56,11 +55,16 @@ class SampleViewer(
             sample_data_source=data_source,
         )
 
+        # Tracks/broadcasts what entities are selected
+        self.selection_mgr = SelectionManager(
+            data_source=self.data_source
+        )
+
         self.fprint_display_params_menu = FingerprintDisplayMenu(self)
         self.ensemble_extraction_settings_menu = EnsembleExtractionSettingsMenu(self)
 
         # Tool-state tracking
-        self.new_tool_manager = ToolManagerNew()
+        self.tool_mgr = ToolManagerNew()
         self.tool_action_group = QtWidgets.QActionGroup(self)
         self.tool_action_group.triggered.connect(
             self.on_tool_action_triggered
@@ -88,24 +92,17 @@ class SampleViewer(
             self.on_extraction_region_changed
         )
 
-        # MS Plot state
-        # TODO: Maybe refactor into tool manager?
-        self.selected_spectrum_sample_uuid: Optional['SampleUUID'] = None
-        self.selected_ms_level: int = 1
-        self.selected_scan_num: Optional[int] = None
-        self.selected_ms_lane_idx: Optional[int] = None
-
         # Ensemble Extraction
-        # TODO: Refactor into separate manager?
-        self.toolGetCmpdMenu.clicked.connect(
-            self.show_ensemble_extraction_settings_menu
+        self.ensemble_extraction_mgr = EnsembleExtractionManager(
+            data_source=self.data_source
         )
-        self.ensemble_extraction_params: dict = self.ensemble_extraction_settings_menu.get_params()
 
         self._setup_actions()
         self._add_status_bar()
         self._setup_views()
         self._setup_tool_signals()
+        self._setup_selection_signals()
+        self._setup_ensemble_extraction_signals()
         self._setup_manual_xic_signals()
 
 
@@ -144,27 +141,11 @@ class SampleViewer(
         self.viewSampleStack.sigChromatogramHovered.connect(
             self.on_chromatogram_hovered
         )
-        # self.viewSampleStack.sigSpectrumSelected.connect(
-        #     self.on_spectrum_selected
-        # )
+
         self.sigMSLevelChanged.connect(
-            self.viewSampleStack.on_ms_level_changed
+            self.viewSampleStack.chrom_mgr.set_ms_level
         )
-        # self.tool_manager.tool_changed.connect(
-        #     self.viewSampleStack.on_tool_changed
-        # )
-        # self.tool_manager.extraction_mode_changed.connect(
-        #     self.viewSampleStack.on_extraction_mode_changed
-        # )
 
-
-        # Configure the MS plot
-        # self.tool_manager.extraction_mode_changed.connect(
-        #     self.plotMS.on_extraction_mode_changed
-        # )
-        # self.tool_manager.tool_changed.connect(
-        #     self.plotMS.on_tool_changed
-        # )
         self.plotMS.sigMSSignalHovered.connect(
             self.on_ms_signal_hovered
         )
@@ -172,7 +153,7 @@ class SampleViewer(
             self.on_ms_signal_leaved
         )
         self.plotMS.sigMSSignalClicked.connect(
-            self.on_ms_signal_selected
+            self.on_ms_signal_clicked
         )
 
         # Configure fingerprint display menu
@@ -180,9 +161,13 @@ class SampleViewer(
             self.viewSampleStack.link_colorbar_to_fprint_plots
         )
 
-        # Configure ensemble extraction settings menu
-        self.ensemble_extraction_settings_menu.sigSettingsChanged.connect(
-            lambda x: self.ensemble_extraction_params.update(x)
+    def _setup_selection_signals(self):
+        self.selection_mgr.sigSpectrumSelected.connect(
+            self.update_spectrum_plot
+        )
+
+        self.selection_mgr.sigSpectrumSelected.connect(
+            self.viewSampleStack.on_spectrum_selected
         )
 
     def _setup_tool_signals(self):
@@ -190,20 +175,20 @@ class SampleViewer(
         Connect the tool manager to whatever objects need to respond
         to tool activations
         """
-        self.new_tool_manager.register_tool_listener(
+        self.tool_mgr.register_tool_listener(
             listener=self.viewSampleStack
         )
 
-        self.new_tool_manager.register_tool_listener(
+        self.tool_mgr.register_tool_listener(
             listener=self.plotMS
         )
 
         # TODO: Change register_tool_listener to use ducktyping or somth
-        self.new_tool_manager.tool_changed.connect(
+        self.tool_mgr.tool_changed.connect(
             self.on_tool_type_changed
         )
 
-        self.new_tool_manager.stage_changed.connect(
+        self.tool_mgr.stage_changed.connect(
             self.on_tool_stage_changed
         )
 
@@ -251,6 +236,19 @@ class SampleViewer(
             self.actionToggleFprint
         )
 
+    def _setup_ensemble_extraction_signals(self):
+        # Route signal upwards (to main ctrlr)
+        self.ensemble_extraction_mgr.sigEnsembleExtractionRequested.connect(
+            self.sigEnsembleExtractionRequested.emit
+        )
+
+        self.toolGetCmpdMenu.clicked.connect(
+            lambda: self.ensemble_extraction_mgr.showExtractionMenu(
+                pos=self.toolGetCmpd.pos(),
+                height=self.toolGetCmpd.height(),
+            )
+        )
+
     def _setup_manual_xic_signals(self):
         self.spinExtractTarget.valueChanged.connect(
             self.on_manual_extraction_region_entry
@@ -281,9 +279,9 @@ class SampleViewer(
             ToolType.NONE, # Default if invalid tool
         )
 
-        self.new_tool_manager.activate_tool(tool_type)
+        self.tool_mgr.activate_tool(tool_type)
 
-    def _fix_UI_based_on_current_tool(
+    def _fix_ui_based_on_current_tool(
         self,
     ):
         """
@@ -291,7 +289,7 @@ class SampleViewer(
 
         For example, GETCMPD can only be used in MS1, so switches to MS1
         """
-        match self.new_tool_manager.active_tool:
+        match self.tool_mgr.active_tool:
             case ToolType.NONE:
                 self.status_bar.showMessage("")
 
@@ -302,7 +300,7 @@ class SampleViewer(
 
             case ToolType.GETCOMPOUND:
                 # Switch to MS1
-                if self.selected_ms_level != 1:
+                if self.selection_mgr.selected_ms_level != 1:
                     self.comboMSLevel.setCurrentIndex(0)
 
                 self.status_bar.showMessage(
@@ -315,7 +313,7 @@ class SampleViewer(
                 )
 
         # Reset any errant states
-        self.clear_ensemble_selection_ui()
+        self.viewSampleStack.ensemble_ui_mgr.clear_scan_window_selector()
 
     def on_extraction_mode_triggered(
         self,
@@ -335,13 +333,13 @@ class SampleViewer(
             XICMode.NONE,  # Default to NONE if unrecognized action
         )
 
-        self.new_tool_manager.set_xic_mode(
+        self.tool_mgr.set_xic_mode(
             mode
         )
 
         if mode != XICMode.NONE:
-            self.new_tool_manager.cancel()
-            self.new_tool_manager.activate_tool(
+            self.tool_mgr.cancel()
+            self.tool_mgr.activate_tool(
                 ToolType.GETXIC
             )
 
@@ -349,73 +347,41 @@ class SampleViewer(
         self,
         tool: ToolType,
     ):
-        self._fix_UI_based_on_current_tool()
+        self._fix_ui_based_on_current_tool()
 
     def on_tool_stage_changed(
         self,
         stage: ToolStage,
     ):
         if stage != ToolStage.CONFIGURING:
-            self.selected_ms_lane_idx = None
+            self.selection_mgr.clear_selected_ms_lane_idx()
 
     def on_ms_level_change_requested(
         self,
         idx: int,
     ):
         """
-        Triggered when user changes the MS level
-
-        Sets the state variables accordingly, and converts the
-        selected scan number to whatever has the nearest retention time
-        to whatever is currently selected
+        Triggered when user changes the MS level combo box
         """
-        ms_level = {
+        # Convert combo values {0, 1} to ms_levels {1, 2}
+        ms_level: Literal[1, 2] = { # type: ignore
             0: 1,
             1: 2,
-        }.get(idx)
+        }.get(idx, 1)
 
-        if not self.selected_spectrum_sample_uuid:
-            # User has not selected a sample yet. Do nothing
-            self.selected_ms_level = ms_level
+        self.selection_mgr.set_ms_level(ms_level)
+
+    def update_spectrum_plot(self):
+        """
+        Updates MS Plot to match whatever is in Spectrum Selection Manager
+        """
+        spec_array = self.selection_mgr.get_selected_spectrum_array()
+        if spec_array is None:
             return
 
-        # Get rt before changing to new scan array
-        rt_before_ms_level_change: float = self._get_selected_rt()
-
-        self.selected_ms_level = ms_level
-        self.selected_scan_num = self._get_selected_scan_array().rt_to_scan_num(
-            rt_before_ms_level_change
+        self.plotMS.setSpectrumArray(
+            spec_array
         )
-
-        self.update_spectrum_plot()
-        self.sigMSLevelChanged.emit(ms_level)
-
-    def _get_selected_scan_array(
-        self,
-    ) -> 'ScanArray':
-        return self.model.getSample(
-            self.selected_spectrum_sample_uuid
-        ).injection.get_scan_array(
-            self.selected_ms_level
-        )
-
-    def _get_selected_injection(self) -> 'Injection':
-        sample: 'Sample' = self.model.getSample(
-            self.selected_spectrum_sample_uuid
-        )
-        injection = sample.injection
-        return injection
-
-    def _get_selected_rt(
-        self,
-    ) -> float:
-        """
-        Returns the rt of the currently selected spectrum
-        """
-        idx = self.selected_scan_num
-        scan_array = self._get_selected_scan_array()
-
-        return scan_array.rt_arr[idx]
 
     # ***ADDING/REMOVING SAMPLES***
     def add_samples(
@@ -442,91 +408,6 @@ class SampleViewer(
         self.viewSampleStack.rebuild_plots()
 
     # ***CHROMATOGRAM SCANNING***
-    def set_selected_spectrum(
-        self,
-        uuid: Optional['SampleUUID'] = None,
-        rt: Optional[float] = None,
-        idx: Optional[int] = None,
-    ):
-        """
-        Sets the viewer's currently selected spectrum.
-
-        Either rt or scan idx can be provided. If rt is given,
-        will calculate the scan idx based on the currently selected ms_level
-
-        :param uuid:
-        :param rt:
-        :param idx:
-        :return:
-        """
-        self.selected_spectrum_sample_uuid = uuid
-
-        if not self.selected_ms_level:
-            raise ValueError(
-                "No ms_level selected"
-            )
-
-        if not rt and not idx:
-            raise ValueError(
-                "Neither rt nor idx specified"
-            )
-
-        if idx:
-            self.selected_scan_num = idx
-
-        else:  # rt given
-            # Calculate scan idx based on selected ms_level
-            scan_array = self._get_selected_scan_array()
-
-            self.selected_scan_num = scan_array.rt_to_scan_num(
-                rt
-            )
-
-
-        self.viewSampleStack.set_selected_scan(
-            selected_uuid=self.selected_spectrum_sample_uuid,
-            scan_num=self.selected_scan_num,
-            ms_level=self.selected_ms_level,
-        )
-        # self.new_tool_manager.set_selection()
-
-    def update_spectrum_plot(
-        self,
-        uuid: Optional['SampleUUID'] = None,
-        ms_level: Optional[int] = None,
-        idx: Optional[int] = None,
-    ) -> None:
-        """
-        Given an Sample UUID, ms_level, and either rt or idx,
-        updates the spectrum plot to display the specified MS spectrum
-
-        If not given any arguments, retrieves them from the object's state
-
-        :param uuid:
-        :param ms_level:
-        :param idx:
-        :return:
-        """
-        if not idx:
-            idx = self.selected_scan_num
-
-        if not ms_level:
-            ms_level = self.selected_ms_level
-
-        if not uuid:
-            uuid = self.selected_spectrum_sample_uuid
-
-        injection = self.model.getSample(uuid).injection
-        scan_array: 'ScanArray' = injection.get_scan_array(ms_level)
-
-        spectrum_array: SpectrumArray = scan_array.get_spectrum(
-            scan_num=idx,
-        )
-
-        self.plotMS.setSpectrumArray(
-            spectrum_array
-        )
-
     def on_chromatogram_hovered(
         self,
         uuid: 'SampleUUID',
@@ -538,14 +419,13 @@ class SampleViewer(
         :param pos:
         :return:
         """
-        match self.new_tool_manager.active_tool:
+        match self.tool_mgr.active_tool:
             case ToolType.GETSPECTRUM:
-                self.set_selected_spectrum(
+                self.selection_mgr.set_selected_spectrum_by_rt(
                     uuid=uuid,
-                    rt=pos.x()
+                    ms_level=self.selection_mgr.selected_ms_level,
+                    rt=pos.x(),
                 )
-
-                self.update_spectrum_plot()
 
             case ToolType.NONE:
                 # TODO: Display some useful info maybe?
@@ -561,7 +441,7 @@ class SampleViewer(
         :param region:
         :return:
         """
-        match self.new_tool_manager.xic_mode:
+        match self.tool_mgr.xic_mode:
             case XICMode.NONE:
                 pass
 
@@ -628,7 +508,7 @@ class SampleViewer(
         self,
         signal: tuple[int, float],
     ):
-        match self.new_tool_manager.active_tool:
+        match self.tool_mgr.active_tool:
             case ToolType.NONE:
                 return
 
@@ -636,17 +516,15 @@ class SampleViewer(
                 # Draw preview trace
                 hovered_mass_lane_idx: int = signal[0]
 
-                scan_array = self._get_selected_scan_array()
+                scan_array = self.selection_mgr.get_selected_scan_array()
 
-                hovered_ftr_ptr: 'FeaturePointer' = scan_array.make_feature_pointer(
-                    mass_lane_idx=hovered_mass_lane_idx,
-                    scan_idxs=None,  # Whole lane
-                )
-
-                self.viewSampleStack.update_chrom_highlights(
+                self.viewSampleStack.chrom_mgr.update_chrom_highlights(
                     [
-                        (self.selected_spectrum_sample_uuid,
-                         hovered_ftr_ptr)
+                        (
+                            self.selection_mgr.selected_sample_uuid,
+                            scan_array,
+                            hovered_mass_lane_idx,
+                        )
                     ]
                 )
 
@@ -654,67 +532,32 @@ class SampleViewer(
         """
         Called when user stops hovering on a signal
         """
-        self.viewSampleStack.clear_chrom_highlights(
-            uuid=self.selected_spectrum_sample_uuid
+        self.viewSampleStack.chrom_mgr.clear_chrom_highlights(
+            uuid=self.selection_mgr.selected_sample_uuid
         )
 
-    def on_ms_signal_selected(
+    def on_ms_signal_clicked(
         self,
         signal: tuple[int, float],
     ):
-        match self.new_tool_manager.active_tool:
+        match self.tool_mgr.active_tool:
             case ToolType.NONE:
                 return
             
             case ToolType.GETCOMPOUND:
                 selected_mass_lane_idx: int = signal[0]
-                mz: float = signal[1]
 
-                self.new_tool_manager.set_selection()
-                self.selected_ms_lane_idx = selected_mass_lane_idx
-
-                self.show_ensemble_selection_ui(
-                    selected_mass_lane_idx,
+                self.tool_mgr.set_selection()
+                self.selection_mgr.set_selected_ms_lane_idx(
+                    selected_mass_lane_idx
                 )
 
-    def show_ensemble_selection_ui(
-        self,
-        mass_lane_idx: int,
-    ):
-        """
-        Triggers showing 'ensemble selection' tools in the plot stack.
-
-        :param mass_lane_idx: idx of mass lane to use as reference
-        :return:
-        """
-        self.viewSampleStack.clear_scan_window_selector()
-
-        scan_array = self._get_selected_scan_array()
-
-        ftr_ptr: 'FeaturePointer' = scan_array.make_feature_pointer(
-            mass_lane_idx=mass_lane_idx,
-            scan_idxs=None,  # Whole lane
-        )
-
-        # Get default rt edges to place the window initially
-        apex_idx: int = ftr_ptr.get_max_intsy_scan_num(scan_array)
-        rt_start = scan_array.rt_arr[apex_idx - 5]
-        rt_end = scan_array.rt_arr[apex_idx + 5]
-
-        # Place window
-        self.viewSampleStack.show_scan_window_selector(
-            uuid=self.selected_spectrum_sample_uuid,
-            bounds=(rt_start, rt_end),
-            display_arr=ftr_ptr.get_chrom_array(scan_array),
-        )
-
-    def clear_ensemble_selection_ui(
-        self,
-    ):
-        """
-        Clears the 'ensemble selection' ui
-        """
-        self.viewSampleStack.clear_scan_window_selector()
+                self.viewSampleStack.ensemble_ui_mgr.show_scan_window_selector(
+                    uuid=self.selection_mgr.selected_sample_uuid,
+                    ms_level=self.selection_mgr.selected_ms_level,
+                    mass_lane_idx=self.selection_mgr.selected_ms_lane_idx,
+                    initial_scan_window=5,  # TODO: Don't hardcode
+                )
 
     def keyPressEvent(self, event):
         """
@@ -724,55 +567,53 @@ class SampleViewer(
         """
         if event.key() == Qt.Key_Escape:
 
-            if self.new_tool_manager.active_tool != ToolType.NONE:
+            if self.tool_mgr.active_tool != ToolType.NONE:
                 # Cancel current tool and return to view mode
                 self.actionView.trigger()
                 event.accept()
                 return
 
         elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-            self.on_press_enter()
+            if self.tool_mgr.stage == ToolStage.CONFIGURING:
+                self.on_confirm_configuration()
+
             event.accept()
             return
         
         # Pass event for normal handling
         super().keyPressEvent(event)
 
-    def on_press_enter(
+    def on_confirm_configuration(
         self,
     ):
         """
         Only works during ToolStage.CONFIGURING
         """
-        if not self.new_tool_manager.stage == ToolStage.CONFIGURING:
-            return
-
-        match self.new_tool_manager.active_tool:
+        match self.tool_mgr.active_tool:
 
             case ToolType.GETCOMPOUND:
-                rt_bounds = self.viewSampleStack.get_selected_scan_window(
-                    uuid=self.selected_spectrum_sample_uuid
+                rt_bounds = self.viewSampleStack.ensemble_ui_mgr.get_selected_scan_window(
+                    uuid=self.selection_mgr.selected_sample_uuid,
                 )
+
+                if self.selection_mgr.selected_ms_level != 1:
+                    raise NotImplementedError(
+                        "Can only generate Ensembles using reference features"
+                        "from MS1 scans"
+                    )
 
                 if rt_bounds == (0, 0):
                     # No scan window selector for some reason
                     return
 
-                if not self.selected_ms_lane_idx:
+                if not self.selection_mgr.selected_ms_lane_idx:
                     # No mass lane has been selected
                     return
 
-                # Convert rt_bounds to scan number
-                scan_array = self._get_selected_scan_array()
-                scan_window: tuple[int, int] = tuple( # type: ignore
-                    scan_array.rt_to_scan_num(x) for x in rt_bounds
-                )
-
-                self.request_ensemble_generation(
-                    injection=self._get_selected_injection(),
-                    mass_lane_idx=self.selected_ms_lane_idx,
-                    scan_window=scan_window,
-                    **self.ensemble_extraction_params,
+                self.ensemble_extraction_mgr.request_using_current_params(
+                    sample_uuid=self.selection_mgr.selected_sample_uuid,
+                    mass_lane_idx=self.selection_mgr.selected_ms_lane_idx,
+                    rt_bounds=rt_bounds,
                 )
 
                 self.actionView.trigger()
@@ -838,60 +679,3 @@ class SampleViewer(
                     item.setCheckState(
                         Qt.CheckState.Checked
                     )
-
-    def request_ensemble_generation(
-        self,
-        injection: 'Injection',
-        mass_lane_idx: int,
-        scan_window: tuple[int, int],
-        ms1_corr_threshold: float,
-        ms2_corr_threshold: float,
-        min_intsy: float,
-        use_rel_intsy: bool,
-    ):
-        if self.selected_ms_level != 1:
-            raise NotImplementedError(
-                "Can only generate Ensembles using reference features"
-                "from MS1 scans"
-            )
-
-        scan_array = injection.get_scan_array(ms_level=1)
-        search_ftr_ptr = scan_array.make_feature_pointer(
-            mass_lane_idx=mass_lane_idx,
-            scan_idxs=np.arange(scan_window[0], scan_window[1] + 1),
-        )
-
-        input_params: 'EnsembleInputParams' = EnsembleInputParams(
-            search_ftr_ptr=search_ftr_ptr,
-            injection=injection,
-            ms1_corr_threshold=ms1_corr_threshold,
-            ms2_corr_threshold=ms2_corr_threshold,
-            min_intsy=min_intsy,
-            use_rel_intsy=use_rel_intsy,
-        )
-
-        print(
-            f"Selected scan number:"
-            f"{self.selected_scan_num}"
-        )
-
-        self.sigEnsembleGenerationRequested.emit(
-            input_params
-        )
-
-    # *** ENSEMBLE EXTRACTION ***
-    # TODO: Refactor into separate class?
-    def show_ensemble_extraction_settings_menu(self):
-        button_pos = self.toolGetCmpdMenu.mapToGlobal(
-            QtCore.QPoint(0, 0)
-        )
-
-        self.ensemble_extraction_settings_menu.move(
-            button_pos.x() - self.ensemble_extraction_settings_menu.size().width(),
-            button_pos.y() + self.toolGetCmpdMenu.height(),
-            )
-
-        self.ensemble_extraction_settings_menu.show()
-
-
-

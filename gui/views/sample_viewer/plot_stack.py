@@ -7,15 +7,15 @@ from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtGui import QStandardItem
 from PyQt5.QtCore import Qt, QPointF
 import pyqtgraph as pg
-import numpy as np
 
 
+from gui.views.sample_viewer.sample_widget_manager import SampleWidgetManager
+from gui.views.sample_viewer.chromatogram_data_manager import ChromatogramDataManager
+from gui.views.sample_viewer.ensemble_ui_manager import EnsembleUIManager
 from gui.views.sample_viewer.tools import (
     ToolType, XICMode, ToolStage, ExtractionMode,
 )
-from gui.widgets.ChromPlotWidget import ChromViewBox
 from gui.widgets.SampleWidget import SampleWidget
-from gui.utils.ms_arrays import strip_empty_values
 
 from typing import Optional, Literal, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -55,16 +55,11 @@ class SampleStackView(
         """
         super().__init__(parent)
         self.model: Optional['SampleViewerItemModel'] = None
-        self._uuid_to_samplewidget: dict['SampleUUID', SampleWidget] = {}
 
         # Local copy of tool state
         self._tool_type: ToolType = ToolType.NONE
         self._tool_stage: ToolStage = ToolStage.IDLE
-        self._xic_mode: XICMode = XICMode.NONE
-        self.current_extraction_mode: ExtractionMode = ExtractionMode.NONE
-        self.current_extraction_range: Optional[tuple[float, float]] = None
 
-        self.current_ms_level: Literal[1, 2] = 1
         self._currently_hovered_uuid: Optional[int] = None
 
         # Container for stacked plots
@@ -78,6 +73,23 @@ class SampleStackView(
 
         if model:
             self.setModel(model)
+
+        # SampleWidgetManager
+        self.sample_wdgt_mgr: SampleWidgetManager = SampleWidgetManager(
+            container_layout=self.container_layout,
+        )
+
+        # ChromatogramDataManager
+        self.chrom_mgr: ChromatogramDataManager = ChromatogramDataManager(
+            model=self.model,
+            widget_manager=self.sample_wdgt_mgr,
+        )
+
+        # EnsembleUIManager
+        self.ensemble_ui_mgr: EnsembleUIManager = EnsembleUIManager(
+            model=self.model,
+            widget_manager=self.sample_wdgt_mgr,
+        )
 
         # For IDE type-checking:
         self: 'ToolStateListener'
@@ -105,6 +117,10 @@ class SampleStackView(
             self.on_rows_moved
         )
 
+        self.sample_wdgt_mgr.set_model(model)
+        self.chrom_mgr.set_model(model)
+        self.ensemble_ui_mgr.set_model(model)
+
         # Rebuild plots
         self.rebuild_plots()
 
@@ -112,40 +128,36 @@ class SampleStackView(
         self,
         extraction_range: tuple[float, float]
     ):
-        self.current_extraction_range = extraction_range
-        self.update_chroms_arrays()
+        self.chrom_mgr.set_extraction_range(extraction_range)
 
-    def set_selected_scan(
+    def on_spectrum_selected(
         self,
         selected_uuid: 'SampleUUID',
+        ms_level: Literal[1, 2],
         scan_num: int,
-        ms_level: int,
     ):
         """
-        Called when user selects a scan in the chromatogram.
-
-        Draws a selection indicator
+        Draws an indicator in the appropriate widget, showing where
+        the scan was selected
         """
-        for uuid, sample_widget in self._uuid_to_samplewidget.items():
+        # Clear all indicators
+        for sample_uuid, widget in self.sample_wdgt_mgr.get_all_widgets().items():
 
-            if uuid != selected_uuid:
-                # Clear selection indicator
-                sample_widget.setSelectionIndicatorVisible(False)
+            # If this is the requested widget, draw indicator
+            if sample_uuid == selected_uuid:
+                # Get rt
+                rt = self.model.getInjection(
+                    sample_uuid
+                ).get_scan_array(
+                    ms_level
+                ).rt_arr[scan_num]
 
-                # Move on
-                continue
+                widget.setSelectionIndicator(xpos=rt)
+                widget.setSelectionIndicatorVisible(True)
 
-            sample_widget = self._uuid_to_samplewidget[uuid]
-
-            # Get rt
-            scan_array = self.model.getInjection(uuid).get_scan_array(ms_level)
-            rt = scan_array.rt_arr[scan_num]
-
-            sample_widget.setSelectionIndicator(
-                xpos=rt
-            )
-            sample_widget.setSelectionIndicatorVisible(True)
-
+            # Otherwise hide indicator
+            else:
+                widget.setSelectionIndicatorVisible(False)
 
     def rebuild_plots(self):
         """
@@ -153,165 +165,22 @@ class SampleStackView(
          (deletes everything and starts over)
         """
         # Clear existing plots
-        self.clear_plots()
+        self.sample_wdgt_mgr.remove_all_widgets()
 
         # Add new plots
         for row_idx in range(0, self.model.rowCount()):
-
             sample_uuid = self.model.getSampleUuidAtRow(row_idx)
             if not sample_uuid:
                 continue
 
-            self.create_sample_widget_at_row(
-                sample_uuid=sample_uuid,
+            widget = self.sample_wdgt_mgr.create_widget(
+                uuid=sample_uuid,
                 row_idx=row_idx,
             )
 
-        self.update_chroms_arrays()
-        self.update_fprint_arrays()
+            self.connect_sample_widget_signals(widget)
 
-        print("Defaulting to link_y = True; expose to user!!")
-        self.link_chrom_widget_axes(
-            link_x=True,
-            link_y=True,
-        )
-
-    def update_chroms_arrays(
-        self
-    ):
-        """
-        Iterate over all visible chrom_widgets and update the
-        displayed chromatogram
-        :return:
-        """
-        for uuid, sample_widget in self._uuid_to_samplewidget.items():
-            injection: 'Injection' = self.model.getInjection(uuid)
-
-            if not injection:
-                continue
-
-            scan_array = injection.get_scan_array(
-                ms_level=self.current_ms_level
-            )
-            chrom_array: np.array
-            match self._xic_mode:
-                case XICMode.NONE:
-                    chrom_array = scan_array.get_bpc()
-
-                case XICMode.BPC:
-                    chrom_array = scan_array.get_bpc(
-                        mz_range=self.current_extraction_range,
-                    )
-
-                case XICMode.XIC:
-                    chrom_array = scan_array.get_xic(
-                        mz_range=self.current_extraction_range,
-                    )
-
-                case _:
-                    raise ValueError(
-                        f"Invalid chromatogram type specified: "
-                        f"{self.current_extraction_mode}"
-                    )
-
-            sample_widget.setChromArray(
-                strip_empty_values(chrom_array), # Remove rt == 0
-            )
-
-    def update_chrom_highlights(
-        self,
-        highlights: list[tuple['SampleUUID', 'FeaturePointer']]
-    ):
-        """
-        Given a list of (SampleUUID, FeaturePointer) tuples,
-        updates the appropriate plots to display a little "highlight trace".
-
-        These are intended to be transient
-        """
-        for uuid, ftr_ptr in highlights:
-            sample_widget = self._uuid_to_samplewidget[uuid]
-
-            chrom = ftr_ptr.get_chrom_array(
-                scan_array=self.model.getInjection(uuid).get_scan_array(
-                    ms_level=self.current_ms_level,
-                )
-            )
-
-            sample_widget.addHighlight(
-                chrom=chrom,
-                replace=True,
-            )
-
-    def clear_chrom_highlights(
-        self,
-        uuid: 'SampleUUID'
-    ):
-        """
-        Removes highlights from selected sample
-        """
-        sample_widget = self._uuid_to_samplewidget.get(uuid)
-        if sample_widget:
-            sample_widget.clearHighlights()
-
-    def update_fprint_arrays(self):
-        """
-        Iterate over all visible SampleWidgets and update the
-        displayed fingerprint
-        :return:
-        """
-        for uuid, sample_widget in self._uuid_to_samplewidget.items():
-            fprint: 'Fingerprint' = self.model.getFingerprint(uuid)
-
-            if not fprint:
-                continue
-
-            sample_widget.setFprintArray(
-                array=fprint.array,
-                descriptors=fprint.descriptors,
-            )
-
-    def clear_plots(self):
-        for uuid, sample_widget in self._uuid_to_samplewidget.items():
-            sample_widget.deleteLater()
-
-        self._uuid_to_samplewidget = {}
-
-    def create_sample_widget_at_row(
-        self,
-        sample_uuid: 'SampleUUID',
-        row_idx: int,
-    ):
-        """
-        Create and add a SampleWidget for this item.
-        """
-        sample_widget: SampleWidget = self.create_sample_widget(
-            uuid=sample_uuid
-        )
-
-        self._uuid_to_samplewidget[sample_uuid] = sample_widget
-
-        position = self._get_layout_position_for_row(row_idx)
-        self.container_layout.insertWidget(
-            position,
-            sample_widget,  # type: ignore
-        )
-
-    def create_sample_widget(
-        self,
-        uuid: 'SampleUUID',
-    ) -> SampleWidget:
-        """
-        Given an Sample UUID, returns a SampleWidget
-        """
-        sample = self.model.getSample(uuid)
-
-        sample_widget = SampleWidget()
-        sample_widget.setName(sample.name)
-        sample_widget.setSampleUuid(uuid)
-
-        self.connect_sample_widget_signals(sample_widget)
-
-        return sample_widget
+        self.chrom_mgr.update_all_plots()
 
     def connect_sample_widget_signals(
         self,
@@ -337,53 +206,6 @@ class SampleStackView(
             self.on_fprint_hovered
         )
 
-    def link_chrom_widget_axes(
-        self,
-        link_x: bool,
-        link_y: bool,
-    ):
-        """
-        Iterates over the chrom_widgets and links their axes together
-        :return:
-        """
-        previous_chrom_vb: Optional[ChromViewBox] = None
-        previous_fprint_vb: Optional[pg.ViewBox] = None
-        for uuid, sample_widget in self._uuid_to_samplewidget.items():
-            if not previous_chrom_vb:
-                previous_chrom_vb = sample_widget.chromPlotWidget.pi.vb
-                previous_fprint_vb = sample_widget.fprintPlotWidget.pi.vb
-                continue
-
-            vb_chrom: ChromViewBox = sample_widget.chromPlotWidget.pi.vb
-            vb_fprint: pg.ViewBox = sample_widget.fprintPlotWidget.pi.vb
-            if link_x:
-                vb_chrom.setXLink(previous_chrom_vb)
-                vb_fprint.setXLink(previous_fprint_vb)
-
-            if link_y:
-                vb_chrom.setYLink(previous_chrom_vb)
-                vb_fprint.setYLink(previous_fprint_vb)
-
-    def show_feature_pointer_trace(
-        self,
-        feature_pointer: 'FeaturePointer',
-        sample_uuid: 'SampleUUID',
-    ) -> None:
-        """
-        Given a FeaturePointer and a SampleUUID, updates
-        that sample's widget to show an overlay of the FeaturePointer
-        """
-        sample_widget = self._uuid_to_samplewidget.get(sample_uuid)
-        if not sample_widget:
-            return
-
-        scan_array = self.model.getInjection(sample_uuid).get_scan_array(
-            ms_level=self.current_ms_level
-        )
-
-        rt = feature_pointer.get_retention_times(scan_array)
-        intsy = feature_pointer.get_intensity_values(scan_array)
-
     def on_chromatogram_hover(
         self,
         uuid: 'SampleUUID',
@@ -396,7 +218,6 @@ class SampleStackView(
         :param uuid: UUID of injection that's hovered
         :param pos: Position of mouse in scene coordinates
         """
-
         self._currently_hovered_uuid = uuid
 
         match self._tool_type:
@@ -405,7 +226,7 @@ class SampleStackView(
 
             case ToolType.GETSPECTRUM:
                 # Get the ChromPlotWidget being hovered?
-                sample_widget: SampleWidget = self._uuid_to_samplewidget[uuid]
+                sample_widget: SampleWidget = self.sample_wdgt_mgr.get_widget(uuid)
 
                 # Move slide selector in the hovered chromatogram
                 sample_widget.setSliderSelector(
@@ -414,7 +235,7 @@ class SampleStackView(
                 sample_widget.setSliderSelectorVisible(True)
 
                 # Set mouse cursor to be pointing hand
-                self.setCursor(QtCore.Qt.PointingHandCursor)
+                self.setCursor(QtCore.Qt.PointingHandCursor)  # type: ignore
 
                 # Emit signal
                 self.sigChromatogramHovered.emit(
@@ -451,11 +272,11 @@ class SampleStackView(
         :param uuid:
         :return:
         """
-        self._uuid_to_samplewidget[uuid].setSliderSelectorVisible(False)
+        self.sample_wdgt_mgr.get_widget(uuid).setSliderSelectorVisible(False)
 
         if self._currently_hovered_uuid == uuid:
             self._currently_hovered_uuid = None
-            self.setCursor(QtCore.Qt.ArrowCursor)
+            self.setCursor(QtCore.Qt.ArrowCursor)  # type: ignore
 
     def on_fprint_hovered(
         self,
@@ -471,7 +292,7 @@ class SampleStackView(
         """
 
         # Update label in *all* Fprint plots
-        for uuid, sample_widget in self._uuid_to_samplewidget.items():
+        for uuid, sample_widget in self.sample_wdgt_mgr.get_all_widgets().items():
             fprint: 'Fingerprint' = self.model.getSample(uuid).fingerprint
 
             if not fprint:
@@ -494,11 +315,12 @@ class SampleStackView(
         uuid: 'SampleUUID' = item.data(
             role=self.model.UuidRole
         )
-        if uuid not in self._uuid_to_samplewidget:
+        widget = self.sample_wdgt_mgr.get_widget(uuid)
+        if not widget:
             return
 
         # Toggle visibility based on check state
-        self._uuid_to_samplewidget[uuid].setVisible(
+        widget.setVisible(
             item.checkState() == Qt.Checked
         )
 
@@ -527,7 +349,7 @@ class SampleStackView(
                 # This means there is nothing at row_idx, i.e. sample moved
                 continue
 
-            if sample_uuid not in self._uuid_to_samplewidget:
+            if not self.sample_wdgt_mgr.get_widget(sample_uuid):
                 # This sample is new to viewer, therefore this is an INSERTION
                 new_samples.append(
                     (row_idx, sample_uuid)
@@ -540,14 +362,22 @@ class SampleStackView(
 
         # Handle insertions
         for row_idx, sample_uuid in new_samples:
-            self.create_sample_widget_at_row(
-                sample_uuid=sample_uuid,
+
+            widget = self.sample_wdgt_mgr.create_widget(
+                uuid=sample_uuid,
                 row_idx=row_idx,
             )
 
-        self.update_chroms_arrays()
-        self.update_fprint_arrays()
-        self._relink_axes_if_needed()
+            self.connect_sample_widget_signals(widget)
+
+            # self.create_sample_widget_at_row(
+            #     sample_uuid=sample_uuid,
+            #     row_idx=row_idx,
+            # )
+
+        self.chrom_mgr.update_all_plots()
+        # self.update_chroms_arrays()
+        # self.update_fprint_arrays()
 
     def on_rows_removed(
         self,
@@ -558,20 +388,20 @@ class SampleStackView(
         # Iterate deleted rows backwards to avoid idx issues
         for row_idx in range(last, first - 1, -1):
             uuid_to_remove: Optional[ 'SampleUUID' ] = None
-            for uuid, widget in self._uuid_to_samplewidget.items():
+            for uuid, widget in self.sample_wdgt_mgr.get_all_widgets().items():
                 if self._widget_was_at_row(widget, row_idx):
                     uuid_to_remove = uuid
                     break
 
             if uuid_to_remove:
-                widget = self._uuid_to_samplewidget[uuid_to_remove]
+                widget = self.sample_wdgt_mgr.get_widget(uuid_to_remove)
                 self.container_layout.removeWidget(widget)
 
                 widget.deleteLater()
 
-                del self._uuid_to_samplewidget[uuid_to_remove]
+                self.sample_wdgt_mgr.remove_widget(uuid_to_remove)
 
-        self._relink_axes_if_needed()
+        self.chrom_mgr.link_chrom_widget_axes()
 
     def on_rows_moved(self):
         # TODO: This isn't called by QStandardItem model. Meant for proxy models
@@ -582,9 +412,10 @@ class SampleStackView(
             if item:
                 uuid = item.data(role=self.model.UuidRole)
 
-                if uuid in self._uuid_to_samplewidget:
+                widget = self.sample_wdgt_mgr.get_widget(uuid)
+                if widget:
                     widgets.append(
-                        self._uuid_to_samplewidget[uuid]
+                        widget
                     )
                 else:
                     widgets.append(None)  # Placeholder for missing widgets
@@ -609,22 +440,15 @@ class SampleStackView(
         match new_tool:
             case ToolType.NONE:
                 # Reset spectrum selectors (hide)
-                for _, sample_widget in self._uuid_to_samplewidget.items():
+                for _, sample_widget in self.sample_wdgt_mgr.get_all_widgets().items():
                     sample_widget.setSliderSelectorVisible(False)
 
     def on_tool_stage_changed(self, stage: ToolStage) -> None:
         pass
 
     def on_xic_mode_changed(self, mode: XICMode) -> None:
-        self._xic_mode = mode
-        self.update_chroms_arrays()
-   
-    def on_ms_level_changed(
-        self,
-        ms_level: Literal[1, 2]
-    ):
-        self.current_ms_level = ms_level
-        self.update_chroms_arrays()
+        # self._xic_mode = mode
+        self.chrom_mgr.set_xic_mode(mode)
 
     def on_fprints_toggled(
         self,
@@ -636,7 +460,7 @@ class SampleStackView(
         :param show_fprints:
         :return:
         """
-        for _, sample_widget in self._uuid_to_samplewidget.items():
+        for _, sample_widget in self.sample_wdgt_mgr.get_all_widgets().items():
             sample_widget.fprintPlotWidget.setVisible(
                 show_fprints
             )
@@ -645,43 +469,10 @@ class SampleStackView(
         self,
         colorbaritem: pg.ColorBarItem,
     ):
-        for _, chrom_widget in self._uuid_to_samplewidget.items():
+        for _, chrom_widget in self.sample_wdgt_mgr.get_all_widgets().items():
             colorbaritem.setImageItem(
                 chrom_widget.fprintPlotWidget.ImageItem
             )
-
-
-    def _get_layout_position_for_row(
-        self,
-        row_idx: int
-    ) -> int:
-        """
-        Find where in the layout a widget at model row_idx should go
-        """
-        position = 0
-        for i in range(row_idx):
-            item = self.model.item(i)
-
-            if not item:
-                continue
-
-            uuid = item.data(role=self.model.UuidRole)
-
-            if uuid in self._uuid_to_samplewidget:
-                position += 1
-
-        return position
-
-
-    def _relink_axes_if_needed(self):
-        """
-        Placeholder, just calls regular axes linking func for now
-        """
-        self.link_chrom_widget_axes(
-            link_x=True,
-            link_y=True,
-        )
-
 
     def _widget_was_at_row(
         self,
@@ -689,49 +480,3 @@ class SampleStackView(
         row: int,
     ):
         pass
-
-    def show_scan_window_selector(
-        self,
-        uuid: 'SampleUUID',
-        bounds: tuple[float, float],
-        display_arr: Optional[np.ndarray] = None,
-    ):
-        """
-        Shows a 'scan window selector' that can be
-        used to define the duration with which a user
-        would like to extract an Ensemble
-
-        :param uuid: Sample UUID
-        :param bounds: tuple(start, end) in rt
-        :param display_arr: (Optional) a chromarray to draw while user selects
-        """
-        sample_widget: SampleWidget = self._uuid_to_samplewidget[uuid]
-
-        sample_widget.addWindowSelector(
-            bounds=bounds,
-            display_arr=display_arr,
-        )
-
-    def clear_scan_window_selector(self):
-        """
-        Removes all the graphics generated by .show_scan_window_selector()
-        """
-        for uuid, sample_widget in self._uuid_to_samplewidget.items():
-            sample_widget.clearWindowSelector()
-
-    def get_selected_scan_window(
-        self,
-        uuid: 'SampleUUID'
-    ) -> tuple[float, float]:
-        """
-        Returns a tuple (start, end) defining whatever region is currently
-        highlighted by the scan window selector.
-
-        If no scan window selector is present, returns (0, 0)
-        """
-        sample_widget = self._uuid_to_samplewidget[uuid]
-        return sample_widget.getWindowSelectorBounds()
-
-
-
-
