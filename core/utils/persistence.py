@@ -356,7 +356,7 @@ def deserialize_injection(
         )
         ms2_scan_array = ScanArray(**ms2_scan_array_dict)
 
-   # Finally, assemble into Injection object
+    # Finally, assemble into Injection object
     injection = Injection(
         scan_array_ms1=ms1_scan_array,
         scan_array_ms2=ms2_scan_array,
