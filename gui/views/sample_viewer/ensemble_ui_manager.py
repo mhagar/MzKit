@@ -1,5 +1,6 @@
-from PyQt5 import QtCore
+from PyQt5 import QtCore, QtGui
 import pyqtgraph as pg
+
 
 from typing import Optional, Literal, TYPE_CHECKING
 
@@ -31,6 +32,69 @@ class EnsembleUIManager(QtCore.QObject):
         model: 'SampleViewerItemModel',
     ):
         self._model = model
+
+    def display_ensembles_for_all_samples(
+        self,
+        ms_level: Literal[1, 2] = 1,
+    ):
+        """
+        Adds ensemble overlays to all visible widgets
+        """
+        for uuid, widget in self._widget_mgr.get_all_widgets().items():
+            self.clear_ensembles_for_sample(
+                uuid=uuid,
+            )
+
+            self.display_ensembles_for_sample(
+                uuid=uuid,
+                ms_level=ms_level,
+            )
+
+    def display_ensembles_for_sample(
+        self,
+        uuid: 'SampleUUID',
+        ms_level: Literal[1, 2] = 1,
+    ):
+        """
+        Renders all ensembles for a given sample as colored peak overlays
+
+        :param uuid: Sample UUID
+        :param ms_level: MS level to display (1 or 2, default 1)
+        """
+        injection = self._model.getInjection(uuid)
+        if not injection:
+            return
+
+        widget = self._widget_mgr.get_widget(uuid)
+        if not widget:
+            return
+
+        # Clear existing peaks first to prevent stale state
+        widget.clearPeaks()
+
+        # Iterate through injection's ensembles and add peak overlays
+        for idx, (ensemble_uuid, ensemble) in enumerate(
+            injection.ensembles.items()
+        ):
+            # Get base cofeature chrom.
+            chrom_arr = ensemble.get_base_chromatogram(ms_level)
+
+            widget.addPeak(
+                chrom=chrom_arr,
+                uuid=ensemble_uuid,
+                color=_generate_ensemble_color(ensemble_uuid)
+            )
+
+    def clear_ensembles_for_sample(
+        self,
+        uuid: 'SampleUUID',
+    ):
+        """
+        Remove all ensemble overlays for given sample
+        """
+        widget = self._widget_mgr.get_widget(uuid)
+        if widget:
+            widget.clearPeaks()
 
     def show_scan_window_selector(
         self,
@@ -95,3 +159,19 @@ class EnsembleUIManager(QtCore.QObject):
         """
         sample_widget = self._widget_mgr.get_widget(uuid)
         return sample_widget.getWindowSelectorBounds()
+
+
+def _generate_ensemble_color(
+    idx: int,
+) -> QtGui.QColor:
+    """
+    Avoids generating grey, which is used for raw data
+    """
+    return pg.intColor(
+        idx,
+        hues=12,
+        minValue=150,
+        maxValue=255,
+        sat=128,
+    )
+

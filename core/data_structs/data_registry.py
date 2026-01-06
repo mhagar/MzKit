@@ -252,7 +252,6 @@ class DataRegistry(
 
         return None
 
-
     def merge_samples(
         self,
         source: 'Sample',
@@ -285,11 +284,13 @@ class DataRegistry(
             destination.set_fingerprint(
                 source.fingerprint
             )
+            self.sigSampleUpdated.emit(destination)
 
         if not destination.injection:
             destination.set_injection(
                 source.injection
             )
+            self.sigSampleUpdated.emit(destination)
 
         # Merge the metadata attribute
         for key, value in source.metadata:
@@ -297,6 +298,17 @@ class DataRegistry(
 
     def sample_count(self) -> int:
         return len(self._samples)
+
+    def notify_sample_updated(
+        self,
+        uuid: 'SampleUUID',
+    ):
+        """
+        Emits sigSampleUpdated
+        """
+        self.sigSampleUpdated.emit(
+            self.get_sample(uuid)
+        )
 
     def update_sample_metadata(
         self,

@@ -54,6 +54,9 @@ class ChromatogramDataManager(QtCore.QObject):
         self._current_ms_level = ms_level
         self.update_all_chromatograms()
 
+    def get_ms_level(self) -> Literal[1, 2]:
+        return self._current_ms_level
+
     def set_xic_mode(
         self,
         mode: XICMode,
@@ -82,19 +85,22 @@ class ChromatogramDataManager(QtCore.QObject):
         Updates chromatograms for all visible widgets
         """
         for uuid, widget in self._widget_mgr.get_all_widgets().items():
+            self.update_chromatogram(uuid)
 
-            injection = self._model.getInjection(uuid)
-            if not injection:
-                continue
+        self.link_chrom_widget_axes()
 
-            scan_array: 'ScanArray' = injection.get_scan_array(
-                self._current_ms_level
-            )
-            chrom_array: 'ChromArray' = self._get_chrom_array(scan_array)
-            widget.setChromArray(
-                strip_empty_values(chrom_array)
-            )
+    def update_chromatogram(
+        self,
+        uuid: "SampleUUID",
+    ):
+        injection = self._model.getInjection(uuid)
+        if not injection:
+            return
 
+        scan_array: "ScanArray" = injection.get_scan_array(self._current_ms_level)
+        chrom_array: "ChromArray" = self._get_chrom_array(scan_array)
+
+        self._widget_mgr.get_widget(uuid).setChromArray(strip_empty_values(chrom_array))
         self.link_chrom_widget_axes()
 
     def _get_chrom_array(
@@ -156,12 +162,18 @@ class ChromatogramDataManager(QtCore.QObject):
         Update fingerprints for all visible widgets
         """
         for uuid, widget in self._widget_mgr.get_all_widgets().items():
-            fprint = self._model.getFingerprint(uuid)
-            if fprint:
-                widget.setFprintArray(
-                    fprint.array,
-                    fprint.descriptors,
-                )
+            self.update_fingerprint(uuid)
+
+    def update_fingerprint(
+        self,
+        uuid: 'SampleUUID'
+    ):
+        fprint = self._model.getFingerprint(uuid)
+        if fprint:
+            self._widget_mgr.get_widget(uuid).setFprintArray(
+                fprint.array,
+                fprint.descriptors,
+            )
 
     def update_all_plots(self):
         if not self._model:

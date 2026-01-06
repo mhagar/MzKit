@@ -241,7 +241,11 @@ class SelectionManager(
         self._selected_ms_lane = None
         self.sigMSLaneSelected.emit(None)
 
-    #
+    # ***SELECTED SCAN NUM***
+    def get_selected_scan_num(
+        self
+    ) -> int:
+        return self._selected_scan_num
 
 
 

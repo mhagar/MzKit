@@ -255,6 +255,22 @@ class SampleController(QtCore.QObject):
         self,
         ensembles: list['Ensemble'],
     ):
+        """
+        Notify DataRegistry that samples have been updated
+        """
+        sample_uuids: set['SampleUUID'] = set()
+        for ensemble in ensembles:
+            injection = ensemble.injection
+            sample_uuid = injection.sample_uuid
+
+            if sample_uuid not in sample_uuids:
+                self.data_registry.notify_sample_updated(
+                    sample_uuid
+                )
+
+                sample_uuids.add(sample_uuid)
+
+        # TODO: Temporary; opens Ensemble in viewer
         self.sigViewEnsemble.emit(ensembles[0])
 
 

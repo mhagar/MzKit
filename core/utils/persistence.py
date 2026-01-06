@@ -11,12 +11,21 @@ from core.data_structs import (
     ScanArray,
 )
 from core.data_structs.scan_array import ScanArrayParameters
+from core.data_structs.ensemble import (
+    IonAnnotation,
+    IonPairAnnotation,
+    MzDiffAnnotation,
+)
 
 import logging
 import zipfile
 import pickle
 import json
 from pathlib import Path
+from dataclasses import asdict
+
+from find_mfs import FormulaCandidate
+from molmass import Formula
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -195,14 +204,36 @@ def serialize_injection_ensembles(
     ensemble_data: list[dict] = []
     for ensemble in sample.injection.ensembles.values():
 
+        # Convert ion_annots dict values from dataclass to dict
+        serialized_ion_annots = {}
+        for key, ion_annot in ensemble.ion_annots.items():
+            annot_dict = asdict(ion_annot)
+            # Convert FormulaCandidate to a serializable format
+            annot_dict['formula'] = {
+                'formula_str': str(ion_annot.formula.formula),
+                'error_ppm': ion_annot.formula.error_ppm,
+            }
+            serialized_ion_annots[key] = annot_dict
+
+        # Convert ion_pair_annots list from dataclass to dict
+        serialized_ion_pair_annots = []
+        for ion_pair_annot in ensemble.ion_pair_annots:
+            annot_dict = asdict(ion_pair_annot)
+            # Convert Formula to string
+            annot_dict['formula_diff'] = str(ion_pair_annot.formula_diff)
+            serialized_ion_pair_annots.append(annot_dict)
+
+        # Convert mz_diffs to dicts (these should be fine but convert to be safe)
+        serialized_mz_diffs = [asdict(mz_diff) for mz_diff in ensemble.mz_diffs]
+
         # Must be serialized without injection reference
         ensemble_dict = {
             'uuid': ensemble.uuid,
             'ms1_cofeatures': ensemble.ms1_cofeatures,
             'ms2_cofeatures': ensemble.ms2_cofeatures,
-            'mz_diffs': ensemble.mz_diffs,
-            'ion_annots': ensemble.ion_annots,
-            'ion_pair_annots': ensemble.ion_pair_annots,
+            'mz_diffs': serialized_mz_diffs,
+            'ion_annots': serialized_ion_annots,
+            'ion_pair_annots': serialized_ion_pair_annots,
             # Injection reference not serialized - will be assigned on loading
         }
 
@@ -393,8 +424,57 @@ def deserialize_injection_ensembles(
     ensemble_data: list[dict] = pickle.loads(zf.read(ensembles_path))
 
     for e_dict in ensemble_data:
-        # Instantiate ensemble with everything but injection set:
-        ensemble = Ensemble(**e_dict)
+        # Reconstruct ion_annots from serialized dicts
+        reconstructed_ion_annots = {}
+        for key, annot_dict in e_dict['ion_annots'].items():
+            # Reconstruct FormulaCandidate
+            formula_data = annot_dict['formula']
+            formula_candidate = FormulaCandidate(
+                formula=Formula(formula_data['formula_str']),
+                error_ppm=formula_data['error_ppm']
+            )
+
+            # Reconstruct IonAnnotation dataclass
+            ion_annot = IonAnnotation(
+                cofeature_idxs=annot_dict['cofeature_idxs'],
+                ms_level=annot_dict['ms_level'],
+                formula=formula_candidate,
+                uuid=annot_dict['uuid'],
+                user_label=annot_dict.get('user_label'),
+            )
+            reconstructed_ion_annots[key] = ion_annot
+
+        # Reconstruct ion_pair_annots from serialized dicts
+        reconstructed_ion_pair_annots = []
+        for annot_dict in e_dict['ion_pair_annots']:
+            # Reconstruct Formula from string
+            formula_diff = Formula(annot_dict['formula_diff'])
+
+            # Reconstruct IonPairAnnotation dataclass
+            ion_pair_annot = IonPairAnnotation(
+                ion_a_uuid=annot_dict['ion_a_uuid'],
+                ion_b_uuid=annot_dict['ion_b_uuid'],
+                relationship=annot_dict['relationship'],
+                formula_diff=formula_diff,
+                user_label=annot_dict.get('user_label'),
+            )
+            reconstructed_ion_pair_annots.append(ion_pair_annot)
+
+        # Reconstruct mz_diffs from serialized dicts
+        reconstructed_mz_diffs = [
+            MzDiffAnnotation(**mz_diff_dict)
+            for mz_diff_dict in e_dict['mz_diffs']
+        ]
+
+        # Instantiate ensemble with reconstructed annotations
+        ensemble = Ensemble(
+            uuid=e_dict['uuid'],
+            ms1_cofeatures=e_dict['ms1_cofeatures'],
+            ms2_cofeatures=e_dict['ms2_cofeatures'],
+            mz_diffs=reconstructed_mz_diffs,
+            ion_annots=reconstructed_ion_annots,
+            ion_pair_annots=reconstructed_ion_pair_annots,
+        )
 
         # This will call ensemble.set_injection():
         injection.add_ensemble(ensemble)

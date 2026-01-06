@@ -124,6 +124,33 @@
            </widget>
           </item>
           <item>
+           <widget class="Line" name="line_4">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="checkShowEnsembles">
+            <property name="text">
+             <string>Show Ensembles</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QSpinBox" name="spinSamplesPerWindow">
+            <property name="suffix">
+             <string> Sample(s) per Window</string>
+            </property>
+            <property name="minimum">
+             <number>1</number>
+            </property>
+           </widget>
+          </item>
+          <item>
            <spacer name="horizontalSpacer">
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
@@ -207,13 +234,16 @@
        </layout>
       </widget>
       <widget class="QWidget" name="verticalLayoutWidget_2">
-       <layout class="QVBoxLayout" name="verticalLayout_2" stretch="1,0">
+       <layout class="QVBoxLayout" name="verticalLayout_2" stretch="0,1,0">
         <property name="topMargin">
          <number>10</number>
         </property>
         <property name="bottomMargin">
          <number>10</number>
         </property>
+        <item>
+         <widget class="MSPlotWidget" name="plotEnsembleMS" native="true"/>
+        </item>
         <item>
          <widget class="MSPlotWidget" name="plotMS" native="true"/>
         </item>
@@ -324,6 +354,13 @@
            <widget class="Line" name="line_3">
             <property name="orientation">
              <enum>Qt::Vertical</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="checkShowEnsemblePreview">
+            <property name="text">
+             <string>Show Ensemble Preview</string>
             </property>
            </widget>
           </item>
@@ -454,5 +491,6 @@
   <slot>update_chrom_plot()</slot>
   <slot>update_spectrum_plot()</slot>
   <slot>on_ms_level_change_requested()</slot>
+  <slot>on_show_ensembles_toggled()</slot>
  </slots>
 </ui>

@@ -11,7 +11,7 @@ import numpy as np
 from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from core.data_structs import (
-        Sample, SampleUUID,
+        Sample, SampleUUID, EnsembleUUID,
         Injection, InjectionUUID,
         Fingerprint, FingerprintUUID,
     )
@@ -43,6 +43,21 @@ class SampleWidget(
         int,  # Index of fingerprint feature being hovered
     )
 
+    # Ensemble peak interaction signals
+    sigEnsemblePeakHovered = QtCore.pyqtSignal(
+        object,  # SampleUUID
+        object,  # EnsembleUUID
+        QtCore.QPointF,  # Position
+    )
+    sigEnsemblePeakLeaved = QtCore.pyqtSignal(
+        object,  # SampleUUID
+    )
+    sigEnsemblePeakClicked = QtCore.pyqtSignal(
+        object,  # SampleUUID
+        object,  # EnsembleUUID
+        int,  # MouseButton
+    )
+
 
     def __init__(
         self,
@@ -71,6 +86,17 @@ class SampleWidget(
         )
         self.fprintPlotWidget.sigFPrintHovered.connect(
             self.on_fprint_hovered
+        )
+
+        # Ensemble peak interaction signals
+        self.chromPlotWidget.sigEnsemblePeakHovered.connect(
+            self.on_ensemble_peak_hovered
+        )
+        self.chromPlotWidget.sigEnsemblePeakLeaved.connect(
+            self.on_ensemble_peak_leaved
+        )
+        self.chromPlotWidget.sigEnsemblePeakClicked.connect(
+            self.on_ensemble_peak_clicked
         )
 
         # TODO: Expose to user
@@ -156,24 +182,37 @@ class SampleWidget(
     def clearWindowSelector(self):
         self.chromPlotWidget.clearWindowSelector()
 
+    def addPeak(
+        self,
+        chrom: np.ndarray,
+        uuid: 'EnsembleUUID',
+        color: Optional[str] = None,
+    ):
+        """
+        Wrapper around ChromPlotWidget.addPeak
+        """
+        self.chromPlotWidget.addPeak(
+            chrom=chrom,
+            uuid=uuid,
+            color=color,
+        )
 
-    def addPeakOverlay(
+    def removePeak(
+        self,
+        uuid: 'EnsembleUUID',
+    ):
+        """
+        Wrapper around ChromPlotWidget.removePeak
+        """
+        self.chromPlotWidget.removePeak(uuid)
+
+    def clearPeaks(
         self,
     ):
         """
-        Adds a PeakOverlay object to ChromPlotWidget
+        Wrapper around ChromPlotWidget.clearPeaks
         """
-        pass
-
-
-    def clearPeakOverlays(
-        self,
-    ):
-        """
-        Removes all PeakOverlay objects from ChromPlotWidget
-        """
-        pass
-
+        self.chromPlotWidget.clearPeaks()
 
     def setFprintArray(
         self,
@@ -225,6 +264,34 @@ class SampleWidget(
         self.sigFPrintHovered.emit(
             self.UUID,
             idx,
+        )
+
+    def on_ensemble_peak_hovered(
+        self,
+        ensemble_uuid: 'EnsembleUUID',
+        pos: QtCore.QPointF,
+    ):
+        """Propagate ensemble peak hover event with SampleUUID context"""
+        self.sigEnsemblePeakHovered.emit(
+            self.UUID,
+            ensemble_uuid,
+            pos,
+        )
+
+    def on_ensemble_peak_leaved(self):
+        """Propagate ensemble peak leave event with SampleUUID context"""
+        self.sigEnsemblePeakLeaved.emit(self.UUID)
+
+    def on_ensemble_peak_clicked(
+        self,
+        ensemble_uuid: 'EnsembleUUID',
+        button: int,
+    ):
+        """Propagate ensemble peak click event with SampleUUID context"""
+        self.sigEnsemblePeakClicked.emit(
+            self.UUID,
+            ensemble_uuid,
+            button,
         )
 
 

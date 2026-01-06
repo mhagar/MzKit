@@ -15,6 +15,7 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.data_structs import (
+        SampleUUID,
         InjectionUUID,
         EnsembleUUID,
         Ensemble,
@@ -29,6 +30,7 @@ class Injection:
     scan_array_parameters: tuple[ScanArrayParameters, ...]
     exp: Optional[oms.MSExperiment] = None
     uuid: 'InjectionUUID' = field(default_factory=lambda: uuid4().int)
+    sample_uuid: Optional['SampleUUID'] = None
     scan_array_ms1: Optional[ScanArray] = None
     scan_array_ms2: Optional[ScanArray] = None
     ensembles: dict['EnsembleUUID', 'Ensemble'] = field(
@@ -81,7 +83,6 @@ class Injection:
                 raise ValueError(
                     f"Invalid ms_level specified: {ms_level}"
                 )
-
 
     def assemble_scan_array(
         self,

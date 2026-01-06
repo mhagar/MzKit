@@ -11,7 +11,7 @@ from gui.views.sample_viewer.tools import (
 import numpy as np
 import pyopenms as oms
 import pyqtgraph as pg
-from PyQt5 import QtCore, QtGui
+from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QRectF
 
 from typing import Optional
@@ -87,6 +87,15 @@ class MSPlotWidget(pg.PlotWidget):
         #   { spec_idx: targetitem }
         self.signal_markers: dict[int, pg.TargetItem] = {}
 
+        # Floating label
+        self.floating_label = QtWidgets.QLabel(self)
+        self.floating_label.setStyleSheet(
+            "QLabel { color: black; background-color: rgba(225, 225, 225, 128) }"
+        )  # TODO: experiment w translucent background
+        self.floating_label.move(60, 5)
+        self.floating_label.hide()
+        self.floating_label.raise_()
+
         # Set default extraction mode to be NONE
         self.on_xic_mode_changed(XICMode.NONE)
 
@@ -97,6 +106,18 @@ class MSPlotWidget(pg.PlotWidget):
 
         # Hovered MS signal
         self.hovered_ms_signal: Optional[tuple[int, float]] = None
+
+    def update_label(
+        self,
+        text: str,
+    ):
+        self.floating_label.setText(text)
+        self.floating_label.raise_()
+
+        # Force a refresh of the widget stack
+        self.floating_label.setParent(None)
+        self.floating_label.setParent(self)
+        self.floating_label.show()
 
 
     def add_signal_marker(
@@ -288,6 +309,16 @@ class MSPlotWidget(pg.PlotWidget):
 
         self._tool_stage = stage
 
+    def setSpectrumPlotPen(
+        self,
+        *args,
+        **kwargs,
+    ):
+        """
+        Wrapper around the setPen() func for the PlotDataItem used to
+        display spectra
+        """
+        self.pi.spectrum_plot.setPen(*args, **kwargs)
 
     def setSpectrumArray(
         self,
@@ -432,6 +463,7 @@ class MSPlotItem(pg.PlotItem):
             'mz': np.array([]),
             'intsy': np.array([]),
         }
+
 
 
     def setSpectrumArray(

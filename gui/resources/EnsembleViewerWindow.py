@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'gui/resources/EnsembleViewerWindow.ui'
+# Form implementation generated from reading ui file 'EnsembleViewerWindow.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.11
 #
@@ -108,6 +108,14 @@ class Ui_Form(object):
         self.corrPlotWidget.setObjectName("corrPlotWidget")
         self.verticalLayout_5.addWidget(self.corrPlotWidget)
         self.tabWidget.addTab(self.tab_2, "")
+        self.tab_3 = QtWidgets.QWidget()
+        self.tab_3.setObjectName("tab_3")
+        self.verticalLayout_6 = QtWidgets.QVBoxLayout(self.tab_3)
+        self.verticalLayout_6.setObjectName("verticalLayout_6")
+        self.tableViewProperties = QtWidgets.QTableView(self.tab_3)
+        self.tableViewProperties.setObjectName("tableViewProperties")
+        self.verticalLayout_6.addWidget(self.tableViewProperties)
+        self.tabWidget.addTab(self.tab_3, "")
         self.verticalLayout_3.addWidget(self.tabWidget)
         self.verticalLayout_2.addLayout(self.verticalLayout_3)
         self.actionScan = QtWidgets.QAction(Form)
@@ -128,7 +136,7 @@ class Ui_Form(object):
         self.actionExportChrom.setObjectName("actionExportChrom")
 
         self.retranslateUi(Form)
-        self.tabWidget.setCurrentIndex(0)
+        self.tabWidget.setCurrentIndex(2)
         self.checkShowMiscPlots.toggled['bool'].connect(self.tabWidget.setVisible) # type: ignore
         QtCore.QMetaObject.connectSlotsByName(Form)
 
@@ -147,6 +155,7 @@ class Ui_Form(object):
         self.toolExportChrom.setText(_translate("Form", "EXPORT"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("Form", "Chromatogram"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), _translate("Form", "Correlation Plot"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_3), _translate("Form", "Properties"))
         self.actionScan.setText(_translate("Form", "Scan"))
         self.actionScan.setShortcut(_translate("Form", "Shift+S"))
         self.actionFindFormula.setText(_translate("Form", "Fmla"))

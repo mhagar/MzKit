@@ -42,6 +42,7 @@ class Sample:
             )
 
         self.injection = injection
+        injection.sample_uuid = self.uuid
 
     def set_fingerprint(
         self,

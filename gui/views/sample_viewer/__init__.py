@@ -1,5 +1,6 @@
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt, QPointF
+import pyqtgraph as pg
 
 from core.interfaces.data_sources import AnalyteTableSource
 from gui.views.sample_viewer.ensemble_extraction import EnsembleExtractionManager
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
         Injection, Analyte, AnalyteID,
         FeaturePointer,
         ScanArray,
+        EnsembleUUID, Ensemble,
     )
     from core.interfaces.data_sources import (
         SampleDataSource, AnalyteTableSource,
@@ -49,6 +51,14 @@ class SampleViewer(
         super().__init__()
         self.setupUi(self)
         self.data_source = data_source
+
+        # Subscribe to samples being *updated* in the data registry
+        self.data_source.subscribe_to_changes(
+            addition_callback=lambda x: None,  # Don't react to sample addition/removal
+            removal_callback=lambda x: None,
+            update_callback=self.update_sample,
+            change_type='Sample',
+        )
 
         # Model for keeping track of which samples are loaded in viewer
         self.model = SampleViewerItemModel(
@@ -92,10 +102,23 @@ class SampleViewer(
             self.on_extraction_region_changed
         )
 
+        # View/hide ensembles
+        self.checkShowEnsembles.toggled.connect(
+            self.viewSampleStack.on_show_ensembles_toggled
+        )
+
+        # View/hide ensemble preview
+        self.checkShowEnsemblePreview.toggled.connect(
+            self.toggle_ensemble_preview
+        )
+
         # Ensemble Extraction
         self.ensemble_extraction_mgr = EnsembleExtractionManager(
             data_source=self.data_source
         )
+
+        # Ensemble peak interaction state
+        self._selected_ensemble: Optional[tuple['SampleUUID', 'EnsembleUUID']] = None
 
         self._setup_actions()
         self._add_status_bar()
@@ -104,6 +127,7 @@ class SampleViewer(
         self._setup_selection_signals()
         self._setup_ensemble_extraction_signals()
         self._setup_manual_xic_signals()
+        self._setup_ensemble_interaction_signals()
 
 
     # ***CONFIGURATION/QT SIGNALS***
@@ -159,6 +183,13 @@ class SampleViewer(
         # Configure fingerprint display menu
         self.fprint_display_params_menu.colorbar.sigLevelsChanged.connect(
             self.viewSampleStack.link_colorbar_to_fprint_plots
+        )
+
+        # Configure ensemble MS preview
+        self.plotEnsembleMS.hide()
+        self.plotEnsembleMS.pi.getAxis('bottom').hide()
+        self.plotEnsembleMS.pi.vb.setXLink(
+            self.plotMS.pi.vb
         )
 
     def _setup_selection_signals(self):
@@ -256,6 +287,15 @@ class SampleViewer(
 
         self.spinExtractWindow.valueChanged.connect(
             self.on_manual_extraction_region_entry
+        )
+
+    def _setup_ensemble_interaction_signals(self):
+        """Connect ensemble peak interaction signals"""
+        self.viewSampleStack.sigEnsemblePeakHovered.connect(
+            self.on_ensemble_peak_hovered
+        )
+        self.viewSampleStack.sigEnsemblePeakClicked.connect(
+            self.on_ensemble_peak_clicked
         )
 
     # ***STATE TOGGLING***
@@ -373,7 +413,9 @@ class SampleViewer(
 
     def update_spectrum_plot(self):
         """
-        Updates MS Plot to match whatever is in Spectrum Selection Manager
+        Updates MS Plot to match whatever is in Spectrum Selection Manager.
+
+        Also updates the Ensemble MS preview plot
         """
         spec_array = self.selection_mgr.get_selected_spectrum_array()
         if spec_array is None:
@@ -383,7 +425,7 @@ class SampleViewer(
             spec_array
         )
 
-    # ***ADDING/REMOVING SAMPLES***
+    # ***ADDING/REMOVING/UPDATING SAMPLES***
     def add_samples(
         self,
         uuids: list['SampleUUID'],
@@ -406,6 +448,17 @@ class SampleViewer(
             self.model.removeSample(uuid)
 
         self.viewSampleStack.rebuild_plots()
+
+    def update_sample(
+        self,
+        sample: 'Sample',
+    ):
+        """
+        Called whenever a Sample is notified as being updated
+        """
+        self.viewSampleStack.refresh_plot(
+            sample.uuid
+        )
 
     # ***CHROMATOGRAM SCANNING***
     def on_chromatogram_hovered(
@@ -430,6 +483,215 @@ class SampleViewer(
             case ToolType.NONE:
                 # TODO: Display some useful info maybe?
                 return
+
+    # ***ENSEMBLE PEAK INTERACTION***
+    def _get_ensemble(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID',
+    ) -> Optional['Ensemble']:
+        injection = self.model.getInjection(sample_uuid)
+        if not injection:
+            return None
+
+        ensemble = injection.ensembles.get(ensemble_uuid)
+        if not ensemble:
+            return None
+
+        return ensemble
+
+    def on_ensemble_peak_hovered(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID',
+        pos: QPointF,
+    ):
+        """
+        Called when user hovers over an ensemble peak.
+        Shows tooltip with ensemble info in the status bar.
+        """
+        ensemble = self._get_ensemble(
+            sample_uuid, ensemble_uuid
+        )
+
+        if not ensemble:
+            return
+
+        # Update status bar with ensemble info
+        tooltip_text = (
+            f"Ensemble: {ensemble.base_mz:.4f} m/z @ {ensemble.peak_rt:.2f}s | "
+            f"{len(ensemble.ms1_cofeatures)} MS1 + {len(ensemble.ms2_cofeatures)} MS2 features"
+        )
+        self.status_bar.showMessage(tooltip_text)
+
+    def on_ensemble_peak_clicked(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID',
+        button: int,
+    ):
+        """
+        Handle ensemble peak clicks:
+        - Left click: Select ensemble immediately
+        - Right click: Context menu
+        """
+        if button == Qt.RightButton:
+            self._show_ensemble_context_menu(sample_uuid, ensemble_uuid)
+            return
+
+        if button == Qt.LeftButton:
+            self._select_ensemble(sample_uuid, ensemble_uuid)
+
+    def _select_ensemble(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID'
+    ):
+        """
+        Select an ensemble (visual feedback only for now)
+        """
+        # Clear previous selection
+        if self._selected_ensemble:
+            old_sample_uuid, old_ensemble_uuid = self._selected_ensemble
+            old_widget = self.viewSampleStack.sample_wdgt_mgr.get_widget(old_sample_uuid)
+            if old_widget:
+                old_widget.chromPlotWidget.pi.set_peak_selected(None)
+
+        # Apply new selection
+        widget = self.viewSampleStack.sample_wdgt_mgr.get_widget(sample_uuid)
+        if widget:
+            widget.chromPlotWidget.pi.set_peak_selected(ensemble_uuid)
+
+            # Trigger as if chromatogram was clicked
+            widget.on_chromatogram_clicked()
+
+        self._selected_ensemble = (sample_uuid, ensemble_uuid)
+
+        # Update status bar
+        ensemble = self._get_ensemble(
+            sample_uuid, ensemble_uuid
+        )
+        sample_name = self.data_source.get_sample(sample_uuid).name
+
+        self.status_bar.showMessage(
+            f"Selected: {ensemble.base_mz:.4f} m/z @ {ensemble.peak_rt:.2f}s "
+            f"({sample_name})"
+        )
+
+        # Update preview MS plot
+        self.plotEnsembleMS.setSpectrumPlotPen(
+            pg.mkPen(pg.intColor(   # Temporary color gen
+                ensemble_uuid,      # TODO: use func in ensemble_ui_manager.py
+                hues=12,
+                minValue=150,
+                maxValue=255,
+                sat=128,
+            ))
+        )
+        self.plotEnsembleMS.update_label(
+            f"Selected: {ensemble.base_mz:.4f} m/z @ {ensemble.peak_rt:.2f}s "
+            f"({sample_name})"
+        )
+        self.plotEnsembleMS.setSpectrumArray(
+            ensemble.get_spectrum(
+                ms_level=self.selection_mgr.selected_ms_level,
+                scan_rt=ensemble.peak_rt,
+            )
+        )
+
+    def _show_ensemble_context_menu(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID'
+    ):
+        """Show right-click context menu for ensemble"""
+        from PyQt5.QtGui import QCursor
+        menu = QtWidgets.QMenu(self)
+
+        action_open = menu.addAction("Open in Ensemble Viewer")
+        action_export = menu.addAction("Export...")
+        menu.addSeparator()
+        action_delete = menu.addAction("Delete Ensemble")
+
+        action = menu.exec_(QCursor.pos())
+
+        if action == action_open:
+            self._open_ensemble_in_viewer(sample_uuid, ensemble_uuid)
+        elif action == action_delete:
+            self._delete_ensemble(sample_uuid, ensemble_uuid)
+        # elif action == action_export: ...
+
+    def _open_ensemble_in_viewer(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID'
+    ):
+        """
+        # TODO: use the actual viewer
+        Open ensemble in EnsembleViewer window.
+        """
+        injection = self.model.getInjection(sample_uuid)
+        if not injection:
+            return
+
+        ensemble = injection.ensembles.get(ensemble_uuid)
+        if not ensemble:
+            return
+
+        from gui.views.ensemble_viewer import EnsembleViewer
+
+        viewer = EnsembleViewer(
+            data_source=self.data_source,
+        )
+        viewer.set_ensemble(ensemble)
+        viewer.show()
+
+        # Store reference to prevent garbage collection
+        if not hasattr(self, '_ensemble_viewers'):
+            self._ensemble_viewers = []
+        self._ensemble_viewers.append(viewer)
+
+    def _delete_ensemble(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID'
+    ):
+        """Delete ensemble from injection"""
+        # Confirm with user
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            'Delete Ensemble',
+            'Are you sure you want to delete this ensemble?',
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+
+        if reply == QtWidgets.QMessageBox.Yes:
+            injection = self.model.getInjection(sample_uuid)
+            injection.remove_ensemble(ensemble_uuid)
+
+            # Remove from UI
+            widget = self.viewSampleStack.sample_wdgt_mgr.get_widget(sample_uuid)
+            if widget:
+                widget.removePeak(ensemble_uuid)
+
+            # Clear selection if this was selected
+            if self._selected_ensemble == (sample_uuid, ensemble_uuid):
+                self._selected_ensemble = None
+
+    def toggle_ensemble_preview(
+        self,
+        toggle: bool,
+    ):
+        """
+        Called when user clicks the checkbox 'Show Ensemble Preview'
+        """
+        match toggle:
+            case True:
+                self.plotEnsembleMS.show()
+            case False:
+                self.plotEnsembleMS.hide()
+
 
     # ***XIC/BPC SLICING***
     def on_extraction_region_changed(
@@ -464,7 +726,6 @@ class SampleViewer(
         self.plotMS.move_region_selector(
             region
         )
-
 
     # ***FINGERPRINT***
     def show_fprint_display_params_menu(self):

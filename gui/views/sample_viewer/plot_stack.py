@@ -43,6 +43,18 @@ class SampleStackView(
     sigSelectionMade = QtCore.pyqtSignal()
     sigConfigurationMade = QtCore.pyqtSignal()
 
+    # Ensemble peak interaction signals
+    sigEnsemblePeakHovered = QtCore.pyqtSignal(
+        object,  # SampleUUID
+        object,  # EnsembleUUID
+        QPointF,
+    )
+    sigEnsemblePeakClicked = QtCore.pyqtSignal(
+        object,  # SampleUUID
+        object,  # EnsembleUUID
+        int,     # MouseButton
+    )
+
 
     def __init__(
         self,
@@ -61,6 +73,8 @@ class SampleStackView(
         self._tool_stage: ToolStage = ToolStage.IDLE
 
         self._currently_hovered_uuid: Optional[int] = None
+
+        self._show_ensembles: bool = True
 
         # Container for stacked plots
         self.container_widget = QtWidgets.QWidget()
@@ -92,7 +106,7 @@ class SampleStackView(
         )
 
         # For IDE type-checking:
-        self: 'ToolStateListener'
+        # self: 'ToolStateListener'
 
     def setModel(
         self,
@@ -179,8 +193,26 @@ class SampleStackView(
             )
 
             self.connect_sample_widget_signals(widget)
+            self._populate_widget_elements(sample_uuid)
 
-        self.chrom_mgr.update_all_plots()
+        # self.chrom_mgr.update_all_plots()
+        # self.ensemble_ui_mgr.display_ensembles_for_all_samples(
+        #     ms_level=self.chrom_mgr.get_ms_level(),
+        # )
+
+    def refresh_plot(
+        self,
+        sample_uuid: 'SampleUUID'
+    ):
+        self._populate_widget_elements(sample_uuid)
+
+    def refresh_all_plots(self):
+        """
+        Updates the plots but does not delete them
+        """
+        for sample_uuid in self.sample_wdgt_mgr.get_all_widgets():
+            self.refresh_plot(sample_uuid)
+
 
     def connect_sample_widget_signals(
         self,
@@ -204,6 +236,17 @@ class SampleStackView(
 
         sample_widget.sigFPrintHovered.connect(
             self.on_fprint_hovered
+        )
+
+        # Ensemble peak interaction signals
+        sample_widget.sigEnsemblePeakHovered.connect(
+            self.on_ensemble_peak_hovered
+        )
+        sample_widget.sigEnsemblePeakLeaved.connect(
+            self.on_ensemble_peak_leaved
+        )
+        sample_widget.sigEnsemblePeakClicked.connect(
+            self.on_ensemble_peak_clicked
         )
 
     def on_chromatogram_hover(
@@ -305,6 +348,48 @@ class SampleStackView(
                 f"{value:.2f}\t{descriptor}"
             )
 
+    def on_ensemble_peak_hovered(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID',
+        pos: QPointF,
+    ):
+        """
+        Called when user hovers over an ensemble peak.
+        Changes cursor and propagates signal upward.
+        """
+        # Set cursor to pointing hand to indicate clickability
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+
+        # Propagate signal
+        self.sigEnsemblePeakHovered.emit(
+            sample_uuid,
+            ensemble_uuid,
+            pos,
+        )
+
+    def on_ensemble_peak_leaved(
+        self,
+        sample_uuid: 'SampleUUID',
+    ):
+        """Reset cursor when leaving peak"""
+        self.unsetCursor()
+
+    def on_ensemble_peak_clicked(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID',
+        button: int,
+    ):
+        """
+        Handle peak clicks - propagate to top level for action handling
+        """
+        self.sigEnsemblePeakClicked.emit(
+            sample_uuid,
+            ensemble_uuid,
+            button,
+        )
+
     def on_item_changed(
         self,
         item: Optional['QStandardItem'],
@@ -368,16 +453,10 @@ class SampleStackView(
                 row_idx=row_idx,
             )
 
+            self._populate_widget_elements(sample_uuid)
             self.connect_sample_widget_signals(widget)
 
-            # self.create_sample_widget_at_row(
-            #     sample_uuid=sample_uuid,
-            #     row_idx=row_idx,
-            # )
-
-        self.chrom_mgr.update_all_plots()
-        # self.update_chroms_arrays()
-        # self.update_fprint_arrays()
+        # self.chrom_mgr.update_all_plots()
 
     def on_rows_removed(
         self,
@@ -428,6 +507,39 @@ class SampleStackView(
             self.container_layout.removeWidget(widget)
             self.container_layout.insertWidget(i, widget)
 
+    def _populate_widget_elements(
+        self,
+        sample_uuid: 'SampleUUID'
+    ):
+        """
+        Reads current settings/parameters and updates the widget
+        accordingly
+        """
+        widget = self.sample_wdgt_mgr.get_widget(sample_uuid)
+        if not widget:
+            return
+
+        # Update plot
+        self.chrom_mgr.update_chromatogram(sample_uuid)
+        self.chrom_mgr.update_fingerprint(sample_uuid)
+
+        # Update ensembles based on current settings
+        match self._show_ensembles:
+            case True:
+                self.ensemble_ui_mgr.display_ensembles_for_sample(
+                    uuid=sample_uuid,
+                    ms_level=self.chrom_mgr.get_ms_level(),
+                )
+            case False:
+                self.ensemble_ui_mgr.clear_ensembles_for_sample(
+                    sample_uuid
+                )
+
+        # Placeholders:
+        # if self._show_ensemble_labels..
+        # if self._ensemble_filter:
+        #   self.ensemble_ui_mgr.apply_filter(...)
+
     def on_tool_type_changed(
         self,
         new_tool: ToolType,
@@ -464,6 +576,13 @@ class SampleStackView(
             sample_widget.fprintPlotWidget.setVisible(
                 show_fprints
             )
+
+    def on_show_ensembles_toggled(
+        self,
+        show_ensembles: bool,
+    ):
+        self._show_ensembles = show_ensembles
+        self.refresh_all_plots()
 
     def link_colorbar_to_fprint_plots(
         self,

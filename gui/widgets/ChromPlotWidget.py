@@ -21,6 +21,11 @@ class ChromPlotWidget(pg.PlotWidget):
     sigChromatogramLeaved = QtCore.pyqtSignal()
     sigChromatogramClicked = QtCore.pyqtSignal()
 
+    # Ensemble peak interaction signals
+    sigEnsemblePeakHovered = QtCore.pyqtSignal(object, QPointF)  # EnsembleUUID, pos
+    sigEnsemblePeakLeaved = QtCore.pyqtSignal()
+    sigEnsemblePeakClicked = QtCore.pyqtSignal(object, int)  # EnsembleUUID, button
+
     def __init__(self, *args, **kwargs):
         super(ChromPlotWidget, self).__init__(
             *args,
@@ -34,6 +39,9 @@ class ChromPlotWidget(pg.PlotWidget):
         )
         # self.setBackground(None)
         self.pi: ChromPlotItem = self.getPlotItem()
+
+        # Connect scene signals after PlotItem is added to scene
+        self.pi._connect_scene_signals()
 
         # Set up floating label
         self.floating_label = QtWidgets.QLabel(self)
@@ -49,7 +57,7 @@ class ChromPlotWidget(pg.PlotWidget):
 
 
     def mouseMoveEvent(self, ev):
-        # Call original parent behaviour
+        # Call original parent class behaviour
         super(ChromPlotWidget, self).mouseMoveEvent(ev)
 
         # Emit mouse location in scene coordinates
@@ -148,7 +156,7 @@ class ChromPlotWidget(pg.PlotWidget):
         """
         self.window_selector = pg.LinearRegionItem(
             pen=pg.mkPen('green'),
-            brush=pg.mkBrush(None),
+            brush=pg.mkBrush('darkslategrey'),
         )
         self.window_selector.setRegion(bounds)
         self.addItem(
@@ -283,6 +291,18 @@ class ChromPlotItem(pg.PlotItem):
         self.chrom_items: list[ChromGraphicItem] = []
         self.peak_overlays: dict['EnsembleUUID', ChromGraphicItem] = {}
 
+        # Ensemble peak interaction state
+        self._hovered_peak_uuid: Optional['EnsembleUUID'] = None
+        self._selected_peak_uuid: Optional['EnsembleUUID'] = None
+
+    def _connect_scene_signals(self):
+        """
+        Connect to pyqtgraph's scene signals for reliable hover detection.
+        Must be called after the PlotItem has been added to a scene.
+        """
+        self.scene().sigMouseMoved.connect(self._on_scene_mouse_moved)
+        self.scene().sigMouseHover.connect(self._on_scene_mouse_hover)
+
     def addChroms(
         self,
         arrs: list[np.ndarray] | np.ndarray,
@@ -385,7 +405,8 @@ class ChromPlotItem(pg.PlotItem):
         chrom_graphic_item = ChromGraphicItem(
             rt_arr=rt_arr,
             intsy_arr=intsy_arr,
-            pen=pg.mkPen(color)
+            pen=pg.mkPen(color),
+            interactive=True  # Peaks are interactive
         )
 
         self.peak_overlays[uuid] = chrom_graphic_item
@@ -410,11 +431,17 @@ class ChromPlotItem(pg.PlotItem):
 
             del self.peak_overlays[uuid]
 
+            # Clean up state if this peak was hovered/selected
+            if self._hovered_peak_uuid == uuid:
+                self._hovered_peak_uuid = None
+            if self._selected_peak_uuid == uuid:
+                self._selected_peak_uuid = None
+
     def clearPeaks(
         self,
     ):
         """
-        Remove all PeakOverlays
+        Remove all PeakOverlays and reset interaction state
         """
         for _, chrom_graphic_item in self.peak_overlays.items():
             self.removeItem(
@@ -422,6 +449,141 @@ class ChromPlotItem(pg.PlotItem):
             )
 
         self.peak_overlays.clear()
+
+        # Reset interaction state since all peaks are gone
+        self._hovered_peak_uuid = None
+        self._selected_peak_uuid = None
+
+    def _on_scene_mouse_moved(self, pos: QPointF):
+        """
+        Called whenever mouse moves over the scene
+        (via pyqtgraph's sigMouseMoved). pos is in scene coordinates.
+        """
+        # Check if position is within our plot item's scene bounds
+        if not self.sceneBoundingRect().contains(pos):
+            return
+
+        nearest_peak = self._find_nearest_peak_from_scene_pos(pos)
+        if nearest_peak:
+            uuid, _ = nearest_peak
+            view_pos = self.vb.mapSceneToView(pos)
+
+            # Only emit if this is a new peak being hovered
+            if uuid != self._hovered_peak_uuid:
+                self.set_peak_hover_state(uuid)
+                self.plot_widget.sigEnsemblePeakHovered.emit(uuid, view_pos)
+        else:
+            # Not hovering over any peak
+            if self._hovered_peak_uuid:
+                self.set_peak_hover_state(None)
+                self.plot_widget.sigEnsemblePeakLeaved.emit()
+
+    def _on_scene_mouse_hover(self, items):
+        """
+        Called when mouse hovers over items (via pyqtgraph's sigMouseHover).
+        If items list is empty, mouse has left the scene/plot area.
+        """
+        if not items or self not in items:
+            # Mouse left the plot area - clear hover state
+            if self._hovered_peak_uuid:
+                self.set_peak_hover_state(None)
+                self.plot_widget.sigEnsemblePeakLeaved.emit()
+
+    def _find_nearest_peak_from_scene_pos(
+        self,
+        scene_pos: QPointF
+    ) -> Optional[tuple['EnsembleUUID', float]]:
+        """
+        Find which peak (if any) the mouse is hovering over using proximity detection.
+        Returns (uuid, distance_squared) or None if no peak is within threshold.
+
+        Takes a scene position directly (for use with scene signals).
+        """
+        if not self.peak_overlays:
+            return None
+
+        mouse_loc = self.vb.mapSceneToView(scene_pos)
+        pixel_size_x, pixel_size_y = self.vb.viewPixelSize()
+
+        mouse_loc_x = mouse_loc.x() / pixel_size_x
+        mouse_loc_y = mouse_loc.y() / pixel_size_y
+
+        min_dist_sq = float('inf')
+        nearest_uuid = None
+
+        for uuid, chrom_item in self.peak_overlays.items():
+            scaled_rt = chrom_item.rt_arr / pixel_size_x
+            scaled_intsy = chrom_item.intsy_arr / pixel_size_y
+
+            from core.utils.arrays import find_closest_point
+            idx, dist_sq = find_closest_point(
+                tgt_x=mouse_loc_x,
+                tgt_y=mouse_loc_y,
+                data_x=scaled_rt,
+                data_y=scaled_intsy,
+            )
+
+            if dist_sq < min_dist_sq:
+                min_dist_sq = dist_sq
+                nearest_uuid = uuid
+
+        # 625 px² threshold (~25 pixels)
+        if min_dist_sq < 625:
+            return (nearest_uuid, min_dist_sq)
+
+        return None
+
+    def find_nearest_peak(
+        self,
+        ev
+    ) -> Optional[tuple['EnsembleUUID', float]]:
+        """
+        Find which peak (if any) the mouse is hovering over using proximity detection.
+        Returns (uuid, distance_squared) or None if no peak is within threshold.
+
+        Legacy method that takes an event - delegates to _find_nearest_peak_from_scene_pos.
+        """
+        return self._find_nearest_peak_from_scene_pos(ev.pos())
+
+    def set_peak_hover_state(
+        self,
+        uuid: Optional['EnsembleUUID']
+    ) -> None:
+        """
+        Apply or remove hover highlighting on a peak.
+        Hover styling: thicker line (same color).
+        """
+        # Clear previous hover
+        if self._hovered_peak_uuid and self._hovered_peak_uuid in self.peak_overlays:
+            old_item = self.peak_overlays[self._hovered_peak_uuid]
+            old_item.set_hover_state(False)
+
+        # Apply new hover
+        if uuid and uuid in self.peak_overlays:
+            item = self.peak_overlays[uuid]
+            item.set_hover_state(True)
+
+        self._hovered_peak_uuid = uuid
+
+    def set_peak_selected(
+        self,
+        uuid: Optional['EnsembleUUID']
+    ) -> None:
+        """
+        Mark a peak as selected.
+        Selection styling: filled area under curve.
+        """
+        # Clear previous selection
+        if self._selected_peak_uuid and self._selected_peak_uuid in self.peak_overlays:
+            old_item = self.peak_overlays[self._selected_peak_uuid]
+            old_item.set_selected_state(False)
+
+        # Apply selection
+        if uuid and uuid in self.peak_overlays:
+            item = self.peak_overlays[uuid]
+            item.set_selected_state(True)
+
+        self._selected_peak_uuid = uuid
 
     def scaleViewboxToPeakArray(
             self,
@@ -506,16 +668,27 @@ class ChromPlotItem(pg.PlotItem):
         if not ev:
             return
 
+        # Check if clicking on a peak
+        nearest_peak = self.find_nearest_peak(ev)
+        if nearest_peak:
+            uuid, _ = nearest_peak
+            self.plot_widget.sigEnsemblePeakClicked.emit(
+                uuid,
+                ev.button()
+            )
+            ev.accept()
+            return
+
+        # Generic chromatogram click
         self.plot_widget.sigChromatogramClicked.emit()
 
 
     def hoverEvent(self, ev):
+        """
+        Hover detection is now handled via scene signals (_on_scene_mouse_moved).
+        This method is kept for compatibility but delegates to parent.
+        """
         super().hoverEvent(ev)
-        if not ev:
-            return
-
-        if ev.exit:
-            self.plot_widget.sigChromatogramLeaved.emit()
 
 
 class ChromViewBox(pg.ViewBox):
@@ -642,36 +815,107 @@ class ChromGraphicItem(pg.GraphicsObject):
 
     Note: rt_arr and intsy_arr *MUST* be equal length. This object will NOT
     check if this is true (for efficiency)
+
+    Visual states:
+    - Normal: Drawn with the provided pen
+    - Hovered: Thicker pen (same color)
+    - Selected: Filled area under curve
     """
     def __init__(
         self,
         rt_arr: np.ndarray,
         intsy_arr: np.ndarray,
         pen: QtGui.QPen,
+        interactive: bool = False,
     ):
         pg.GraphicsObject.__init__(self)
         self.rt_arr = rt_arr
         self.intsy_arr = intsy_arr
         self.pen = pen
+        self.interactive = interactive
+
+        # State
+        self._is_hovered = False
+        self._is_selected = False
 
         self.picture: QtGui.QPicture = QtGui.QPicture()
         self.generatePicture()
 
+    def hoverEnterEvent(self):
+        pass
+
+    def set_hover_state(self, hovered: bool):
+        """
+        Set hover state. Only works if item is interactive.
+        Hover appearance: thicker pen (same color).
+        """
+        if not self.interactive:
+            return
+
+        if self._is_hovered != hovered:
+            self._is_hovered = hovered
+            self.generatePicture()
+            self.update()  # Tell Qt to repaint this item
+
+    def set_selected_state(self, selected: bool):
+        """
+        Set selected state. Only works if item is interactive.
+        Selected appearance: filled area under curve.
+        """
+        if not self.interactive:
+            return
+
+        if self._is_selected != selected:
+            self._is_selected = selected
+            self.generatePicture()
+            self.update()  # Tell Qt to repaint this item
+
     def generatePicture(self):
         """
-        Precompute QPicture object so paint() runs quickly
+        Precompute QPicture object so paint() runs quickly.
+        Renders different visual states based on hover/selection.
         """
         p = QtGui.QPainter(self.picture)
-        p.setPen(self.pen)
 
+        # Determine pen based on state
+        if self._is_hovered and not self._is_selected:
+            # Hover: thicker pen, same color
+            hover_pen = QtGui.QPen(self.pen)
+            hover_pen.setWidth(self.pen.width() + 2)
+            p.setPen(hover_pen)
+        else:
+            p.setPen(self.pen)
+
+        # If selected, fill the area under the curve
+        if self._is_selected:
+            # Create polygon from peak data down to baseline (y=0)
+            polygon = QtGui.QPolygonF()
+
+            # Start at baseline
+            polygon.append(QtCore.QPointF(self.rt_arr[0], 0))
+
+            # Add all data points
+            for i in range(len(self.rt_arr)):
+                polygon.append(QtCore.QPointF(self.rt_arr[i], self.intsy_arr[i]))
+
+            # Close at baseline
+            polygon.append(QtCore.QPointF(self.rt_arr[-1], 0))
+
+            # Fill with semi-transparent color
+            fill_color = QtGui.QColor(self.pen.color())
+            fill_color.setAlpha(80)  # Semi-transparent
+            p.setBrush(QtGui.QBrush(fill_color))
+            p.drawPolygon(polygon)
+
+        # Draw the line
         for i in range(len(self.rt_arr) - 1):
             point_a = QtCore.QPointF(
-                self.rt_arr[i] ,
+                self.rt_arr[i],
                 self.intsy_arr[i],
             )
 
             point_b = QtCore.QPointF(
-                self.rt_arr[i + 1] ,
+                self.rt_arr[i + 1],
                 self.intsy_arr[i + 1],
             )
 
