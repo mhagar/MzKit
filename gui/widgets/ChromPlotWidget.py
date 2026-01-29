@@ -908,21 +908,11 @@ class ChromGraphicItem(pg.GraphicsObject):
             p.drawPolygon(polygon)
 
         # Draw the line
-        for i in range(len(self.rt_arr) - 1):
-            point_a = QtCore.QPointF(
-                self.rt_arr[i],
-                self.intsy_arr[i],
-            )
+        line_path = pg.arrayToQPath(
+            self.rt_arr, self.intsy_arr
+        )
 
-            point_b = QtCore.QPointF(
-                self.rt_arr[i + 1],
-                self.intsy_arr[i + 1],
-            )
-
-            p.drawLine(
-                point_a,
-                point_b,
-            )
+        p.drawPath(line_path)
 
         p.end()
 
