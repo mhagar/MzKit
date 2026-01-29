@@ -232,9 +232,9 @@ class FormulaFinderDialog(
         }
 
         isotope_params = {
-            "intensity_tolerance": self.spinIsotopeFidelity.value() / 10,
-            "mz_tolerance_ppm": self.spinErrorPpm.value(),
-            "mz_tolerance_da": self.spinErrorDa.value(),
+            "intensity_tolerance": self.spinIsotopeFidelity.value() / 100,
+            "mz_tolerance_ppm": self.spinErrorPpmIsotopes.value(),
+            "mz_tolerance_da": self.spinErrorDaIsotopes.value(),
         }
 
         self._check_finder_element_set(self.comboElementSet.currentText())
@@ -410,6 +410,14 @@ class FormulaFinderDialog(
 
         self.spinIsotopeFidelity.setValue(
             self.config.getfloat('findmfs', 'isotope_fidelity', fallback=10)
+        )
+
+        self.spinErrorPpmIsotopes.setValue(
+            self.config.getfloat('findmfs', 'error_ppm', fallback=0.0)
+        )
+
+        self.spinErrorDaIsotopes.setValue(
+            self.config.getfloat('findmfs', 'error_da', fallback=0.0)
         )
 
 
