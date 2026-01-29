@@ -59,6 +59,12 @@ class Ensemble:
         default_factory=list, repr=False
     )
 
+    # User-editable properties
+    proposed_formula: Optional[str] = None
+    identity: Optional[str] = None
+    user_metadata: dict[str, str] = field(
+        default_factory=dict, repr=False
+    )
 
     def __repr__(self):
         return (f"Ensemble({len(self.ms1_cofeatures)} ms1, "
@@ -114,7 +120,6 @@ class Ensemble:
         scan_rt: Optional[float] = None,
     ) -> NDArray:
         scan_array = self._get_scan_array(ms_level)
-
         if not scan_num:
             if not scan_rt:
                 raise ValueError(
@@ -423,7 +428,7 @@ class IonAnnotation:
     cofeature_idxs: list[int]
     ms_level: Literal[1, 2]
     formula: FormulaCandidate
-    uuid: int = field(default=lambda: uuid.uuid4())
+    uuid: int = field(default_factory=lambda: uuid.uuid4().int)
     user_label: Optional[str] = None
 
     @property

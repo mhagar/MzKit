@@ -214,6 +214,27 @@
          <item>
           <widget class="QTableView" name="tableViewProperties"/>
          </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_4">
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QPushButton" name="pushAddMetadataField">
+             <property name="text">
+              <string>Add field</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="pushRemoveMetadataField">
+             <property name="text">
+              <string>Remove field</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
         </layout>
        </widget>
       </widget>

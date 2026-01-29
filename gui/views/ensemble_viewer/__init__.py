@@ -22,6 +22,7 @@ from gui.views.ensemble_viewer.plot_managers import (
     SpectrumPlotManager,
 )
 from gui.dialogues.CompoundExportWizard import NCICompoundExportWizard
+from gui.models.ensemble_properties_model import EnsemblePropertiesModel
 
 from pathlib import Path
 import json
@@ -55,6 +56,7 @@ class EnsembleViewer(
         self.tool_manager = ToolManager()
 
         self.ensemble: Optional['Ensemble'] = None
+        self.properties_model: Optional['EnsemblePropertiesModel'] = None
 
         self.wizard: Optional['NCICompoundExportWizard'] = None
 
@@ -112,6 +114,13 @@ class EnsembleViewer(
         # Connect signal for when formula finder assigns a formula
         self.tool_controllers[ToolType.FINDFORMULA].sigFormulaAssigned.connect(
             self.add_formula_annotation
+        )
+        # Connect metadata buttons
+        self.pushAddMetadataField.clicked.connect(
+            self._on_add_metadata_clicked
+        )
+        self.pushRemoveMetadataField.clicked.connect(
+            self._on_remove_metadata_clicked
         )
 
     def _setup_plots(self):
@@ -331,6 +340,7 @@ class EnsembleViewer(
         self.spectrum_manager.set_ensemble(ensemble)
 
         self.initialize_plots()
+        self.initialize_property_table()
 
     def _hide_misc_plots(self):
         self.checkShowMiscPlots.setChecked(False)
@@ -360,6 +370,65 @@ class EnsembleViewer(
         self.chromPlotWidget.pi.selection_indicator.sigPositionChanged.connect(
             self.onChromatogramSelectorMoved
         )
+
+    def initialize_property_table(
+        self,
+    ):
+        """
+        Sets up the tableView to show the Ensemble's properties
+        """
+        if not self.ensemble:
+            return
+
+        sample_name: str = self.data_source.get_sample(
+            self.ensemble.injection.sample_uuid
+        ).name
+
+        self.properties_model = EnsemblePropertiesModel(
+            ensemble=self.ensemble,
+            sample_name=sample_name
+        )
+        self.tableViewProperties.setModel(self.properties_model)
+
+        # Configure table appearance
+        header = self.tableViewProperties.horizontalHeader()
+        header.setStretchLastSection(True)
+        self.tableViewProperties.verticalHeader().setVisible(False)
+
+        # Resize columns to content
+        self.tableViewProperties.resizeColumnsToContents()
+
+    def _on_add_metadata_clicked(self):
+        """
+        Add a new metadata field row
+        """
+        if not self.properties_model:
+            return
+
+        new_row = self.properties_model.add_metadata_field()
+
+        # Select the new row for editing
+        index = self.properties_model.index(new_row, 0)
+        self.tableViewProperties.setCurrentIndex(index)
+        self.tableViewProperties.edit(index)
+
+    def _on_remove_metadata_clicked(self):
+        """
+        Remove the selected metadata field row
+        """
+        if not self.properties_model:
+            return
+
+        current_index = self.tableViewProperties.currentIndex()
+        if not current_index.isValid():
+            return
+
+        row = current_index.row()
+        if not self.properties_model.is_metadata_row(row):
+            # Can only remove metadata rows
+            return
+
+        self.properties_model.remove_metadata_field(row)
 
     def onChromatogramSelectorMoved(
         self,
@@ -539,6 +608,7 @@ class EnsembleViewer(
         if not self.ensemble:
             return
 
+        print('hi')
         annotation: IonAnnotation = self.ensemble.add_ion_annot(
             cofeature_idxs=cofeature_idxs,
             ms_level=ms_level,
@@ -589,7 +659,6 @@ class EnsembleViewer(
         print(
             f"Compound saved to {compound_path}"
         )
-
 
     def export_spectrum(
         self,
@@ -671,7 +740,6 @@ class EnsembleViewer(
             print(
                 f"Exported {Path(directory) / filename}"
             )
-
 
     def export_chromatogram(
         self,

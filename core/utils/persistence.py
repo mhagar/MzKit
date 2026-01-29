@@ -234,6 +234,10 @@ def serialize_injection_ensembles(
             'mz_diffs': serialized_mz_diffs,
             'ion_annots': serialized_ion_annots,
             'ion_pair_annots': serialized_ion_pair_annots,
+            # User-editable properties
+            'proposed_formula': ensemble.proposed_formula,
+            'identity': ensemble.identity,
+            'user_metadata': ensemble.user_metadata,
             # Injection reference not serialized - will be assigned on loading
         }
 
@@ -423,6 +427,10 @@ def deserialize_injection_ensembles(
 
     ensemble_data: list[dict] = pickle.loads(zf.read(ensembles_path))
 
+    print('hi')
+    print(f"ensemble_data:\n"
+          f" {ensemble_data}")
+
     for e_dict in ensemble_data:
         # Reconstruct ion_annots from serialized dicts
         reconstructed_ion_annots = {}
@@ -431,7 +439,9 @@ def deserialize_injection_ensembles(
             formula_data = annot_dict['formula']
             formula_candidate = FormulaCandidate(
                 formula=Formula(formula_data['formula_str']),
-                error_ppm=formula_data['error_ppm']
+                error_ppm=formula_data.get('error_ppm'),
+                error_da=formula_data.get('error_da'),
+                rdbe=formula_data.get('rdbe'),
             )
 
             # Reconstruct IonAnnotation dataclass
@@ -474,6 +484,10 @@ def deserialize_injection_ensembles(
             mz_diffs=reconstructed_mz_diffs,
             ion_annots=reconstructed_ion_annots,
             ion_pair_annots=reconstructed_ion_pair_annots,
+            # User-editable properties (with defaults for backward compat)
+            proposed_formula=e_dict.get('proposed_formula'),
+            identity=e_dict.get('identity'),
+            user_metadata=e_dict.get('user_metadata', {}),
         )
 
         # This will call ensemble.set_injection():
