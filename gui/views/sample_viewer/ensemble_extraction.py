@@ -51,7 +51,6 @@ class EnsembleExtractionManager(
     ):
         super().__init__()
         self.data_source = data_source
-        # self.ensemble_extraction_settings_menu = EnsembleExtractionSettingsMenu(self)
         self.settings_menu = EnsembleExtractionSettingsMenu()
 
     def request_using_current_params(
@@ -118,10 +117,10 @@ class EnsembleExtractionManager(
         pos: QtCore.QPoint,
         height: int,
     ):
-
         self.settings_menu.move(
-            pos.x() - self.settings_menu.size().width(),
+            # pos.x() + 50,
+            pos.x() + self.settings_menu.size().width(),
             pos.y() + height,
-            )
+        )
 
         self.settings_menu.show()

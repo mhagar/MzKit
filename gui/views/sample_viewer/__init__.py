@@ -4,7 +4,7 @@ import pyqtgraph as pg
 
 from core.interfaces.data_sources import AnalyteTableSource
 from gui.views.sample_viewer.ensemble_extraction import EnsembleExtractionManager
-from gui.views.sample_viewer.menus import FingerprintDisplayMenu, EnsembleExtractionSettingsMenu
+from gui.views.sample_viewer.menus import FingerprintDisplayMenu
 from gui.views.sample_viewer.model import SampleViewerItemModel
 from gui.views.sample_viewer.spectrum_selection import SelectionManager
 from gui.views.sample_viewer.tools import (
@@ -71,7 +71,7 @@ class SampleViewer(
         )
 
         self.fprint_display_params_menu = FingerprintDisplayMenu(self)
-        self.ensemble_extraction_settings_menu = EnsembleExtractionSettingsMenu(self)
+        # self.ensemble_extraction_settings_menu = EnsembleExtractionSettingsMenu(self)
 
         # Tool-state tracking
         self.tool_mgr = ToolManagerNew()
@@ -273,10 +273,14 @@ class SampleViewer(
             self.sigEnsembleExtractionRequested.emit
         )
 
+        get_cmpd_btn_pos = lambda: (
+            self.mapToGlobal(self.toolGetCmpd.pos()),
+            self.toolGetCmpd.height()
+        )
+
         self.toolGetCmpdMenu.clicked.connect(
             lambda: self.ensemble_extraction_mgr.showExtractionMenu(
-                pos=self.toolGetCmpd.pos(),
-                height=self.toolGetCmpd.height(),
+                *get_cmpd_btn_pos()
             )
         )
 
