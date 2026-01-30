@@ -85,3 +85,29 @@ class MzAxisItem(pg.AxisItem):
             major_ticks = new_ticks
 
         return [(original_ticks[0][0], major_ticks)]
+
+
+class TimeAxisItem(pg.AxisItem):
+    """
+    Custom AxisItem implementing sensible behaviour for mass spectra
+    (X-axis)
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def tickStrings(self, values, scale, spacing):
+        if not values:
+            return []
+
+        value_range = max(values) - min(values)
+
+        if value_range < 15:  # Less than 15 seconds
+            # Show in seconds
+            return [f"{v:.1f}s" for v in values]
+        elif value_range < 3600:  # Less than 60 minutes
+            # Show in minutes
+            return [f"{v / 60:.1f}m" for v in values]
+        else:
+            # Show in hours
+            return [f"{v / 3600:.2f}h" for v in values]
+

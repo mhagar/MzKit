@@ -57,24 +57,21 @@ def load_config() -> configparser.ConfigParser:
     config_path = get_config_path()
     default_config_template_path = get_default_config_template_path()
 
+    # Load default config first
+    if not default_config_template_path.exists():
+        raise FileNotFoundError(
+            f"Unable to find default configuration template."
+            f" Expected path: {default_config_template_path}"
+        )
+
+    config.read(default_config_template_path)
+
+    # Overlay user config (if it exists)
     if config_path.exists():
         config.read(config_path)
 
-    else:
-        # Copy default config to user location and load it
-        if default_config_template_path.exists():
-            shutil.copy2(
-                default_config_template_path,
-                config_path,
-            )
-            load_config()
-        else:
-            raise FileNotFoundError(
-                f"Unable to find default configuration template."
-                f" Expected path: {default_config_template_path}"
-            )
-
     return config
+
 
 def save_config(config: configparser.ConfigParser) -> None:
     """

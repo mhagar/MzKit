@@ -100,7 +100,7 @@ class SampleWidget(
         )
 
         # TODO: Expose to user
-        self.setFixedHeight(150)
+        # self.setFixedHeight(150)
 
     def setName(
         self,

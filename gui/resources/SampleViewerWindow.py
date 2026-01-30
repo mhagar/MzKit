@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'SampleViewerWindow.ui'
+# Form implementation generated from reading ui file 'gui/resources/SampleViewerWindow.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.11
 #
@@ -212,6 +212,7 @@ class Ui_Form(object):
 
         self.retranslateUi(Form)
         self.comboMSLevel.currentIndexChanged['int'].connect(Form.on_ms_level_change_requested) # type: ignore
+        self.spinSamplesPerWindow.valueChanged['int'].connect(Form.on_samples_per_window_requested) # type: ignore
         QtCore.QMetaObject.connectSlotsByName(Form)
 
     def retranslateUi(self, Form):

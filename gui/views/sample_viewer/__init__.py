@@ -3,6 +3,7 @@ from PyQt5.QtCore import Qt, QPointF
 import pyqtgraph as pg
 
 from core.interfaces.data_sources import AnalyteTableSource
+from core.utils.config import load_config
 from gui.views.sample_viewer.ensemble_extraction import EnsembleExtractionManager
 from gui.views.sample_viewer.menus import FingerprintDisplayMenu
 from gui.views.sample_viewer.model import SampleViewerItemModel
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
         SampleDataSource, AnalyteTableSource,
         AnalyteSource,
     )
+    from configparser import ConfigParser
 
 class SampleViewer(
     QtWidgets.QWidget,
@@ -50,6 +52,7 @@ class SampleViewer(
     ):
         super().__init__()
         self.setupUi(self)
+        self.config = load_config()
         self.data_source = data_source
 
         # Subscribe to samples being *updated* in the data registry
@@ -414,6 +417,16 @@ class SampleViewer(
         }.get(idx, 1)
 
         self.selection_mgr.set_ms_level(ms_level)
+        self.sigMSLevelChanged.emit(ms_level)
+
+    def on_samples_per_window_requested(
+        self,
+        num: int,
+    ):
+        """
+        Triggered when user changes the 'Samples per window' spinner
+        """
+        self.viewSampleStack.sample_wdgt_mgr.set_samples_per_window(num)
 
     def update_spectrum_plot(self):
         """
@@ -444,12 +457,20 @@ class SampleViewer(
                 visible=visible
             )
 
+        self.spinSamplesPerWindow.setMaximum(
+            self.model.rowCount()
+        )
+
     def remove_samples(
         self,
         uuids: list['SampleUUID'],
     ):
         for uuid in uuids:
             self.model.removeSample(uuid)
+
+        self.spinSamplesPerWindow.setMaximum(
+            self.model.rowCount()
+        )
 
         self.viewSampleStack.rebuild_plots()
 

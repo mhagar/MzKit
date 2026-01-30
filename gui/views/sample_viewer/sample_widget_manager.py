@@ -1,10 +1,12 @@
 from PyQt5 import QtCore, QtWidgets
 
+from core.utils.config import load_config
 from gui.widgets.SampleWidget import SampleWidget
 
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from gui.views.sample_viewer.plot_stack import SampleStackView
     from gui.views.sample_viewer.model import SampleViewerItemModel
     from core.data_structs import (
         Sample, SampleUUID,
@@ -12,6 +14,7 @@ if TYPE_CHECKING:
         FeaturePointer,
         ScanArray,
     )
+    from configparser import ConfigParser
 
 class SampleWidgetManager(QtCore.QObject):
     """
@@ -19,19 +22,57 @@ class SampleWidgetManager(QtCore.QObject):
     """
     def __init__(
         self,
+        plot_stack: 'SampleStackView',
         container_layout: QtWidgets.QVBoxLayout,
     ):
         super().__init__()
 
+        self.config = load_config()
+        self._parent = plot_stack
         self._layout = container_layout
         self._model: Optional['SampleViewerItemModel'] = None
         self._uuid_to_widget: dict['SampleUUID', 'SampleWidget'] = {}
+        self._samples_per_window: int = 1
 
     def set_model(
         self,
         model: 'SampleViewerItemModel',
     ):
         self._model = model
+
+    def set_samples_per_window(
+        self,
+        num: int,
+    ):
+        """
+        Adjusts widget height so that `num` widgets are shown
+        per window. Does nothing if `num` is already the same as the
+        current value
+        """
+        if num == self._samples_per_window:
+            return
+
+        self._samples_per_window = num
+
+        hide_axes_threshold = self.config.getint(
+            section='sampleviewer',
+            option='hide_axis_threshold_px',
+            fallback=50,
+        )
+        for widget in self.get_all_widgets().values():
+            widget: 'SampleWidget'
+
+            target_height = self._parent.viewport().height() // num
+            widget.setFixedHeight(target_height)
+
+            widget.chromPlotWidget.showAxes(  # Hide axes of widget is small
+                target_height > hide_axes_threshold
+            )
+
+            widget.fprintPlotWidget.showAxis(
+                'bottom',
+                target_height > hide_axes_threshold
+            )
 
     def create_widget(
         self,

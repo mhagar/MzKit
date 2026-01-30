@@ -8,7 +8,6 @@ from PyQt5.QtGui import QStandardItem
 from PyQt5.QtCore import Qt, QPointF
 import pyqtgraph as pg
 
-
 from gui.views.sample_viewer.sample_widget_manager import SampleWidgetManager
 from gui.views.sample_viewer.chromatogram_data_manager import ChromatogramDataManager
 from gui.views.sample_viewer.ensemble_ui_manager import EnsembleUIManager
@@ -27,7 +26,7 @@ if TYPE_CHECKING:
         FeaturePointer,
     )
     from gui.views.sample_viewer.tools import ToolStateListener
-    
+
 
 class SampleStackView(
     QtWidgets.QScrollArea,
@@ -82,6 +81,7 @@ class SampleStackView(
             self.container_widget
         )
         self.container_layout.setContentsMargins(0, 0, 0, 0)
+        self.container_layout.setSpacing(0)
         self.setWidget(self.container_widget)
         self.setWidgetResizable(True)
 
@@ -90,6 +90,7 @@ class SampleStackView(
 
         # SampleWidgetManager
         self.sample_wdgt_mgr: SampleWidgetManager = SampleWidgetManager(
+            self,
             container_layout=self.container_layout,
         )
 

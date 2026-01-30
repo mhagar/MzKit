@@ -486,11 +486,29 @@
     </hint>
    </hints>
   </connection>
+  <connection>
+   <sender>spinSamplesPerWindow</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>Form</receiver>
+   <slot>on_samples_per_window_requested()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>695</x>
+     <y>20</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>695</x>
+     <y>-16</y>
+    </hint>
+   </hints>
+  </connection>
  </connections>
  <slots>
   <slot>update_chrom_plot()</slot>
   <slot>update_spectrum_plot()</slot>
   <slot>on_ms_level_change_requested()</slot>
   <slot>on_show_ensembles_toggled()</slot>
+  <slot>on_samples_per_window_requested()</slot>
+  <slot>on_splitter_moved()</slot>
  </slots>
 </ui>

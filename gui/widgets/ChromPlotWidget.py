@@ -3,7 +3,7 @@ import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets, QtGui
 from PyQt5.QtCore import QPointF
 
-from gui.widgets.CustomAxisItems import IntsyAxisItem
+from gui.widgets.CustomAxisItems import IntsyAxisItem, TimeAxisItem
 from gui.widgets.TextOverlay import TextOverlay
 
 from typing import Optional, Literal, TYPE_CHECKING
@@ -33,10 +33,19 @@ class ChromPlotWidget(pg.PlotWidget):
             plotItem=ChromPlotItem(
                 plot_widget=self,
                 axisItems={
-                    'left': IntsyAxisItem('left')
+                    'left': IntsyAxisItem('left'),
+                    'bottom': TimeAxisItem('bottom'),
                 }
             ),
         )
+
+        # Set up axis units
+        # self.setLabel(
+        #     'bottom',
+        #     'R.T.',
+        #     units='s'
+        # )
+
         # self.setBackground(None)
         self.pi: ChromPlotItem = self.getPlotItem()
 
@@ -55,6 +64,15 @@ class ChromPlotWidget(pg.PlotWidget):
         self.window_selector: Optional[pg.LinearRegionItem] = None
         self.window_selector_chrom: Optional[ChromGraphicItem] = None
 
+    def showAxes(
+        self,
+        enabled: bool,
+    ):
+        """
+        Hide/show the left and bottom axes
+        """
+        self.showAxis('left', enabled)
+        self.showAxis('bottom', enabled)
 
     def mouseMoveEvent(self, ev):
         # Call original parent class behaviour

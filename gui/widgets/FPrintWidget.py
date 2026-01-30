@@ -46,11 +46,8 @@ class FPrintWidget(pg.PlotWidget):
         Set default plot configs
         :return:
         """
-        # Hide Y-axis and X-axis
-        x_axis: pg.AxisItem = self.pi.getAxis('bottom')
-        y_axis: pg.AxisItem = self.pi.getAxis('left')
-        for axis in (x_axis, y_axis):
-            axis.setVisible(False)
+        self.pi.getAxis('bottom').setTextPen('transparent')
+        self.pi.getAxis('left').setVisible(False)
 
         # Set maximum view limits
         self.pi.vb.setLimits(
@@ -76,7 +73,6 @@ class FPrintWidget(pg.PlotWidget):
         self.sigFPrintHovered.emit(
               int(fprint_idx),
         )
-
 
     def setFPrint(
         self,
