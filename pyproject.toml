@@ -6,6 +6,11 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "find-mfs",
+    "ipython>=9.9.0",
+    "isospecpy>=2.2.3",
+    "jinja2>=3.1.6",
+    "molecular-string-renderer>=0.1.0",
+    "numba>=0.61",
     "numpy<=2.2",
     "pandas-stubs==2.3.2.250926",
     "pyopenms>=3.4.0",
@@ -14,6 +19,9 @@ dependencies = [
     "scipy<=1.15.1",
     "scipy-stubs==1.16.2.3",
 ]
+
+[project.scripts]
+mzkit = "core.cli.main:main"
 
 [dependency-groups]
 dev = [
