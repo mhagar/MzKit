@@ -12,6 +12,7 @@ from core.data_structs import (
 )
 from core.data_structs.scan_array import ScanArrayParameters
 from core.data_structs.ensemble import (
+    GenericAnnotation,
     IonAnnotation,
     IonPairAnnotation,
     MzDiffAnnotation,
@@ -294,8 +295,33 @@ def serialize_injection_ensembles(
             annot_dict['formula_diff'] = str(ion_pair_annot.formula_diff)
             serialized_ion_pair_annots.append(annot_dict)
 
-        # Convert mz_diffs to dicts (these should be fine but convert to be safe)
-        serialized_mz_diffs = [asdict(mz_diff) for mz_diff in ensemble.mz_diffs]
+        # Convert mz_diffs to dicts. Pulled apart by-field because the
+        # optional FormulaCandidate inside can't go through asdict.
+        serialized_mz_diffs = []
+        for mz_diff in ensemble.mz_diffs:
+            mz_diff_dict = {
+                'cofeature_a_idx': mz_diff.cofeature_a_idx,
+                'cofeature_b_idx': mz_diff.cofeature_b_idx,
+                'ms_level': mz_diff.ms_level,
+                'delta_mz': mz_diff.delta_mz,
+                'uuid': mz_diff.uuid,
+                'user_label': mz_diff.user_label,
+                'scan_num': mz_diff.scan_num,
+                'formula': (
+                    None if mz_diff.formula is None
+                    else {
+                        'formula_str': str(mz_diff.formula.formula),
+                        'error_ppm': mz_diff.formula.error_ppm,
+                    }
+                ),
+            }
+            serialized_mz_diffs.append(mz_diff_dict)
+
+        # Generic free-form annotations
+        serialized_generic_annots = {
+            key: asdict(annot)
+            for key, annot in ensemble.generic_annots.items()
+        }
 
         # Must be serialized without injection reference
         ensemble_dict = {
@@ -305,6 +331,7 @@ def serialize_injection_ensembles(
             'mz_diffs': serialized_mz_diffs,
             'ion_annots': serialized_ion_annots,
             'ion_pair_annots': serialized_ion_pair_annots,
+            'generic_annots': serialized_generic_annots,
             # User-editable properties
             'proposed_formula': ensemble.proposed_formula,
             'identity': ensemble.identity,
@@ -557,11 +584,29 @@ def deserialize_injection_ensembles(
             )
             reconstructed_ion_pair_annots.append(ion_pair_annot)
 
-        # Reconstruct mz_diffs from serialized dicts
-        reconstructed_mz_diffs = [
-            MzDiffAnnotation(**mz_diff_dict)
-            for mz_diff_dict in e_dict['mz_diffs']
-        ]
+        # Reconstruct mz_diffs from serialized dicts. `formula` is
+        # optional and absent on pre-formula-bracket .mzk files.
+        reconstructed_mz_diffs = []
+        for mz_diff_dict in e_dict['mz_diffs']:
+            mz_diff_dict = dict(mz_diff_dict)  # don't mutate the source
+            formula_data = mz_diff_dict.get('formula')
+            if formula_data is not None:
+                mz_diff_dict['formula'] = FormulaCandidate(
+                    formula=Formula(formula_data['formula_str']),
+                    error_ppm=formula_data.get('error_ppm'),
+                    error_da=formula_data.get('error_da'),
+                    rdbe=formula_data.get('rdbe'),
+                )
+            else:
+                mz_diff_dict['formula'] = None
+            reconstructed_mz_diffs.append(MzDiffAnnotation(**mz_diff_dict))
+
+        # Reconstruct generic_annots from serialized dicts. Default to
+        # an empty dict for pre-generic-annot .mzk files.
+        reconstructed_generic_annots = {
+            key: GenericAnnotation(**annot_dict)
+            for key, annot_dict in e_dict.get('generic_annots', {}).items()
+        }
 
         # Instantiate ensemble with reconstructed annotations
         ensemble = Ensemble(
@@ -571,6 +616,7 @@ def deserialize_injection_ensembles(
             mz_diffs=reconstructed_mz_diffs,
             ion_annots=reconstructed_ion_annots,
             ion_pair_annots=reconstructed_ion_pair_annots,
+            generic_annots=reconstructed_generic_annots,
             # User-editable properties (with defaults for backward compat)
             proposed_formula=e_dict.get('proposed_formula'),
             identity=e_dict.get('identity'),

@@ -11,7 +11,7 @@ from gui.views.ensemble_viewer.tool_controllers import BaseToolController
 from PyQt5 import QtCore, QtWidgets
 from find_mfs import FormulaCandidate
 
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from gui.views.ensemble_viewer import EnsembleViewer
 
@@ -34,6 +34,11 @@ class MeasureLossController(BaseToolController):
         int,    # ms_level
     )
 
+    # Fired when the user picks a formula from the neutral-loss finder
+    # popped up after a Δ m/z commit. Viewer attaches it to the most
+    # recently created MzDiffAnnotation.
+    sigMzDiffFormulaAssigned = QtCore.pyqtSignal(object)  # FormulaCandidate
+
     def __init__(
         self,
         ensemble_viewer: 'EnsembleViewer'
@@ -53,7 +58,27 @@ class MeasureLossController(BaseToolController):
         # Transient bracket shown while hovering
         self._transient_bracket_id: str | None = None
 
+        # Tracks which path opened the finder so handle_formula_assigned
+        # knows which signal to emit. Set by _open_finder_for_*; cleared
+        # on hide/cancel.
+        self._pending_finder_mode: Optional[Literal['ion', 'neutral_loss']] = None
+
+        # Event filter to detect when the user closes the finder without
+        # picking a formula — so we can reset the tool cleanly.
+        self.formula_finder_menu.installEventFilter(self)
+
         self._connect_signals()
+
+    def eventFilter(self, obj, event):
+        if (
+            obj is self.formula_finder_menu
+            and event.type() == QtCore.QEvent.Hide
+            and self._pending_finder_mode is not None
+        ):
+            # User dismissed the finder — clear state and exit tool.
+            self._pending_finder_mode = None
+            self.viewer.tool_manager.request_cancel()
+        return False  # don't consume the event
 
 
     def _get_ms_plot(self, ms_level: Literal[1, 2]):
@@ -122,10 +147,13 @@ class MeasureLossController(BaseToolController):
                     ms_level,
                 )
 
-                # If a signal has already been selected, move on to next stage
-                # self.viewer.tool_manager.request_next_stage()
-                # self.viewer.tool_manager.request_next_stage() # Two requests to skip CONFIGURE... for now...
-                self.viewer.tool_manager.request_cancel()
+                # Open the formula finder pre-configured for a neutral
+                # loss (charge = 0, single-row table at delta_mz). The
+                # bracket already exists; if the user picks a formula
+                # the viewer attaches it via sigMzDiffFormulaAssigned.
+                # If they close without picking, the event filter on
+                # Hide cancels the tool.
+                self._open_finder_for_neutral_loss(delta_mz)
                 return
 
             if data in self.selected_signals:
@@ -194,6 +222,7 @@ class MeasureLossController(BaseToolController):
         self.sigSelectionCleared.emit()
 
     def handle_show_finder_menu(self):
+        self._pending_finder_mode = 'ion'
         self.formula_finder_menu.show()
 
         # Send selected_signals to formula finder
@@ -203,15 +232,47 @@ class MeasureLossController(BaseToolController):
 
         self.formula_finder_menu.on_search_execute()
 
+    def _open_finder_for_neutral_loss(self, delta_mz: float):
+        """
+        Pop the formula finder for a neutral-loss measurement: charge=0
+        (so the m/z is interpreted as a neutral mass), single-row input
+        table at `delta_mz`. The user picks a formula or closes; either
+        way the bracket already exists, so no annotation is lost.
+        """
+        self._pending_finder_mode = 'neutral_loss'
+
+        # Save the user's prior charge setting so the next ion-formula
+        # search isn't accidentally locked at 0.
+        self._saved_charge = self.formula_finder_menu.spinCharge.value()
+        self.formula_finder_menu.spinCharge.setValue(0)
+
+        self.formula_finder_menu.populate_table([(delta_mz, 1.0)])
+        self.formula_finder_menu.show()
+        self.formula_finder_menu.on_search_execute()
+
     def handle_formula_assigned(
         self,
         formula: 'FormulaCandidate'
     ):
         """
-        Called when user selects a formula from finder dialogue.
-
-        Passes the signal outwards, and reverts to IDLE stage.
+        Called when user selects a formula from finder dialogue. Routes
+        based on which path opened the finder: neutral-loss → attach
+        formula to the most recent MzDiffAnnotation; ion → existing
+        ion-annotation flow.
         """
+        mode = self._pending_finder_mode
+        self._pending_finder_mode = None
+
+        if mode == 'neutral_loss':
+            self.sigMzDiffFormulaAssigned.emit(formula)
+            # Restore the user's prior charge setting.
+            if hasattr(self, '_saved_charge'):
+                self.formula_finder_menu.spinCharge.setValue(self._saved_charge)
+            self.formula_finder_menu.hide()
+            # The Hide event filter will request_cancel.
+            return
+
+        # Legacy ion-formula path (Enter-press flow).
         self.sigFormulaAssigned.emit(
             formula,  # FormulaCandidate
             self.selected_ms_level,  # int

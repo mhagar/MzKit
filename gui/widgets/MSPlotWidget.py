@@ -18,6 +18,170 @@ from typing import Optional
 import uuid
 
 
+class ClickableTextItem(pg.TextItem):
+    """
+    `pg.TextItem` that calls `on_click(button)` when clicked. Used to
+    make annotation labels (anchored labels, ion-annotation labels,
+    delta-bracket labels) interactive without subclassing every
+    annotation-graphic composite. Defaults to right-button only so
+    left-click view manipulation still works.
+    """
+    def __init__(self, *args, on_click=None, accepted_buttons=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._on_click = on_click
+        if accepted_buttons is None:
+            accepted_buttons = QtCore.Qt.RightButton
+        self.setAcceptedMouseButtons(accepted_buttons)
+        self.setAcceptHoverEvents(True)
+
+    def hoverEnterEvent(self, ev):
+        if self._on_click is not None:
+            self.setCursor(QtCore.Qt.PointingHandCursor)
+        super().hoverEnterEvent(ev)
+
+    def hoverLeaveEvent(self, ev):
+        self.unsetCursor()
+        super().hoverLeaveEvent(ev)
+
+    def mousePressEvent(self, ev):
+        if self._on_click is not None:
+            self._on_click(int(ev.button()))
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
+
+
+class IonAnnotationGraphic:
+    """
+    Manages graphical items for an ion annotation: a text label
+    and a theoretical isotope envelope overlaid as stick bars.
+    """
+    _ENVELOPE_COLOR = (180, 80, 80, 120)
+
+    def __init__(
+        self,
+        mz_values: np.ndarray,
+        intsy_values: np.ndarray,
+        spec_idxs: list[int],
+        text: str,
+        envelope: np.ndarray,
+        on_click=None,
+    ):
+        # Text label at monoisotopic peak
+        self.label = create_textitem(
+            text=text.replace('\n', '<br>'),
+            pos=(mz_values[spec_idxs[0]], intsy_values[spec_idxs[0]]),
+            level=1.5,
+            on_click=on_click,
+        )
+
+        # Theoretical envelope bars
+        self.envelope_curve = pg.PlotCurveItem(
+            pen=pg.mkPen(color=self._ENVELOPE_COLOR, width=3),
+            connect='pairs',
+        )
+
+        self._set_envelope_data(
+            mz_values, intsy_values, spec_idxs, envelope,
+        )
+
+    def _set_envelope_data(
+        self,
+        mz_values: np.ndarray,
+        intsy_values: np.ndarray,
+        spec_idxs: list[int],
+        envelope: np.ndarray,
+    ):
+        """
+        Scale the theoretical envelope to match the experimental
+        monoisotopic intensity, then build zero-padded stick data.
+        """
+        if envelope.size == 0 or len(spec_idxs) == 0:
+            self.envelope_curve.setData(x=[], y=[])
+            return
+
+        # envelope is [[mz, rel_intsy], ...] with monoisotopic = 1.0
+        mono_intsy = intsy_values[spec_idxs[0]]
+        scaled_intsy = envelope[:, 1] * mono_intsy
+
+        # Zero-pad for stick plot (connect='pairs')
+        n = len(envelope)
+        x = np.zeros(n * 2)
+        y = np.zeros(n * 2)
+        x[0::2] = envelope[:, 0]
+        x[1::2] = envelope[:, 0]
+        y[0::2] = scaled_intsy
+        # y[1::2] already 0
+
+        self.envelope_curve.setData(x=x, y=y)
+
+    def add_to_plot(self, plotitem: 'pg.PlotItem'):
+        plotitem.addItem(self.envelope_curve)
+        plotitem.addItem(self.label)
+
+    def remove_from_plot(self, plotitem: 'pg.PlotItem'):
+        plotitem.removeItem(self.envelope_curve)
+        plotitem.removeItem(self.label)
+
+
+class DeltaMzBracket:
+    """
+    Manages graphical items for a bracket annotation connecting two
+    MS signals and displaying the delta m/z label.
+    """
+    def __init__(
+        self,
+        mz_a: float,
+        intsy_a: float,
+        mz_b: float,
+        intsy_b: float,
+        text: str,
+        on_click=None,
+    ):
+        self.curve = pg.PlotCurveItem(
+            pen=pg.mkPen(color=(80, 80, 255), width=1.5),
+            connect='all',
+        )
+        label_html = (
+            f'<div style="text-align: center; color: rgb(80, 80, 255);">'
+            f'{text}</div>'
+        )
+        if on_click is not None:
+            self.label = ClickableTextItem(
+                html=label_html, anchor=(0.5, -0.05), on_click=on_click,
+            )
+        else:
+            self.label = pg.TextItem(html=label_html, anchor=(0.5, -0.05))
+        self.label = center_textitem(self.label)
+        self.update_positions(mz_a, intsy_a, mz_b, intsy_b)
+
+    def update_positions(
+        self,
+        mz_a: float,
+        intsy_a: float,
+        mz_b: float,
+        intsy_b: float,
+    ):
+        max_intsy = max(intsy_a, intsy_b)
+        x = np.array([mz_a, mz_a, mz_b, mz_b])
+        y = np.array([intsy_a, max_intsy, max_intsy, intsy_b])
+        self.curve.setData(x=x, y=y)
+        self.label.setPos((mz_a + mz_b) / 2, max_intsy)
+
+    def update_text(self, text: str):
+        self.label.setHtml(
+            f'<div style="text-align: center;">{text}</div>'
+        )
+
+    def add_to_plot(self, plotitem: 'pg.PlotItem'):
+        plotitem.addItem(self.curve)
+        plotitem.addItem(self.label)
+
+    def remove_from_plot(self, plotitem: 'pg.PlotItem'):
+        plotitem.removeItem(self.curve)
+        plotitem.removeItem(self.label)
+
+
 class MSPlotWidget(pg.PlotWidget):
     """
     Custom PlotWidget with sensible behaviour for
@@ -37,6 +201,10 @@ class MSPlotWidget(pg.PlotWidget):
     sigSelectionMade = QtCore.pyqtSignal()
     sigConfigurationMade = QtCore.pyqtSignal(dict)
 
+    # Forwarded from MSLabelManager.sigAnnotationClicked.
+    # Args: (plot_id: str, button: int).
+    sigAnnotationClicked = QtCore.pyqtSignal(str, int)
+
 
     def __init__(self, *args, **kwargs):
         super(MSPlotWidget, self).__init__(
@@ -55,6 +223,11 @@ class MSPlotWidget(pg.PlotWidget):
 
         self.sigSpectrumArrayChanged.connect(
             self.pi.updateSpectrumPlot
+        )
+
+        # Forward annotation-click signal up from the label manager.
+        self.pi.label_manager.sigAnnotationClicked.connect(
+            self.sigAnnotationClicked
         )
 
         # TODO: Expose to user!!
@@ -96,6 +269,16 @@ class MSPlotWidget(pg.PlotWidget):
         self.floating_label.hide()
         self.floating_label.raise_()
 
+        # BPC intensity readout (top-right corner)
+        self.bpc_label = QtWidgets.QLabel(self)
+        self.bpc_label.setStyleSheet(
+            "QLabel { color: black; background-color: rgba(225, 225, 225, 128); "
+            "padding: 1px 4px; }"
+        )
+        self.bpc_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.bpc_label.hide()
+        self.bpc_label.raise_()
+
         # Set default extraction mode to be NONE
         self.on_xic_mode_changed(XICMode.NONE)
 
@@ -118,6 +301,35 @@ class MSPlotWidget(pg.PlotWidget):
         self.floating_label.setParent(None)
         self.floating_label.setParent(self)
         self.floating_label.show()
+
+    def update_bpc_label(
+        self,
+        text: str,
+    ):
+        """
+        Sets the top-right BPC intensity readout. Empty text hides it.
+        """
+        if not text:
+            self.bpc_label.hide()
+            return
+        self.bpc_label.setText(text)
+        self.bpc_label.adjustSize()
+        self._reposition_bpc_label()
+        self.bpc_label.show()
+        self.bpc_label.raise_()
+
+    def _reposition_bpc_label(self):
+        margin = 8
+        x = self.width() - self.bpc_label.width() - margin
+        self.bpc_label.move(max(0, x), 5)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        # resizeEvent fires once from inside pyqtgraph's __init__ before our
+        # own __init__ has run — guard against the attribute not yet existing.
+        label = self.__dict__.get('bpc_label')
+        if label is not None and label.isVisible():
+            self._reposition_bpc_label()
 
 
     def add_signal_marker(
@@ -218,6 +430,42 @@ class MSPlotWidget(pg.PlotWidget):
         Removes all anchored labels from the plot.
         """
         self.pi.label_manager.clear_anchored_labels()
+
+    # Ion annotation API methods
+    def add_ion_annotation(
+        self,
+        spec_idxs: list[int],
+        text: str,
+        envelope: np.ndarray,
+        annot_id: Optional[str] = None,
+    ) -> str:
+        return self.pi.label_manager.add_ion_annotation(
+            spec_idxs, text, envelope, annot_id,
+        )
+
+    def remove_ion_annotation(self, annot_id: str) -> bool:
+        return self.pi.label_manager.remove_ion_annotation(annot_id)
+
+    def clear_ion_annotations(self) -> None:
+        self.pi.label_manager.clear_ion_annotations()
+
+    # Delta bracket API methods
+    def add_delta_bracket(
+        self,
+        spec_idx_a: int,
+        spec_idx_b: int,
+        text: str,
+        bracket_id: Optional[str] = None,
+    ) -> str:
+        return self.pi.label_manager.add_delta_bracket(
+            spec_idx_a, spec_idx_b, text, bracket_id,
+        )
+
+    def remove_delta_bracket(self, bracket_id: str) -> bool:
+        return self.pi.label_manager.remove_delta_bracket(bracket_id)
+
+    def clear_delta_brackets(self) -> None:
+        self.pi.label_manager.clear_delta_brackets()
 
 
     def on_extraction_region_changed(
@@ -471,8 +719,10 @@ class MSPlotItem(pg.PlotItem):
         spectrum_array: SpectrumArray
     ) -> None:
         self.spectrum_array = spectrum_array
-        # Clear anchored labels when spectrum changes
+        # Clear all annotations when spectrum changes
         self.label_manager.clear_anchored_labels()
+        self.label_manager.clear_ion_annotations()
+        self.label_manager.clear_delta_brackets()
         self.plot_widget.sigSpectrumArrayChanged.emit()
 
 
@@ -486,6 +736,16 @@ class MSPlotItem(pg.PlotItem):
             )
         )
         self.add_mass_labels()
+
+        # Force the QGraphicsScene to repaint the full viewport. Without
+        # this, pyqtgraph occasionally leaves stale primitives (old labels,
+        # bracket fragments, scatter points) painted until the user nudges
+        # the viewbox. Cheap; runs once per spectrum update.
+        scene = self.scene()
+        if scene is not None:
+            scene.update()
+        if self.plot_widget is not None:
+            self.plot_widget.viewport().update()
 
 
     def scaleViewboxToSpectrumArray(
@@ -751,17 +1011,24 @@ class MSViewBox(
         self.sigRangeChangedManually.emit(mask)
 
 
-class MSLabelManager:
+class MSLabelManager(QtCore.QObject):
     """
     Used to show/hide MS labels to resolve overlaps between labels,
     as well as overlaps between MS data
     """
+    # Emitted when an annotation's label is clicked. Carries the
+    # annotation's plot-side ID (the same string returned by
+    # `add_anchored_label` / `add_ion_annotation` / `add_delta_bracket`)
+    # and the Qt mouse button as int.
+    sigAnnotationClicked = QtCore.pyqtSignal(str, int)
+
     def __init__(
             self,
             plotitem: 'MSPlotItem',
             clearance: float = 5.0,  # Pixels (I think?)
             intsy_threshold: float = 0.01, # Relative to max intsy
     ):
+        super().__init__()
         self.plotitem: 'MSPlotItem' = plotitem
         self.priority_key = None
         self.labels: list[pg.TextItem] = []
@@ -773,6 +1040,12 @@ class MSLabelManager:
 
         # Anchored labels - user-controlled annotations tied to spectrum indices
         self.anchored_labels: dict[str, dict] = {}
+
+        # Ion annotation graphics (label + isotope envelope)
+        self.ion_annotations: dict[str, dict] = {}
+
+        # Delta m/z brackets connecting two signals
+        self.delta_brackets: dict[str, dict] = {}
 
         # Connect to view change signals
         vb = self.plotitem.vb
@@ -854,11 +1127,16 @@ class MSLabelManager:
         # Convert newlines to HTML line breaks
         html_text = text.replace('\n', '<br>')
 
-        # Create the text item
+        # Create the text item (clickable so listeners can wire
+        # right-click → delete or similar).
+        def _on_click(button, _id=label_id):
+            self.sigAnnotationClicked.emit(_id, button)
+
         textitem = create_textitem(
             text=html_text,
             pos=(mz, intsy),
             level=1.5,
+            on_click=_on_click,
         )
 
         # Add to plot
@@ -945,6 +1223,111 @@ class MSLabelManager:
 
         self.anchored_labels.clear()
 
+    def add_ion_annotation(
+            self,
+            spec_idxs: list[int],
+            text: str,
+            envelope: np.ndarray,
+            annot_id: Optional[str] = None,
+    ) -> str:
+        """
+        Adds an ion annotation graphic: a text label at the monoisotopic
+        peak plus a theoretical isotope envelope overlay.
+
+        :param spec_idxs: Indices into the current spectrum_array
+        :param text: HTML text for the label
+        :param envelope: Array of [m/z, rel_intensity] from get_isotope_envelope()
+        :param annot_id: Optional unique identifier
+        :return: The annot_id of the created annotation
+        """
+        if self.peak_data is None or self.peak_data['mz'].size == 0:
+            raise ValueError("No spectrum data available")
+
+        if annot_id is None:
+            annot_id = str(uuid.uuid4())
+
+        def _on_click(button, _id=annot_id):
+            self.sigAnnotationClicked.emit(_id, button)
+
+        graphic = IonAnnotationGraphic(
+            mz_values=self.peak_data['mz'],
+            intsy_values=self.peak_data['intsy'],
+            spec_idxs=spec_idxs,
+            text=text,
+            envelope=envelope,
+            on_click=_on_click,
+        )
+        graphic.add_to_plot(self.plotitem)
+
+        self.ion_annotations[annot_id] = {
+            'spec_idxs': spec_idxs,
+            'text': text,
+            'graphic': graphic,
+        }
+
+        return annot_id
+
+    def remove_ion_annotation(self, annot_id: str) -> bool:
+        if annot_id not in self.ion_annotations:
+            return False
+
+        self.ion_annotations[annot_id]['graphic'].remove_from_plot(self.plotitem)
+        del self.ion_annotations[annot_id]
+        return True
+
+    def clear_ion_annotations(self) -> None:
+        for data in self.ion_annotations.values():
+            data['graphic'].remove_from_plot(self.plotitem)
+        self.ion_annotations.clear()
+
+    def add_delta_bracket(
+            self,
+            spec_idx_a: int,
+            spec_idx_b: int,
+            text: str,
+            bracket_id: Optional[str] = None,
+    ) -> str:
+        if self.peak_data is None or self.peak_data['mz'].size == 0:
+            raise ValueError("No spectrum data available")
+
+        if bracket_id is None:
+            bracket_id = str(uuid.uuid4())
+
+        mz_a = float(self.peak_data['mz'][spec_idx_a])
+        intsy_a = float(self.peak_data['intsy'][spec_idx_a])
+        mz_b = float(self.peak_data['mz'][spec_idx_b])
+        intsy_b = float(self.peak_data['intsy'][spec_idx_b])
+
+        def _on_click(button, _id=bracket_id):
+            self.sigAnnotationClicked.emit(_id, button)
+
+        bracket = DeltaMzBracket(
+            mz_a, intsy_a, mz_b, intsy_b, text, on_click=_on_click,
+        )
+        bracket.add_to_plot(self.plotitem)
+
+        self.delta_brackets[bracket_id] = {
+            'spec_idx_a': spec_idx_a,
+            'spec_idx_b': spec_idx_b,
+            'text': text,
+            'bracket': bracket,
+        }
+
+        return bracket_id
+
+    def remove_delta_bracket(self, bracket_id: str) -> bool:
+        if bracket_id not in self.delta_brackets:
+            return False
+
+        self.delta_brackets[bracket_id]['bracket'].remove_from_plot(self.plotitem)
+        del self.delta_brackets[bracket_id]
+        return True
+
+    def clear_delta_brackets(self) -> None:
+        for data in self.delta_brackets.values():
+            data['bracket'].remove_from_plot(self.plotitem)
+        self.delta_brackets.clear()
+
     def check_peak_overlap(
             self,
             label_bounds: QRectF
@@ -975,6 +1358,10 @@ class MSLabelManager:
         # Ensure anchored labels are always visible
         for label_data in self.anchored_labels.values():
             label_data['textitem'].setVisible(True)
+
+        # Ensure ion annotation labels are always visible
+        for annot_data in self.ion_annotations.values():
+            annot_data['graphic'].label.setVisible(True)
 
         if not self.labels:
             return
@@ -1044,21 +1431,22 @@ def create_textitem(
         text: str,
         pos: tuple[float, float],
         level: float = 1.0,
+        on_click=None,
 ) -> pg.TextItem:
     """
     Convenience function.
     `level` describes where to set the anchor, for multi-line labels
     For example, setting `level` = 2 means this textitem will stack over
     ones with `level` = 1.
+
+    If `on_click` is provided, returns a `ClickableTextItem` that calls
+    the callback (with the Qt button as int) on mouse press.
     """
-    textitem = pg.TextItem(
-        # text=str(text),
-        html=text,
-        anchor=(
-            0.5,                # X
-            level + 0.05,       # Y
-        ),
-    )
+    anchor = (0.5, level + 0.05)
+    if on_click is not None:
+        textitem = ClickableTextItem(html=text, anchor=anchor, on_click=on_click)
+    else:
+        textitem = pg.TextItem(html=text, anchor=anchor)
     textitem.setPos(pos[0], pos[1])
     textitem = center_textitem(textitem)
     return textitem

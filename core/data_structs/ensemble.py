@@ -60,6 +60,10 @@ class Ensemble:
         default_factory=list, repr=False
     )
 
+    generic_annots: dict[int, 'GenericAnnotation'] = field(
+        default_factory=dict, repr=False
+    )
+
     # User-editable properties
     proposed_formula: Optional[str] = None
     identity: Optional[str] = None
@@ -312,6 +316,7 @@ class Ensemble:
         delta_mz: float,
         scan_num: Optional[int] = None,
         label: Optional[str] = None,
+        formula: Optional[FormulaCandidate] = None,
     ) -> 'MzDiffAnnotation':
         """
         Snapshot of a delta m/z measurement. `delta_mz` is whatever the
@@ -319,6 +324,10 @@ class Ensemble:
         from the scan array (the previous behaviour returned 0 / wrong
         values whenever the cofeature lane had no signal at peak_rt,
         which is the common case for sparse DDA MS2 lanes).
+
+        `formula` is an optional neutral-loss formula chosen by the user
+        in the formula finder. No validation against the rest of the
+        spectrum — it's purely a labelling aid.
         """
         cofeatures = self._get_cofeatures(ms_level)
         for idx in (cofeature_a_idx, cofeature_b_idx):
@@ -335,6 +344,7 @@ class Ensemble:
             delta_mz=delta_mz,
             user_label=label,
             scan_num=scan_num,
+            formula=formula,
         )
 
         self.mz_diffs.append(annot)
@@ -370,6 +380,33 @@ class Ensemble:
 
         self.ion_annots[annot.uuid] = annot
 
+        return annot
+
+    def add_generic_annot(
+        self,
+        cofeature_idx: int,
+        ms_level: Literal[1, 2],
+        text: str,
+        scan_num: Optional[int] = None,
+    ) -> 'GenericAnnotation':
+        """
+        Create and add a free-form user annotation anchored to a peak.
+        """
+        cofeatures = self._get_cofeatures(ms_level)
+        if not (0 <= cofeature_idx < len(cofeatures)):
+            raise ValueError(
+                f"Invalid cofeature_idx: {cofeature_idx}. Ensemble only "
+                f"contains {len(cofeatures)} cofeatures"
+            )
+
+        annot = GenericAnnotation(
+            cofeature_idx=cofeature_idx,
+            ms_level=ms_level,
+            text=text,
+            scan_num=scan_num,
+        )
+
+        self.generic_annots[annot.uuid] = annot
         return annot
 
     def add_ion_pair_annot(
@@ -428,7 +465,22 @@ class MzDiffAnnotation:
     cofeature_b_idx: int
     ms_level: Literal[1, 2]
     delta_mz: float
+    uuid: int = field(default_factory=lambda: uuid.uuid4().int)
     user_label: Optional[str] = None
+    scan_num: Optional[int] = None
+    formula: Optional[FormulaCandidate] = None
+
+
+@dataclass
+class GenericAnnotation:
+    """
+    Free-form user annotation anchored to a single cofeature peak.
+    `scan_num`: see `MzDiffAnnotation.scan_num`.
+    """
+    cofeature_idx: int
+    ms_level: Literal[1, 2]
+    text: str
+    uuid: int = field(default_factory=lambda: uuid.uuid4().int)
     scan_num: Optional[int] = None
 
 

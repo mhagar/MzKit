@@ -512,3 +512,102 @@ Root cause: `Ensemble.add_mz_diff_annot` was recomputing `delta_mz` from `Ensemb
 - **Compound export migration (plan step 10).** User is rewriting from scratch — explicitly out of scope.
 - **MGF viewer.** Dropped from V1.
 - **`auto_generate_ensembles` is not branched for DDA** — it still uses the correlation path. User is deprecating it, so left alone.
+
+### EnsembleViewer polish pass — completed
+
+Small/medium polish items the user asked for ahead of the more substantial annotations rework. All five landed in one session.
+
+What landed:
+
+- **`gui/widgets/MSPlotWidget.py`**
+  - New top-right `bpc_label: QLabel` + `update_bpc_label(text)` method. Hidden when empty. `resizeEvent` repositions it; guarded against the call pyqtgraph's `PlotWidget.__init__` makes *before* our subclass's `__init__` runs (uses `self.__dict__.get('bpc_label')` to bypass pyqtgraph's overridden `__getattr__` that raises on missing attrs).
+  - **`MSPlotItem.updateSpectrumPlot`** now calls `self.scene().update()` + `self.plot_widget.viewport().update()` at the end. Fixes a long-standing "stale primitives left painted until the user nudges the viewbox" bug across both SampleViewer and EnsembleViewer spectrum plots. Cheap, runs once per spectrum update.
+
+- **`gui/views/ensemble_viewer/plot_managers.py`** — `SpectrumPlotManager`
+  - New `_normalize_spectra` flag + `set_normalize_spectra(bool)`. When on, the spectrum's intensity array is divided by its own max before being handed to the plot — switching between low- and high-abundance precursors no longer rescales the viewbox jarringly.
+  - `populate_spectrum_plot` now also emits the un-normalized BPC via `plot.update_bpc_label(f"BPC: {bpc:.2e}")` — visible at-a-glance intensity readout in the top-right of each MS plot. Empty when spectrum has no intensity.
+
+- **`gui/views/ensemble_viewer/plot_managers.py`** — `ChromatogramPlotManager`
+  - `_is_dda()` helper.
+  - `update_correlation_plot` skips the MS2 series entirely on DDA injections (DDA MS2 features were never grouped by correlation — plotting them was misleading; it was a debug leftover).
+  - **Pearson r² + Spearman ρ²** computed via `scipy.stats.{pearsonr, spearmanr}` over the most-recently-matched intensity pair. Degenerate inputs (constant series, len < 3, NaNs) fall back to `"-"` rather than blowing up.
+  - New `_update_correlation_title(...)` writes the corr plot's title: `Seed m/z X.XXXX → MSn m/z Y.YYYY    Pearson r² = …    Spearman ρ² = …`. Pre-selection state shows a "click a signal to populate" hint instead.
+  - New `set_last_selection(mz, ms_level)` — called from `EnsembleViewer.on_ms1_signal_clicked` / `on_ms2_signal_clicked` so the corr plot title knows which target was selected.
+  - **`_apply_selection_bounds()`** — calls `chrom_plot.pi.selection_indicator.setBounds([rt_min, rt_max])` derived from `self.base_chrom['rt'].min/max`. Wired into `populate_chromatogram_plot`. Locks dragging of the chrom cursor to the ensemble's own RT span so it can't wander out into unrelated scans.
+
+- **`gui/views/ensemble_viewer/__init__.py`**
+  - `checkNormalizeSpectra.toggled` → `_on_normalize_spectra_toggled` — flips the flag on `spectrum_manager`, re-populates both MS plots, refreshes DDA overlay, redraws annotations.
+  - `on_ms1_signal_clicked` / `on_ms2_signal_clicked` both call `chrom_manager.set_last_selection(mz, ms_level)` before `update_correlation_plot()`.
+
+- **`gui/views/{ensemble,sample}_viewer/dda_overlays.py`**
+  - DDA badge `ScatterPlotItem`s now do `scatter.getContextMenus = lambda event=None: None` — kills the pyqtgraph default right-click context menu (the "dropdown") that was appearing on badges. Same change made in both overlays for consistency.
+  - `scatter.setCursor(QtCore.Qt.PointingHandCursor)` — hand cursor on hover signals clickability without an extra hover-state machine.
+
+Things future-Claude should be aware of:
+
+- **`MSPlotWidget.bpc_label` init-order quirk.** pyqtgraph's `PlotWidget.__init__` calls `resizeEvent` before subclass attributes exist. The guard pattern (`self.__dict__.get('bpc_label')`) matters because pyqtgraph overrides `__getattr__` to raise `AttributeError` rather than return `None` — a plain `hasattr` works but is noisier. Any future widget-positioned-in-resizeEvent additions need the same trick.
+- **Spectrum-plot scene update is on the hot path.** Spectrum changes are frequent (every cursor scrub on DDA). The added `scene().update()` + `viewport().update()` runs *every* spectrum redraw. If it ever shows up in profiling, restrict it to cases where stale items are likely (e.g. when annotations were cleared).
+- **Correlation title uses the last overlap pair only.** When multiple targets are selected (MS1 + MS2 click history accumulates in `ms1_chroms` / `ms2_chroms`), Pearson/Spearman reflect just the most recent one. The other scatters are still plotted; this is intentional — the title tracks the user's last interaction, not an aggregate.
+- **DDA badge context-menu suppression is by attribute reassignment**, not subclassing. If pyqtgraph changes how `getContextMenus` is consumed (e.g. starts treating `None` differently from `[]`), revisit. Currently both pyqtgraph's `ViewBox.getMenu` and the scatter chain handle `None` gracefully.
+- **Selection-indicator bounds are derived from `base_chrom` RT min/max**, not from `ensemble.ms2_cofeatures[0].scan_idxs` (which is the DDA-snap source). The two ranges are close but not identical. If you ever need stricter DDA-only locking, that's the place to switch.
+
+### Annotation management — completed
+
+Three-phase rework letting users delete annotations, add free-form labels, and find chromatographic annotated scans at a glance. Plus a neutral-loss-formula option added in a follow-up. All shipped in one session.
+
+Phases (in chronological order):
+
+- **Phase A — Clear buttons.** Two toolbar actions in `EnsembleViewerWindow.ui` (`actionClearScanAnnots`, `actionClearAllAnnots`). "Clear (scan)" wipes annotations whose `scan_num` matches the displayed scan (scan-agnostic annotations preserved). "Clear (all)" wipes everything (mz_diffs, ion_annots, ion_pair_annots, generic_annots) behind a `QMessageBox` confirm.
+
+- **Phase B — Right-click delete.**
+  - Added `uuid: int = field(default_factory=…)` to `MzDiffAnnotation` (was the only annotation type missing stable identity). Back-compat is automatic via dataclass defaults — old `.mzk` files deserialize fine.
+  - **`gui/widgets/MSPlotWidget.py`** — new `ClickableTextItem(pg.TextItem)` with `on_click(button)` callback (right-button only by default; pointing-hand cursor on hover). `IonAnnotationGraphic` and `DeltaMzBracket` gained optional `on_click` kwargs that they forward to their text label. `create_textitem` gained an `on_click` kwarg that swaps in `ClickableTextItem`. **`MSLabelManager` is now a `QObject`** with `sigAnnotationClicked = pyqtSignal(str plot_id, int button)`. Each `add_*` method builds a closure capturing the annotation's `annot_id` and wires it through the click callback. `MSPlotWidget.sigAnnotationClicked` forwards from the label manager.
+  - **EnsembleViewer transient plot-id maps** (`_mz_diff_plot_ids`, `_ion_annot_plot_ids`, `_generic_annot_plot_ids` — all `dict[annot_uuid, plot_id]`). Cleared at the top of every `_redraw_annotations_for_current_scan` because plot IDs become invalid on redraw. Populated as each `_draw_*` runs and captures the return value of `add_*`.
+  - **`_on_annotation_clicked(plot_id, button, ms_level)`** — only acts on right-click. Reverse-looks-up the plot_id across the three maps to find `(annot_uuid, kind)`, pops a single-item `QMenu` ("Delete annotation"), removes from the matching collection on confirm, redraws.
+
+- **Phase C — Add-annotation tool.**
+  - `GenericAnnotation(cofeature_idx, ms_level, text, uuid, scan_num)` dataclass on `core.data_structs.ensemble`. `Ensemble.generic_annots: dict[int, GenericAnnotation]` + `add_generic_annot(...)` method (validates cofeature_idx range like the other `add_*`s).
+  - **`gui/views/ensemble_viewer/add_annot.py`** (new) — `AddAnnotController(BaseToolController)` with `sigGenericAnnotationRequested(int cofeature_idx, int ms_level, str text)`. Lifecycle: `on_activated` → `request_next_stage` (IDLE → SELECTING); click peak → `QInputDialog.getText`; emit the signal if accepted with non-empty text; `request_cancel()` either way (otherwise the next click would pop another dialog with no visual cue). Registered in `tool_controllers` and `tool_map`/`_update_tool_buttons` rows alongside FindFormula/MeasureLoss.
+  - `_draw_generic_annotation` uses the existing `add_anchored_label` primitive (no new graphic type needed).
+  - **Persistence** — `generic_annots` serializes via `asdict` and reloads via `**dict`, with `.get('generic_annots', {})` for back-compat.
+
+- **Chromatogram annotation markers.** After A/B/C landed, user wanted at-a-glance scan locators on the chrom plot.
+  - **`ChromatogramPlotManager.set_annotation_markers(rts_by_level: dict[int, list[float]])`** — stores per-MS-level RT lists, then `_render_annotation_markers()` does the work.
+  - Markers are `pg.ScatterPlotItem` with `symbol='t1'` (down-triangle). Y values come from `np.interp(rt, bpc_rt, bpc_intsy)` against the *transformed* background chrom — so they sit on the trace and re-anchor automatically when normalize/diff toggles fire.
+  - MS1 = magenta (220,60,220), MS2 = green (40,180,60). Matches the convention used by `update_correlation_plot`.
+  - `populate_chromatogram_plot` calls `_render_annotation_markers()` at the end — necessary because rebuilding the chrom plot wipes prior scatter items.
+  - **`EnsembleViewer._refresh_chrom_annotation_markers`** collects unique RTs from all three annotation collections (skipping `scan_num is None`), maps `scan_num → scan_array.rt_arr[scan_num]` per ms_level, and pushes to the manager. Hung off `_redraw_annotations_for_current_scan` (which fires for every annotation lifecycle event) plus the three `add_*` paths (which don't redraw).
+
+- **Neutral-loss formula annotation.** Follow-up after the user asked for nice figure labels.
+  - `MzDiffAnnotation` gained `formula: Optional[FormulaCandidate] = None`. `Ensemble.add_mz_diff_annot` accepts a `formula` kwarg.
+  - **`gui/views/ensemble_viewer/measure_loss.py`** — second-click branch emits `sigMzDiffMeasured` immediately (plain bracket appears), then calls `_open_finder_for_neutral_loss(delta_mz)` which:
+    - Sets `spinCharge.setValue(0)` (saves the prior value for restoration).
+    - `populate_table([(delta_mz, 1.0)])`.
+    - Shows the finder + runs `on_search_execute()`.
+    - Marks `_pending_finder_mode = 'neutral_loss'`.
+  - `eventFilter` on the finder catches `QEvent.Hide` and calls `request_cancel()` if `_pending_finder_mode` was set — so closing the dialog without picking still exits the tool cleanly.
+  - `handle_formula_assigned` routes by `_pending_finder_mode`: neutral_loss → emit `sigMzDiffFormulaAssigned(formula)` + hide finder + restore charge; ion → legacy Enter-press path.
+  - **`EnsembleViewer._last_mz_diff_uuid`** tracks the most recently added MzDiffAnnotation (updated in `add_mz_diff_annotation`). `_on_neutral_loss_formula_assigned(formula)` looks up that annotation, sets `target.formula = formula`, clears delta brackets on both plots, and redraws.
+  - **Two-line bracket label** when `annotation.formula is not None`: formula HTML (via `format_formula_obj_to_html`) on top, `Δ {delta_mz:.4f}` in 8pt below. Otherwise the plain `Δ {delta_mz:.4f}` label as before.
+  - **Persistence** — MzDiffAnnotation no longer round-trips via blanket `asdict` (FormulaCandidate's inner `Formula` object isn't asdict-able). Now serialized field-by-field; formula written as `{formula_str, error_ppm}` mirroring `IonAnnotation`. Loader reconstructs via `Formula(formula_str)` + `FormulaCandidate(...)`. Back-compat via `mz_diff_dict.get('formula')`.
+
+UI changes (Designer, by user):
+
+- **`EnsembleViewerWindow.ui`** — three new QToolButtons in the tool layout: `toolAddAnnot`, `toolClearScanAnnots`, `toolClearAllAnnots`. Three matching QActions: `actionAddAnnot` (checkable, "Annot", Shift+A), `actionClearScanAnnots` (Shift+Backspace), `actionClearAllAnnots` (Ctrl+Shift+Backspace). The two clear actions' default text reads as the object name (cosmetic — would be nicer as "Clear (scan)" / "Clear (all)" in Designer, but the buttons themselves have proper labels).
+
+Things future-Claude should be aware of:
+
+- **Plot IDs are transient.** They live only until the next `_redraw_annotations_for_current_scan` call (every spectrum scrub triggers one). The three plot-id maps are cleared at the top of that method and rebuilt as `_draw_*` runs. Any code that wants to act on a plot_id must do so within one redraw cycle.
+- **Annotation `scan_num` is an **index** into `ScanArray.rt_arr`**, not a raw scan number from `scan_num_arr`. `_current_scan_num` returns `int(scan_array.rt_to_scan_num(rt))` and `rt_to_scan_num` is implemented as `np.argmin(abs(rt_arr - rt))`. Mapping back to RT is just `rt_arr[scan_num]`. If `ScanArray` ever stops storing per-row RTs, this assumption breaks.
+- **MzDiffAnnotation persistence is no longer `asdict`-based** because of the FormulaCandidate field. If you add a new field, update the manual dict construction in `serialize_ensembles` and `deserialize_injection_ensembles` in `core/utils/persistence.py`.
+- **`ClickableTextItem` defaults to right-button only.** Left-clicks still go through pyqtgraph's normal viewport handling (pan, zoom, rubber-band select). If you want left-click semantics on an annotation, pass `accepted_buttons=Qt.RightButton | Qt.LeftButton` to the constructor — but watch out for the existing `MSPlotWidget.mousePressEvent` minefield (the V1_PLAN W4 notes cover that).
+- **The `_pending_finder_mode` state on MeasureLossController** is single-mode. If you ever add a third path that opens the same finder, the routing in `handle_formula_assigned` and the Hide event filter both need updating.
+- **The neutral-loss search uses the user's existing element constraints** (max_counts, RDBE range, etc.) which are tuned for positive-mode ions. Some plausible neutral losses get filtered out (e.g. an H2O loss is fine, but something like NH3 might be missed if min_counts excludes it). A "loss preset" or auto-relaxation could be nice post-ASMS, but not a V1 blocker — the user explicitly said no validation, this is a labelling aid.
+- **`_last_mz_diff_uuid` is a global single-slot state.** It's only valid because the formula finder is window-modal and the Hide event clears the pending mode. If the finder ever becomes non-modal or the user gains another path to create MzDiffAnnotations in parallel, the slot can race.
+- **Chrom markers re-render on every spectrum scrub** (because `_redraw_annotations_for_current_scan` triggers the refresh and that runs on every scrub). The marker count rarely changes between scrubs, so this is wasted work — a `_markers_dirty` flag is a clean optimization if it ever shows up in a profile.
+
+#### Loose ends
+
+- **Pre-existing test failures** unchanged from W3 notes. The new annotation code has no automated tests; verification was manual through the UI (the user exercised every Phase A/B/C path + chrom markers + neutral-loss formula round-trip).
+- **Two-line bracket label uses raw HTML.** No styling configuration; the size (8pt) is hardcoded in `_draw_mz_diff_annotation`. If the user wants per-figure styling control later, that's the place.
+- **Tooltip / action display text** in the .ui currently shows raw object names ("actionClearScanAnnots") because Designer didn't get human-friendly text set. Cosmetic only — the QToolButton labels are correct.

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'EnsembleViewerWindow.ui'
+# Form implementation generated from reading ui file 'gui/resources/EnsembleViewerWindow.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.11
 #
@@ -14,7 +14,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 class Ui_Form(object):
     def setupUi(self, Form):
         Form.setObjectName("Form")
-        Form.resize(728, 609)
+        Form.resize(728, 611)
         self.verticalLayout_2 = QtWidgets.QVBoxLayout(Form)
         self.verticalLayout_2.setObjectName("verticalLayout_2")
         self.verticalLayout = QtWidgets.QVBoxLayout()
@@ -44,9 +44,20 @@ class Ui_Form(object):
         self.horizontalLayout.addWidget(self.toolMeasureLoss)
         spacerItem = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         self.horizontalLayout.addItem(spacerItem)
-        self.toolClear = QtWidgets.QToolButton(Form)
-        self.toolClear.setObjectName("toolClear")
-        self.horizontalLayout.addWidget(self.toolClear)
+        self.toolAddAnnot = QtWidgets.QToolButton(Form)
+        self.toolAddAnnot.setAutoRaise(True)
+        self.toolAddAnnot.setObjectName("toolAddAnnot")
+        self.horizontalLayout.addWidget(self.toolAddAnnot)
+        self.toolClearScanAnnots = QtWidgets.QToolButton(Form)
+        self.toolClearScanAnnots.setAutoRaise(True)
+        self.toolClearScanAnnots.setObjectName("toolClearScanAnnots")
+        self.horizontalLayout.addWidget(self.toolClearScanAnnots)
+        self.toolClearAllAnnots = QtWidgets.QToolButton(Form)
+        self.toolClearAllAnnots.setAutoRaise(True)
+        self.toolClearAllAnnots.setObjectName("toolClearAllAnnots")
+        self.horizontalLayout.addWidget(self.toolClearAllAnnots)
+        spacerItem1 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        self.horizontalLayout.addItem(spacerItem1)
         self.toolExportSpec = QtWidgets.QToolButton(Form)
         self.toolExportSpec.setObjectName("toolExportSpec")
         self.horizontalLayout.addWidget(self.toolExportSpec)
@@ -63,8 +74,11 @@ class Ui_Form(object):
         self.horizontalLayout_2 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_2.setContentsMargins(-1, -1, -1, 0)
         self.horizontalLayout_2.setObjectName("horizontalLayout_2")
-        spacerItem1 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
-        self.horizontalLayout_2.addItem(spacerItem1)
+        self.checkNormalizeSpectra = QtWidgets.QCheckBox(Form)
+        self.checkNormalizeSpectra.setObjectName("checkNormalizeSpectra")
+        self.horizontalLayout_2.addWidget(self.checkNormalizeSpectra)
+        spacerItem2 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        self.horizontalLayout_2.addItem(spacerItem2)
         self.checkShowMiscPlots = QtWidgets.QCheckBox(Form)
         self.checkShowMiscPlots.setObjectName("checkShowMiscPlots")
         self.horizontalLayout_2.addWidget(self.checkShowMiscPlots)
@@ -92,8 +106,8 @@ class Ui_Form(object):
         self.checkDiff = QtWidgets.QCheckBox(self.tab)
         self.checkDiff.setObjectName("checkDiff")
         self.horizontalLayout_3.addWidget(self.checkDiff)
-        spacerItem2 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
-        self.horizontalLayout_3.addItem(spacerItem2)
+        spacerItem3 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        self.horizontalLayout_3.addItem(spacerItem3)
         self.toolExportChrom = QtWidgets.QToolButton(self.tab)
         self.toolExportChrom.setObjectName("toolExportChrom")
         self.horizontalLayout_3.addWidget(self.toolExportChrom)
@@ -144,9 +158,16 @@ class Ui_Form(object):
         self.actionExportSpec.setObjectName("actionExportSpec")
         self.actionExportChrom = QtWidgets.QAction(Form)
         self.actionExportChrom.setObjectName("actionExportChrom")
+        self.actionClearScanAnnots = QtWidgets.QAction(Form)
+        self.actionClearScanAnnots.setObjectName("actionClearScanAnnots")
+        self.actionClearAllAnnots = QtWidgets.QAction(Form)
+        self.actionClearAllAnnots.setObjectName("actionClearAllAnnots")
+        self.actionAddAnnot = QtWidgets.QAction(Form)
+        self.actionAddAnnot.setCheckable(True)
+        self.actionAddAnnot.setObjectName("actionAddAnnot")
 
         self.retranslateUi(Form)
-        self.tabWidget.setCurrentIndex(2)
+        self.tabWidget.setCurrentIndex(0)
         self.checkShowMiscPlots.toggled['bool'].connect(self.tabWidget.setVisible) # type: ignore
         QtCore.QMetaObject.connectSlotsByName(Form)
 
@@ -157,8 +178,11 @@ class Ui_Form(object):
         self.toolComposite.setText(_translate("Form", "Cmpste"))
         self.toolFindFormula.setText(_translate("Form", "Fmla"))
         self.toolMeasureLoss.setText(_translate("Form", "NLoss"))
-        self.toolClear.setText(_translate("Form", "CLEAR"))
+        self.toolAddAnnot.setText(_translate("Form", "Annot"))
+        self.toolClearScanAnnots.setText(_translate("Form", "Clr Scan"))
+        self.toolClearAllAnnots.setText(_translate("Form", "Clr All"))
         self.toolExportSpec.setText(_translate("Form", "EXPORT"))
+        self.checkNormalizeSpectra.setText(_translate("Form", "Normalize Intensities"))
         self.checkShowMiscPlots.setText(_translate("Form", "Show misc. plots"))
         self.checkNormalize.setText(_translate("Form", "Normalize"))
         self.checkDiff.setText(_translate("Form", "Diff"))
@@ -180,6 +204,12 @@ class Ui_Form(object):
         self.actionExportSpec.setShortcut(_translate("Form", "Shift+E"))
         self.actionExportChrom.setText(_translate("Form", "ExportChrom"))
         self.actionExportChrom.setShortcut(_translate("Form", "Ctrl+Shift+E"))
+        self.actionClearScanAnnots.setText(_translate("Form", "actionClearScanAnnots"))
+        self.actionClearScanAnnots.setShortcut(_translate("Form", "Shift+Backspace"))
+        self.actionClearAllAnnots.setText(_translate("Form", "ClearAllAnnots"))
+        self.actionClearAllAnnots.setShortcut(_translate("Form", "Ctrl+Shift+Backspace"))
+        self.actionAddAnnot.setText(_translate("Form", "Annot"))
+        self.actionAddAnnot.setShortcut(_translate("Form", "Shift+A"))
 from gui.widgets.ChromPlotWidget import ChromPlotWidget
 from gui.widgets.MSPlotWidget import MSPlotWidget
 from pyqtgraph import PlotWidget

@@ -1,20 +1,22 @@
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtCore import Qt
 import pyqtgraph as pg
 import numpy as np
 from pyqtgraph import exporters
 
 from core.data_structs import Ensemble, IonAnnotation
-from core.data_structs.ensemble import MzDiffAnnotation
+from core.data_structs.ensemble import MzDiffAnnotation, GenericAnnotation
 from find_mfs.isotopes.envelope import get_isotope_envelope
 from core.utils.spectrum_export import to_sirius_ms, to_mgf
 from core.utils.config import load_config
+from gui.utils.formula_formatting import format_formula_obj_to_html
 from gui.resources.EnsembleViewerWindow import Ui_Form
 from gui.views.ensemble_viewer.tools import (
     ToolType, ToolStage, Mode,
     ToolManager,
 )
 from gui.views.ensemble_viewer.dda_overlays import EnsembleDDAOverlayManager
+from gui.views.ensemble_viewer.add_annot import AddAnnotController
 from gui.views.ensemble_viewer.find_formula import FindFormulaController
 from gui.views.ensemble_viewer.measure_loss import MeasureLossController
 from gui.views.ensemble_viewer.plot_managers import (
@@ -64,6 +66,21 @@ class EnsembleViewer(
 
         self.wizard: Optional['NCICompoundExportWizard'] = None
 
+        # Transient plot-id → annotation-uuid maps. These are populated
+        # by the _draw_* methods and cleared at the top of every
+        # _redraw_annotations_for_current_scan call, because the plot
+        # IDs become invalid the moment the spectrum redraws.
+        # Shape: {annot_uuid: {ms_level: plot_id}}
+        self._mz_diff_plot_ids: dict[int, str] = {}
+        self._ion_annot_plot_ids: dict[int, str] = {}
+        self._generic_annot_plot_ids: dict[int, str] = {}
+
+        # Tracks the uuid of the most recently created MzDiffAnnotation
+        # so the neutral-loss-formula signal (fired asynchronously when
+        # the user picks a candidate) knows which annotation to attach
+        # the formula to.
+        self._last_mz_diff_uuid: Optional[int] = None
+
         # Plot managers
         self.chrom_manager = ChromatogramPlotManager(
             chrom_plot_widget=self.chromPlotWidget,
@@ -86,6 +103,7 @@ class EnsembleViewer(
         self.tool_controllers: dict[ToolType, 'BaseToolController'] = {
             ToolType.FINDFORMULA: FindFormulaController(self),
             ToolType.MEASURELOSS: MeasureLossController(self),
+            ToolType.ADDANNOT: AddAnnotController(self),
         }
 
         self._setup_plots()
@@ -118,6 +136,10 @@ class EnsembleViewer(
             self._on_transform_settings_changed
         )
 
+        self.checkNormalizeSpectra.toggled.connect(
+            self._on_normalize_spectra_toggled
+        )
+
         # *** TOOLS ***
         # Connect all generic tool controller signals
         for controller in self.tool_controllers.values():
@@ -136,6 +158,27 @@ class EnsembleViewer(
         # Connect signal for when measure loss tool measures a delta m/z
         self.tool_controllers[ToolType.MEASURELOSS].sigMzDiffMeasured.connect(
             self.add_mz_diff_annotation
+        )
+
+        # Neutral-loss formula assignment: attaches to the most recently
+        # created MzDiffAnnotation.
+        self.tool_controllers[ToolType.MEASURELOSS].sigMzDiffFormulaAssigned.connect(
+            self._on_neutral_loss_formula_assigned
+        )
+
+        # Connect signal for the add-annotation tool
+        self.tool_controllers[ToolType.ADDANNOT].sigGenericAnnotationRequested.connect(
+            self.add_generic_annotation
+        )
+
+        # Right-click on any drawn annotation routes through here. Same
+        # handler for both plots — ms_level is inferred from which map
+        # the plot_id lives in.
+        self.ms1_plot.sigAnnotationClicked.connect(
+            lambda plot_id, btn: self._on_annotation_clicked(plot_id, btn, 1)
+        )
+        self.ms2_plot.sigAnnotationClicked.connect(
+            lambda plot_id, btn: self._on_annotation_clicked(plot_id, btn, 2)
         )
         # Connect metadata buttons
         self.pushAddMetadataField.clicked.connect(
@@ -181,6 +224,7 @@ class EnsembleViewer(
             (self.actionComposite,  'mode', self.toolComposite),
             (self.actionFindFormula,'tool', self.toolFindFormula),
             (self.actionMeasureLoss,'tool', self.toolMeasureLoss),
+            (self.actionAddAnnot,   'tool', self.toolAddAnnot),
         ]:
             action: QtWidgets.QAction
             action_type: Literal['mode', 'tool']
@@ -208,6 +252,16 @@ class EnsembleViewer(
         )
         self.actionExportSpec.triggered.connect(
             self.show_export_cmpd_wizard
+        )
+
+        # Clear-annotation triggers (not modes — just one-shot actions).
+        self.toolClearScanAnnots.setDefaultAction(self.actionClearScanAnnots)
+        self.toolClearAllAnnots.setDefaultAction(self.actionClearAllAnnots)
+        self.actionClearScanAnnots.triggered.connect(
+            self._on_clear_scan_annotations
+        )
+        self.actionClearAllAnnots.triggered.connect(
+            self._on_clear_all_annotations
         )
 
         # self.toolExportChrom.setDefaultAction(
@@ -259,6 +313,7 @@ class EnsembleViewer(
         tool_map = {
             self.actionFindFormula: ToolType.FINDFORMULA,
             self.actionMeasureLoss: ToolType.MEASURELOSS,
+            self.actionAddAnnot:    ToolType.ADDANNOT,
         }
 
         tool_type = tool_map.get(
@@ -333,6 +388,7 @@ class EnsembleViewer(
             ( self.toolComposite,    'mode',      Mode.COMPOSITE),
             ( self.toolFindFormula,  'tool',  ToolType.FINDFORMULA),
             ( self.toolMeasureLoss,  'tool',  ToolType.MEASURELOSS),
+            ( self.toolAddAnnot,     'tool',  ToolType.ADDANNOT),
         )
 
         for btn, activation_type, activation_condition in _:
@@ -525,6 +581,18 @@ class EnsembleViewer(
         self.chrom_manager.selected_rt = rt
         self._redraw_annotations_for_current_scan()
 
+    def _on_normalize_spectra_toggled(self, checked: bool):
+        """
+        Re-populate both spectrum plots with the new normalize setting.
+        """
+        self.spectrum_manager.set_normalize_spectra(checked)
+        if not self.ensemble:
+            return
+        rt = self.chrom_manager.selected_rt or self.ensemble.peak_rt
+        self.spectrum_manager.populate_spectrum_plot(scan_rt=rt)
+        self.dda_overlay_mgr.update(scan_rt=rt)
+        self._redraw_annotations_for_current_scan()
+
     def _on_transform_settings_changed(self):
         """
         Called when normalize or diff checkboxes change
@@ -577,6 +645,7 @@ class EnsembleViewer(
             idxs=slice(spec_idx, spec_idx + 1),
         )
         self.chrom_manager.set_ms1_chroms(ms1_chroms)
+        self.chrom_manager.set_last_selection(mz=mz, ms_level=1)
 
         self.chrom_manager.update_chromatogram_plot()
         self.chrom_manager.update_correlation_plot()
@@ -608,6 +677,7 @@ class EnsembleViewer(
             idxs=slice(spec_idx, spec_idx + 1),
         )
         self.chrom_manager.set_ms2_chroms(ms2_chroms)
+        self.chrom_manager.set_last_selection(mz=mz, ms_level=2)
 
         self.chrom_manager.update_correlation_plot()
         self.chrom_manager.update_chromatogram_plot()
@@ -723,6 +793,25 @@ class EnsembleViewer(
         )
 
         self._draw_ion_annotation(annotation)
+        self._refresh_chrom_annotation_markers()
+
+    def add_generic_annotation(
+        self,
+        cofeature_idx: int,
+        ms_level: Literal[1, 2],
+        text: str,
+    ):
+        if not self.ensemble:
+            return
+
+        annotation = self.ensemble.add_generic_annot(
+            cofeature_idx=cofeature_idx,
+            ms_level=ms_level,
+            text=text,
+            scan_num=self._current_scan_num(ms_level),
+        )
+        self._draw_generic_annotation(annotation)
+        self._refresh_chrom_annotation_markers()
 
     def add_mz_diff_annotation(
         self,
@@ -741,8 +830,38 @@ class EnsembleViewer(
             delta_mz=delta_mz,
             scan_num=self._current_scan_num(ms_level),
         )
+        self._last_mz_diff_uuid = annotation.uuid
 
         self._draw_mz_diff_annotation(annotation)
+        self._refresh_chrom_annotation_markers()
+
+    def _on_neutral_loss_formula_assigned(
+        self,
+        formula: 'FormulaCandidate',
+    ):
+        """
+        Attach a neutral-loss formula to the most recently created
+        MzDiffAnnotation (the one whose bracket was just drawn). No
+        validation — purely a labelling aid.
+        """
+        if not self.ensemble or self._last_mz_diff_uuid is None:
+            return
+
+        target = next(
+            (a for a in self.ensemble.mz_diffs
+             if a.uuid == self._last_mz_diff_uuid),
+            None,
+        )
+        if target is None:
+            return
+
+        target.formula = formula
+
+        # The bracket was already drawn with the plain Δ label; clear
+        # and redraw so the new two-line label takes effect.
+        for plot in (self.ms1_plot, self.ms2_plot):
+            plot.clear_delta_brackets()
+        self._redraw_annotations_for_current_scan()
 
     def _draw_mz_diff_annotation(self, annotation: 'MzDiffAnnotation'):
         ms_plot = {
@@ -750,12 +869,28 @@ class EnsembleViewer(
             2: self.ms2_plot,
         }[annotation.ms_level]
 
-        label = f"\u0394 {annotation.delta_mz:.4f}"
-        ms_plot.add_delta_bracket(
+        # When a neutral-loss formula is attached, give the formula
+        # prominence and demote the \u0394 m/z to a small subtitle line.
+        if annotation.formula is not None:
+            formula_html = format_formula_obj_to_html(
+                annotation.formula.formula
+            )
+            label = (
+                f'<div style="text-align:center;">'
+                f'{formula_html}'
+                f'<br><span style="font-size:8pt;">'
+                f'\u0394 {annotation.delta_mz:.4f}'
+                f'</span></div>'
+            )
+        else:
+            label = f"\u0394 {annotation.delta_mz:.4f}"
+
+        plot_id = ms_plot.add_delta_bracket(
             spec_idx_a=annotation.cofeature_a_idx,
             spec_idx_b=annotation.cofeature_b_idx,
             text=label,
         )
+        self._mz_diff_plot_ids[annotation.uuid] = plot_id
 
     def _current_scan_num(self, ms_level: Literal[1, 2]) -> Optional[int]:
         """
@@ -786,11 +921,71 @@ class EnsembleViewer(
             threshold=0.005,
         )
 
-        ms_plot.add_ion_annotation(
+        plot_id = ms_plot.add_ion_annotation(
             spec_idxs=annotation.cofeature_idxs,
             text=annotation.format_string,
             envelope=envelope,
         )
+        self._ion_annot_plot_ids[annotation.uuid] = plot_id
+
+    def _draw_generic_annotation(self, annotation: 'GenericAnnotation'):
+        """
+        Draws a free-form user annotation as an anchored text label.
+        """
+        ms_plot = {
+            1: self.ms1_plot,
+            2: self.ms2_plot,
+        }[annotation.ms_level]
+
+        plot_id = ms_plot.add_anchored_label(
+            spec_idx=annotation.cofeature_idx,
+            text=annotation.text,
+        )
+        self._generic_annot_plot_ids[annotation.uuid] = plot_id
+
+    def _refresh_chrom_annotation_markers(self):
+        """
+        Collect every annotation's RT (grouped by ms_level) and push
+        them to the chrom plot manager as down-triangle markers. Skip
+        scan-agnostic annotations (`scan_num is None`) since they don't
+        anchor to any specific RT.
+        """
+        if not self.ensemble or not self.ensemble.injection:
+            return
+
+        rts_by_level: dict[int, set[float]] = {1: set(), 2: set()}
+        for annot in (
+            list(self.ensemble.mz_diffs)
+            + list(self.ensemble.ion_annots.values())
+            + list(self.ensemble.generic_annots.values())
+        ):
+            if annot.scan_num is None:
+                continue
+            scan_array = self.ensemble.injection.get_scan_array(annot.ms_level)
+            if scan_array is None:
+                continue
+            try:
+                rts_by_level[annot.ms_level].add(
+                    float(scan_array.rt_arr[annot.scan_num])
+                )
+            except (IndexError, TypeError, KeyError):
+                continue
+
+        self.chrom_manager.set_annotation_markers({
+            ms_level: sorted(rts)
+            for ms_level, rts in rts_by_level.items()
+        })
+
+    def _is_annot_on_current_scan(self, annot) -> bool:
+        """
+        Predicate: does this annotation belong to the currently-displayed
+        spectrum? `scan_num is None` = scan-agnostic (back-compat for
+        pre-scan_num .mzk files), always considered on-scan.
+        """
+        if annot.scan_num is None:
+            return True
+        target = self._current_scan_num(1 if annot.ms_level == 1 else 2)
+        return annot.scan_num == target
 
     def _redraw_annotations_for_current_scan(self):
         """
@@ -798,32 +993,163 @@ class EnsembleViewer(
         spectrum. `MSPlotItem.setSpectrumArray` clears all annotations on
         every spectrum change, so this must be called after each
         `populate_spectrum_plot`.
-
-        An annotation is drawn when its `scan_num` matches the current
-        scan (for that ms_level). `scan_num is None` means
-        scan-agnostic \u2014 drawn always (back-compat for pre-scan_num
-        .mzk files).
         """
         if not self.ensemble:
             return
 
-        ms1_scan = self._current_scan_num(1)
-        ms2_scan = self._current_scan_num(2)
-
-        def should_show(annot) -> bool:
-            if annot.scan_num is None:
-                return True
-            return annot.scan_num == (
-                ms1_scan if annot.ms_level == 1 else ms2_scan
-            )
+        # Reset transient plot-id maps \u2014 the prior IDs were invalidated
+        # by the spectrum redraw / clear_*().
+        self._mz_diff_plot_ids.clear()
+        self._ion_annot_plot_ids.clear()
+        self._generic_annot_plot_ids.clear()
 
         for annotation in self.ensemble.ion_annots.values():
-            if should_show(annotation):
+            if self._is_annot_on_current_scan(annotation):
                 self._draw_ion_annotation(annotation)
 
         for annotation in self.ensemble.mz_diffs:
-            if should_show(annotation):
+            if self._is_annot_on_current_scan(annotation):
                 self._draw_mz_diff_annotation(annotation)
+
+        for annotation in self.ensemble.generic_annots.values():
+            if self._is_annot_on_current_scan(annotation):
+                self._draw_generic_annotation(annotation)
+
+        # Keep chromatogram-side markers in sync with whatever lives on
+        # the ensemble right now. Cheap (one ScatterPlotItem swap) and
+        # routes every annotation lifecycle event through one place.
+        self._refresh_chrom_annotation_markers()
+
+    def _on_clear_scan_annotations(self):
+        """
+        Delete all annotations whose `scan_num` matches the currently-
+        displayed scan (per ms_level). Scan-agnostic annotations
+        (scan_num is None) are left alone \u2014 they don't 'belong' to any
+        scan, so 'clear this scan' shouldn't remove them.
+        """
+        if not self.ensemble:
+            return
+
+        def belongs_to_current_scan(annot) -> bool:
+            if annot.scan_num is None:
+                return False
+            return annot.scan_num == self._current_scan_num(
+                1 if annot.ms_level == 1 else 2
+            )
+
+        self.ensemble.mz_diffs = [
+            a for a in self.ensemble.mz_diffs
+            if not belongs_to_current_scan(a)
+        ]
+        self.ensemble.ion_annots = {
+            k: v for k, v in self.ensemble.ion_annots.items()
+            if not belongs_to_current_scan(v)
+        }
+        self.ensemble.generic_annots = {
+            k: v for k, v in self.ensemble.generic_annots.items()
+            if not belongs_to_current_scan(v)
+        }
+
+        for plot in (self.ms1_plot, self.ms2_plot):
+            plot.clear_ion_annotations()
+            plot.clear_delta_brackets()
+            plot.clear_anchored_labels()
+        self._redraw_annotations_for_current_scan()
+
+    def _on_clear_all_annotations(self):
+        """
+        Wipe every annotation on the ensemble. Confirms first because
+        this is destructive and not scoped.
+        """
+        if not self.ensemble:
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Clear all annotations",
+            "Delete every annotation on this ensemble? "
+            "This cannot be undone.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        self.ensemble.mz_diffs.clear()
+        self.ensemble.ion_annots.clear()
+        self.ensemble.ion_pair_annots.clear()
+        self.ensemble.generic_annots.clear()
+
+        for plot in (self.ms1_plot, self.ms2_plot):
+            plot.clear_ion_annotations()
+            plot.clear_delta_brackets()
+            plot.clear_anchored_labels()
+        self._redraw_annotations_for_current_scan()
+
+    def _on_annotation_clicked(
+        self,
+        plot_id: str,
+        button: int,
+        ms_level: Literal[1, 2],
+    ):
+        """
+        Routed from MSPlotWidget.sigAnnotationClicked. Reverse-lookups
+        the plot_id against the transient maps to find the underlying
+        annotation, then offers a right-click context menu to delete it.
+
+        Left-click is currently a no-op (kept reserved for future use).
+        """
+        if button != int(Qt.RightButton):
+            return
+        if not self.ensemble:
+            return
+
+        # Reverse-lookup: plot_id → (annot_uuid, kind). The maps were
+        # populated by _draw_* in the most recent redraw; if the user
+        # right-clicks a transient bracket (e.g. the measure-loss
+        # preview), no mapping exists and we silently bail.
+        annot_uuid: Optional[int] = None
+        kind: Optional[Literal['mz_diff', 'ion', 'generic']] = None
+        for uuid_, pid in self._mz_diff_plot_ids.items():
+            if pid == plot_id:
+                annot_uuid, kind = uuid_, 'mz_diff'
+                break
+        if annot_uuid is None:
+            for uuid_, pid in self._ion_annot_plot_ids.items():
+                if pid == plot_id:
+                    annot_uuid, kind = uuid_, 'ion'
+                    break
+        if annot_uuid is None:
+            for uuid_, pid in self._generic_annot_plot_ids.items():
+                if pid == plot_id:
+                    annot_uuid, kind = uuid_, 'generic'
+                    break
+
+        if annot_uuid is None:
+            return
+
+        menu = QtWidgets.QMenu(self)
+        delete_action = menu.addAction("Delete annotation")
+        chosen = menu.exec_(QtGui.QCursor.pos())
+        if chosen is not delete_action:
+            return
+
+        # Strike from the data model, then trigger a full redraw of the
+        # current scan (which also resets the transient plot-id maps).
+        if kind == 'mz_diff':
+            self.ensemble.mz_diffs = [
+                a for a in self.ensemble.mz_diffs if a.uuid != annot_uuid
+            ]
+        elif kind == 'ion':
+            self.ensemble.ion_annots.pop(annot_uuid, None)
+        elif kind == 'generic':
+            self.ensemble.generic_annots.pop(annot_uuid, None)
+
+        for plot in (self.ms1_plot, self.ms2_plot):
+            plot.clear_ion_annotations()
+            plot.clear_delta_brackets()
+            plot.clear_anchored_labels()
+        self._redraw_annotations_for_current_scan()
 
     def _print_envelope_arr(
         self,
