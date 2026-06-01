@@ -19,6 +19,7 @@ class MzMLImportWizard(
         list,       # list[str] (Samplenames)
         object,     # ScanArrayParameters (MS1)
         object,     # ScanArrayParameters (MS2, optional)
+        str,        # acquisition_mode: 'ms1_only' | 'dda' | 'dia'
     )
 
     def __init__(
@@ -76,6 +77,33 @@ class MzMLImportWizard(
 
         self.checkBox.setChecked(True)
 
+        # Acquisition mode combobox. Index 0 is the "-- Select --" placeholder;
+        # validateCurrentPage rejects page 3 until something else is chosen.
+        self.acquisitionModeCombo.setCurrentIndex(0)
+        self.acquisitionModeCombo.currentIndexChanged.connect(
+            self._on_acquisition_mode_changed
+        )
+        # Drive groupBoxMS2 off the combo (it used to be checkable).
+        self._on_acquisition_mode_changed(0)
+
+    def _on_acquisition_mode_changed(self, idx: int) -> None:
+        """
+        Enable the MS2 parameters group only when the user has chosen a
+        mode that actually produces MS2 data (DDA or DIA).
+        """
+        mode = self._acquisition_mode_from_index(idx)
+        self.groupBoxMS2.setEnabled(mode in ('dda', 'dia'))
+
+    def _acquisition_mode_from_index(self, idx: int) -> Optional[str]:
+        # Match on display text so this can't desync from the .ui's
+        # combobox ordering.
+        text = self.acquisitionModeCombo.itemText(idx).strip().lower()
+        return {
+            'ms1 only': 'ms1_only',
+            'dda': 'dda',
+            'dia': 'dia',
+        }.get(text)
+
     def validateCurrentPage(self):
         """
         Overrides wizard method - called when user tries to advance
@@ -99,6 +127,19 @@ class MzMLImportWizard(
                         "Invalid sample name",
                         "One of the extracted sample names is invalid "
                         "(i.e. did not match pattern, or is a duplicate)"
+                    )
+                    return False
+
+            case self.wizardPage3:
+                # Force user to make an explicit acquisition-mode choice.
+                if self._acquisition_mode_from_index(
+                    self.acquisitionModeCombo.currentIndex()
+                ) is None:
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Acquisition mode required",
+                        "Please select an acquisition mode "
+                        "(MS1 only / DDA / DIA) before continuing."
                     )
                     return False
 
@@ -318,8 +359,15 @@ class MzMLImportWizard(
             scan_nums=None,
         )
 
+        acquisition_mode = self._acquisition_mode_from_index(
+            self.acquisitionModeCombo.currentIndex()
+        )
+
+        # MS2 ScanArray only built when the acquisition mode actually
+        # produces MS2 data. validateCurrentPage already guarantees the
+        # combo is not on the placeholder index here.
         ms2_params = None
-        if self.groupBoxMS2.isChecked():
+        if acquisition_mode in ('dda', 'dia'):
             ms2_params = ScanArrayParameters(
                 ms_level=2,
                 mz_tolerance=self.field('ms2_tol'),
@@ -336,6 +384,7 @@ class MzMLImportWizard(
             samplenames,
             ms1_params,
             ms2_params,
+            acquisition_mode,
         )
 
         # Save the regex pattern

@@ -99,6 +99,44 @@
      </widget>
     </item>
     <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_4">
+      <property name="topMargin">
+       <number>5</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="label_5">
+        <property name="text">
+         <string>Acquisition Mode:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="acquisitionModeCombo">
+        <item>
+         <property name="text">
+          <string>-- Select --</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>MS1 only</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>DIA</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>DDA</string>
+         </property>
+        </item>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
      <widget class="QCheckBox" name="checkBox">
       <property name="text">
        <string>Same parameters for MS1 and MS2</string>
@@ -232,7 +270,7 @@
          <string>MS2</string>
         </property>
         <property name="checkable">
-         <bool>true</bool>
+         <bool>false</bool>
         </property>
         <layout class="QFormLayout" name="formLayout_3">
          <item row="0" column="0">

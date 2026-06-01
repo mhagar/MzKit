@@ -86,6 +86,16 @@ class ScanArray:
     mz_arr_csc: Optional[csc_array] = None
     intsy_arr_csc: Optional[csc_array] = None
 
+    # DDA precursor metadata. Per-scan, length == scan_num_arr.size.
+    # Populated only for MS2 ScanArrays built from DDA data; None otherwise.
+    precursor_mz_arr: Optional[np.ndarray] = None
+    isolation_lo_arr: Optional[np.ndarray] = None
+    isolation_hi_arr: Optional[np.ndarray] = None
+    precursor_charge_arr: Optional[np.ndarray] = None
+    # For each MS2 scan, the scan_num of the nearest preceding MS1 scan.
+    # Precomputed at build time so badge rendering doesn't search per-redraw.
+    triggering_ms1_scan_arr: Optional[np.ndarray] = None
+
 
     def __post_init__(self):
         # Get m/z value of the tallest signal in each row

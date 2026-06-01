@@ -32,6 +32,7 @@ class Ensemble:
     injection: Optional[ 'Injection' ] = None
 
     # Calculated on initialization
+    # TODO: Calculate scan range
     peak_rt: float = field(init=False, repr=False)
     base_mz: float = field(init=False, repr=False)
     base_intsy: float = field(init=False, repr=False)
@@ -65,6 +66,11 @@ class Ensemble:
     user_metadata: dict[str, str] = field(
         default_factory=dict, repr=False
     )
+
+    # DDA precursor info. Populated at construction time for DDA-mode
+    # ensembles; None for MS1-only / DIA.
+    precursor_mz: Optional[float] = None
+    precursor_charge: Optional[int] = None
 
     def __repr__(self):
         return (f"Ensemble({len(self.ms1_cofeatures)} ms1, "
@@ -303,13 +309,17 @@ class Ensemble:
         cofeature_a_idx: int,
         cofeature_b_idx: int,
         ms_level: Literal[1, 2],
-        label: Optional[str] = None
+        delta_mz: float,
+        scan_num: Optional[int] = None,
+        label: Optional[str] = None,
     ) -> 'MzDiffAnnotation':
         """
-        Creates an MzDiffAnnotation, and also returns it
+        Snapshot of a delta m/z measurement. `delta_mz` is whatever the
+        user saw on screen when committing the click — we don't recompute
+        from the scan array (the previous behaviour returned 0 / wrong
+        values whenever the cofeature lane had no signal at peak_rt,
+        which is the common case for sparse DDA MS2 lanes).
         """
-
-        # Validate that idxs are real
         cofeatures = self._get_cofeatures(ms_level)
         for idx in (cofeature_a_idx, cofeature_b_idx):
             if not (0 <= idx <len(cofeatures)):
@@ -318,19 +328,13 @@ class Ensemble:
                     f"Ensemble only contains {len(cofeatures)} cofeatures "
                 )
 
-        # Calc mean_delta mz
-        scan_array = self._get_scan_array(ms_level)
-        mz_a = cofeatures[cofeature_a_idx].get_mz_values(scan_array).mean()
-        mz_b = cofeatures[cofeature_b_idx].get_mz_values(scan_array).mean()
-
-        mean_delta_mz: float = abs(mz_a - mz_b)
-
         annot = MzDiffAnnotation(
             cofeature_a_idx=cofeature_a_idx,
             cofeature_b_idx=cofeature_b_idx,
             ms_level=ms_level,
-            mean_delta_mz=mean_delta_mz,
+            delta_mz=delta_mz,
             user_label=label,
+            scan_num=scan_num,
         )
 
         self.mz_diffs.append(annot)
@@ -342,6 +346,7 @@ class Ensemble:
         ms_level: Literal[1, 2],
         formula: FormulaCandidate,
         label: Optional[str],
+        scan_num: Optional[int] = None,
     ) -> 'IonAnnotation':
         """
         Create, validate, and add an ion annotation
@@ -360,6 +365,7 @@ class Ensemble:
             ms_level=ms_level,
             formula=formula,
             user_label=label,
+            scan_num=scan_num,
         )
 
         self.ion_annots[annot.uuid] = annot
@@ -411,25 +417,34 @@ class Ensemble:
 @dataclass
 class MzDiffAnnotation:
     """
-    A record of m/z difference between two co-features
+    A record of m/z difference between two co-features.
+
+    `scan_num` identifies the scan (column index into the ms_level's
+    ScanArray) at which the user made the measurement. The viewer shows
+    the annotation only when displaying that scan. `None` = scan-agnostic
+    (back-compat for .mzk files saved before scan-tied annotations).
     """
     cofeature_a_idx: int
     cofeature_b_idx: int
     ms_level: Literal[1, 2]
-    mean_delta_mz: float
+    delta_mz: float
     user_label: Optional[str] = None
+    scan_num: Optional[int] = None
 
 
 @dataclass
 class IonAnnotation:
     """
-    Claim a group of features are isotopoogues
+    Claim a group of features are isotopoogues.
+
+    `scan_num`: see `MzDiffAnnotation.scan_num`.
     """
     cofeature_idxs: list[int]
     ms_level: Literal[1, 2]
     formula: FormulaCandidate
     uuid: int = field(default_factory=lambda: uuid.uuid4().int)
     user_label: Optional[str] = None
+    scan_num: Optional[int] = None
 
     @property
     def format_string(self) -> str:

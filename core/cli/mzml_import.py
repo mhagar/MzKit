@@ -9,11 +9,12 @@ from core.data_structs.sample import Sample
 
 import argparse
 import logging
+import threading
 from pathlib import Path
 # TESTING
 import time
 
-from typing import Optional, TYPE_CHECKING
+from typing import Callable, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from core.data_structs.scan_array import ScanArrayParameters
 
@@ -27,6 +28,7 @@ def mzml_to_injection(
         scan_array_params: tuple[
             'ScanArrayParameters', Optional['ScanArrayParameters']
         ],
+        acquisition_mode: str = 'ms1_only',
         verbose: bool = False,
 ) -> Injection:
     """
@@ -53,6 +55,7 @@ def mzml_to_injection(
         exp=exp,
         filename=input_filepath.name,
         scan_array_parameters=scan_array_params,
+        acquisition_mode=acquisition_mode,
     )
 
     return injection
@@ -65,7 +68,10 @@ def main(
         scan_array_params: tuple[
             'ScanArrayParameters', Optional['ScanArrayParameters']
         ],
+        acquisition_mode: str = 'ms1_only',
         verbose: bool = False,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
 ) -> list[Sample]:
     """
     Main entry point for both CLI and program use
@@ -97,11 +103,26 @@ def main(
     _validate(input_filepaths, sample_names)
 
     # Generate Sample objects
+    total = len(input_filepaths)
     samples: list[Sample] = []
-    for sample_name, filepath in zip(
+    for i, (sample_name, filepath) in enumerate(zip(
         sample_names,
         input_filepaths,
-    ):
+    )):
+        # Cooperative cancellation between files. Partial result (samples
+        # imported so far) is preserved and returned to the GUI.
+        if cancel_event is not None and cancel_event.is_set():
+            logger.info(
+                f"Import cancelled after {len(samples)}/{total} samples"
+            )
+            break
+
+        if progress_callback is not None:
+            progress_callback(
+                100.0 * i / total,
+                f"Importing {filepath.name} ({i + 1}/{total})",
+            )
+
         try:
 
             logger.info(
@@ -112,6 +133,7 @@ def main(
             injection = mzml_to_injection(
                     input_filepath=filepath,
                     scan_array_params=scan_array_params,
+                    acquisition_mode=acquisition_mode,
                 )
 
             samples.append(
@@ -132,6 +154,9 @@ def main(
                 f"Error processing {sample_name}: \n"
                 f"{e}"
             )
+
+    if progress_callback is not None and not (cancel_event and cancel_event.is_set()):
+        progress_callback(100.0, "Done")
 
     return samples
 

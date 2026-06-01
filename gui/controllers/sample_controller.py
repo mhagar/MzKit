@@ -6,12 +6,14 @@ from PyQt5 import QtCore, QtWidgets
 
 from core.utils.natural_sort import natural_sort_key
 from gui.models.analyte_table_list_model import AnalyteTableListModel
+from gui.models.alignment_list_model import AlignmentListModel
 from gui.models.sample_list_model import SampleListModel
 from gui.models.sample_proxy_model import SampleProxyModel
 from gui.dialogues.MzMLImportWizard import MzMLImportWizard
 from gui.dialogues.MetadataImportWizard import MetadataImportWizard
 from gui.dialogues.FingerprintImportWizard import FingerprintImportWizard
 from gui.dialogues.AnalyteTableImportWizard import AnalyteTableImportWizard
+from gui.dialogues.FeatureTableImportWizard import FeatureTableImportWizard
 
 import logging
 from typing import Optional, Literal, TYPE_CHECKING
@@ -36,6 +38,7 @@ class SampleController(QtCore.QObject):
         list,  #list[str] (Paths)
         list,       # list[str] (Samplenames)
         object,     # tuple(ScanArrayParameters (MS1), optional MS2)
+        str,        # acquisition_mode: 'ms1_only' | 'dda' | 'dia'
     )
 
     sigFingerprintImportWizardComplete = QtCore.pyqtSignal(
@@ -56,6 +59,11 @@ class SampleController(QtCore.QObject):
         object, # analyte metadata table csv filepath
         object, # analyte metadata id column
         object, # field columns
+    )
+
+    sigFeatureTableImportWizardComplete = QtCore.pyqtSignal(
+        object,  # list[FeatureCoordinate]
+        object,  # FeatureTableImportParams
     )
 
     sigViewEnsemble = QtCore.pyqtSignal(
@@ -83,6 +91,7 @@ class SampleController(QtCore.QObject):
         self.sample_list_model: Optional[SampleListModel] = None
         self.sample_proxy_model: Optional[SampleProxyModel] = None
         self.analyte_table_list_model: Optional[AnalyteTableListModel] = None
+        self.alignment_list_model: Optional[AlignmentListModel] = None
 
 
     def initialize_sample_model(self):
@@ -109,6 +118,15 @@ class SampleController(QtCore.QObject):
         self.sigModelChanged.emit(
             'AnalyteTable',
             self.analyte_table_list_model,
+        )
+
+    def initialize_alignment_model(self):
+        self.alignment_list_model = AlignmentListModel(
+            registry=self.data_registry,
+        )
+        self.sigModelChanged.emit(
+            'Alignment',
+            self.alignment_list_model,
         )
 
     def show_fingerprint_import_wizard(self):
@@ -163,18 +181,14 @@ class SampleController(QtCore.QObject):
         samplenames: list[str],
         ms1_params: 'ScanArrayParameters',
         ms2_params: Optional['ScanArrayParameters'],
+        acquisition_mode: str,
     ):
         """
         Called when user completes the *Wizard*, i.e.
         is done definining parameters for mzml import
-        :param filepaths:
-        :param samplenames:
-        :param ms1_params:
-        :param ms2_params:
-        :return:
         """
         self.sigMzMLImportWizardComplete.emit(
-            filepaths, samplenames, (ms1_params, ms2_params)
+            filepaths, samplenames, (ms1_params, ms2_params), acquisition_mode,
         )
 
     def on_mzml_import_completion(
@@ -251,6 +265,20 @@ class SampleController(QtCore.QObject):
             results
         )
 
+    def show_feature_table_import_wizard(self):
+        self.feature_table_import_wizard = FeatureTableImportWizard()
+        self.feature_table_import_wizard.sigImportParamsGiven.connect(
+            self.feature_table_wizard_completed
+        )
+        self.feature_table_import_wizard.show()
+
+    def feature_table_wizard_completed(
+        self,
+        features,   # list[FeatureCoordinate]
+        params,     # FeatureTableImportParams
+    ):
+        self.sigFeatureTableImportWizardComplete.emit(features, params)
+
     def on_ensemble_generation(
         self,
         ensembles: list['Ensemble'],
@@ -309,6 +337,14 @@ class SampleController(QtCore.QObject):
         :return:
         """
         return self.analyte_table_list_model.getAnalyteTableAtIndex(index)
+
+    def get_alignment_by_index(
+        self,
+        index: QtCore.QModelIndex,
+    ):
+        if not self.alignment_list_model:
+            return None
+        return self.alignment_list_model._get_alignment_at_index(index)
 
     def set_sample_filter(
         self,

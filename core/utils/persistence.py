@@ -16,6 +16,11 @@ from core.data_structs.ensemble import (
     IonPairAnnotation,
     MzDiffAnnotation,
 )
+from core.cli.align_ensembles import (
+    EnsembleAlignment,
+    AlignedAnalyte,
+    AlignmentParams,
+)
 
 import logging
 import zipfile
@@ -37,6 +42,8 @@ logger = logging.getLogger(__name__)
 def save_project(
     filepath: Path,
     data_registry: 'DataRegistry',
+    progress_callback=None,  # injected by ProcessRunner; unused here
+    cancel_event=None,       # injected by ProcessRunner; unused here
 ) -> None:
     """
     Serializes the Sample objects, then stores in a zip file.
@@ -105,8 +112,71 @@ def save_project(
                     zf,
                 )
 
+        # Serialize alignments
+        alignments = [
+            data_registry.get_alignment(uuid)
+            for uuid in data_registry.get_all_alignment_uuids()
+        ]
+        if alignments:
+            logger.info(
+                f"Packaging {len(alignments)} alignments"
+            )
+            for alignment in alignments:
+                serialize_alignment(alignment, zf)
+
     logger.info(
         f"Project saved: {filepath.absolute()}"
+    )
+
+
+def serialize_alignment(
+    alignment: 'EnsembleAlignment',
+    zf: 'zipfile.ZipFile',
+):
+    analytes_data = []
+    for analyte in alignment.analytes:
+        analytes_data.append({
+            'ensemble_map': {
+                str(k): v for k, v in analyte.ensemble_map.items()
+            },
+            'consensus_rt': analyte.consensus_rt,
+            'consensus_mz': analyte.consensus_mz,
+        })
+
+    alignment_dict = {
+        'uuid': alignment.uuid,
+        'name': alignment.name,
+        'sample_uuids': list(alignment.sample_uuids),
+        'parameters': alignment.parameters._asdict(),
+        'analytes': analytes_data,
+    }
+
+    zf.writestr(
+        f"alignments/{alignment.uuid}.json",
+        data=json.dumps(alignment_dict, indent=2),
+    )
+
+
+def deserialize_alignment(
+    alignment_path: str,
+    zf: 'zipfile.ZipFile',
+) -> 'EnsembleAlignment':
+    data = json.loads(zf.read(alignment_path))
+
+    analytes = []
+    for a in data['analytes']:
+        analytes.append(AlignedAnalyte(
+            ensemble_map={int(k): v for k, v in a['ensemble_map'].items()},
+            consensus_rt=a['consensus_rt'],
+            consensus_mz=a['consensus_mz'],
+        ))
+
+    return EnsembleAlignment(
+        uuid=data['uuid'],
+        name=data.get('name', ''),
+        sample_uuids=tuple(data['sample_uuids']),
+        parameters=AlignmentParams(**data['parameters']),
+        analytes=analytes,
     )
 
 
@@ -180,6 +250,7 @@ def serialize_injection_primitives(
         'ms1_scan_array_params': sample.injection.scan_array_parameters[0].__dict__,
         'ms2_scan_array_params': sample.injection.scan_array_parameters[1].__dict__ or None,
         'uuid':              sample.injection.uuid,
+        'acquisition_mode':  sample.injection.acquisition_mode,
     }
     zf.writestr(
         f"{savepath}/injection.json",
@@ -238,6 +309,9 @@ def serialize_injection_ensembles(
             'proposed_formula': ensemble.proposed_formula,
             'identity': ensemble.identity,
             'user_metadata': ensemble.user_metadata,
+            # DDA precursor info
+            'precursor_mz': ensemble.precursor_mz,
+            'precursor_charge': ensemble.precursor_charge,
             # Injection reference not serialized - will be assigned on loading
         }
 
@@ -291,16 +365,20 @@ def serialize_sample_primitives(
 
 def load_project(
     filepath: Path,
-) -> list[Sample]:
+    progress_callback=None,  # injected by ProcessRunner; unused here
+    cancel_event=None,       # injected by ProcessRunner; unused here
+) -> tuple[list[Sample], list['EnsembleAlignment']]:
     """
-    Given a path to an .mzk file generate dusing save_project(),
-    reconstitutes a list of Injections and Fingerprints
-    :param filepath:
-    :return:
+    Given a path to an .mzk file generated using save_project(),
+    reconstitutes Samples and EnsembleAlignments.
+
+    :param filepath: Path to .mzk file
+    :return: (samples, alignments)
     """
     _sanity_checks(filepath)
 
     samples: list[Sample] = []
+    alignments: list[EnsembleAlignment] = []
 
     with zipfile.ZipFile(
         filepath,
@@ -347,11 +425,22 @@ def load_project(
 
             samples.append(sample)
 
+        # Load alignments
+        alignment_paths = [
+            name for name in zf.namelist()
+            if name.startswith('alignments/')
+            and name.endswith('.json')
+        ]
+        for alignment_path in alignment_paths:
+            alignment = deserialize_alignment(alignment_path, zf)
+            alignments.append(alignment)
+
     logger.info(
-        f"Loaded {len(samples)} samples."
+        f"Loaded {len(samples)} samples, "
+        f"{len(alignments)} alignments."
     )
 
-    return samples
+    return samples, alignments
 
 
 def deserialize_injection(
@@ -400,7 +489,8 @@ def deserialize_injection(
         scan_array_parameters=(
             ms1_scan_array_params,
             ms2_scan_array_params,
-        )
+        ),
+        acquisition_mode=injection_primitives.get('acquisition_mode', 'ms1_only'),
     )
 
     # Load Ensembles (if they exist)
@@ -427,10 +517,6 @@ def deserialize_injection_ensembles(
 
     ensemble_data: list[dict] = pickle.loads(zf.read(ensembles_path))
 
-    print('hi')
-    print(f"ensemble_data:\n"
-          f" {ensemble_data}")
-
     for e_dict in ensemble_data:
         # Reconstruct ion_annots from serialized dicts
         reconstructed_ion_annots = {}
@@ -451,6 +537,7 @@ def deserialize_injection_ensembles(
                 formula=formula_candidate,
                 uuid=annot_dict['uuid'],
                 user_label=annot_dict.get('user_label'),
+                scan_num=annot_dict.get('scan_num'),
             )
             reconstructed_ion_annots[key] = ion_annot
 
@@ -488,6 +575,9 @@ def deserialize_injection_ensembles(
             proposed_formula=e_dict.get('proposed_formula'),
             identity=e_dict.get('identity'),
             user_metadata=e_dict.get('user_metadata', {}),
+            # DDA precursor info (None for pre-DDA .mzk files)
+            precursor_mz=e_dict.get('precursor_mz'),
+            precursor_charge=e_dict.get('precursor_charge'),
         )
 
         # This will call ensemble.set_injection():

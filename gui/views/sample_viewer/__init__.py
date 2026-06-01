@@ -4,6 +4,7 @@ import pyqtgraph as pg
 
 from core.interfaces.data_sources import AnalyteTableSource
 from core.utils.config import load_config
+from gui.views.sample_viewer.dda_overlays import DDAOverlayManager
 from gui.views.sample_viewer.ensemble_extraction import EnsembleExtractionManager
 from gui.views.sample_viewer.menus import FingerprintDisplayMenu
 from gui.views.sample_viewer.model import SampleViewerItemModel
@@ -42,6 +43,15 @@ class SampleViewer(
     sigMSLevelChanged = QtCore.pyqtSignal(int)
     sigEnsembleExtractionRequested = QtCore.pyqtSignal(
         object,
+    )
+    sigAutoEnsembleRequested = QtCore.pyqtSignal(
+        object,  # SampleUUID
+    )
+    sigAlignEnsemblesRequested = QtCore.pyqtSignal(
+        object,  # list[SampleUUID]
+    )
+    sigViewEnsembleRequested = QtCore.pyqtSignal(
+        object,  # Ensemble
     )
 
     def __init__(
@@ -118,6 +128,14 @@ class SampleViewer(
         # Ensemble Extraction
         self.ensemble_extraction_mgr = EnsembleExtractionManager(
             data_source=self.data_source
+        )
+
+        # DDA overlay layer for the MS spectrum plot
+        self.dda_overlay_mgr = DDAOverlayManager(
+            plot=self.plotMS,
+            selection_mgr=self.selection_mgr,
+            data_source=self.data_source,
+            tool_mgr=self.tool_mgr,
         )
 
         # Ensemble peak interaction state
@@ -203,6 +221,26 @@ class SampleViewer(
         self.selection_mgr.sigSpectrumSelected.connect(
             self.viewSampleStack.on_spectrum_selected
         )
+
+        # Keep the MS-level combobox in sync when the selection switches
+        # MS level programmatically (e.g. clicking a precursor badge).
+        self.selection_mgr.sigMSLevelSelected.connect(
+            self._sync_ms_level_combo
+        )
+
+    def _sync_ms_level_combo(self, ms_level: int) -> None:
+        # combo indices: 0 = MS1, 1 = MS2
+        idx = 0 if ms_level == 1 else 1
+        if self.comboMSLevel.currentIndex() == idx:
+            return
+        self.comboMSLevel.blockSignals(True)
+        try:
+            self.comboMSLevel.setCurrentIndex(idx)
+        finally:
+            self.comboMSLevel.blockSignals(False)
+        # Mirror what on_ms_level_change_requested would have done, so
+        # downstream listeners (chrom_mgr etc.) also see the change.
+        self.sigMSLevelChanged.emit(ms_level)
 
     def _setup_tool_signals(self):
         """
@@ -432,15 +470,26 @@ class SampleViewer(
         """
         Updates MS Plot to match whatever is in Spectrum Selection Manager.
 
-        Also updates the Ensemble MS preview plot
+        Also updates the Ensemble MS preview plot, and the DDA overlay
+        layer (precursor badges / isolation window).
         """
         spec_array = self.selection_mgr.get_selected_spectrum_array()
         if spec_array is None:
+            self.dda_overlay_mgr.clear()
             return
 
         self.plotMS.setSpectrumArray(
             spec_array
         )
+
+        sample_uuid = self.selection_mgr.selected_sample_uuid
+        scan_idx = self.selection_mgr.get_selected_scan_num()
+        if sample_uuid is not None and scan_idx is not None:
+            self.dda_overlay_mgr.update(
+                sample_uuid=sample_uuid,
+                ms_level=self.selection_mgr.selected_ms_level,
+                scan_index=scan_idx,
+            )
 
     # ***ADDING/REMOVING/UPDATING SAMPLES***
     def add_samples(
@@ -652,8 +701,10 @@ class SampleViewer(
         ensemble_uuid: 'EnsembleUUID'
     ):
         """
-        # TODO: use the actual viewer
-        Open ensemble in EnsembleViewer window.
+        Open an ensemble in the shared EnsembleViewer MDI subwindow by
+        emitting sigViewEnsembleRequested. The MainController routes this
+        to SubWindowManager so we always land in the same singleton
+        viewer rather than spawning floating copies.
         """
         injection = self.model.getInjection(sample_uuid)
         if not injection:
@@ -663,18 +714,7 @@ class SampleViewer(
         if not ensemble:
             return
 
-        from gui.views.ensemble_viewer import EnsembleViewer
-
-        viewer = EnsembleViewer(
-            data_source=self.data_source,
-        )
-        viewer.set_ensemble(ensemble)
-        viewer.show()
-
-        # Store reference to prevent garbage collection
-        if not hasattr(self, '_ensemble_viewers'):
-            self._ensemble_viewers = []
-        self._ensemble_viewers.append(viewer)
+        self.sigViewEnsembleRequested.emit(ensemble)
 
     def _delete_ensemble(
         self,
@@ -920,6 +960,13 @@ class SampleViewer(
         toggle_vis_action = context_menu.addAction(
             "Toggle Selected Samples Visibility"
         )
+        context_menu.addSeparator()
+        auto_ensemble_action = context_menu.addAction(
+            "Auto-generate Ensembles"
+        )
+        align_action = context_menu.addAction(
+            "Align Ensembles Across Samples"
+        )
 
         # Show menu, get selected action
         action = context_menu.exec_(
@@ -930,6 +977,10 @@ class SampleViewer(
             self.remove_selected_samples()
         elif action == toggle_vis_action:
             self.toggle_selected_sample_visibility()
+        elif action == auto_ensemble_action:
+            self._request_auto_ensemble_generation()
+        elif action == align_action:
+            self._request_ensemble_alignment()
 
     def remove_selected_samples(self):
         """
@@ -965,3 +1016,32 @@ class SampleViewer(
                     item.setCheckState(
                         Qt.CheckState.Checked
                     )
+
+    def _request_auto_ensemble_generation(self):
+        """
+        Emit auto-ensemble signal for each selected sample
+        """
+        selected_idxs: list['QtCore.QModelIndex'] = self.viewSampleTree.selectedIndexes()
+        for idx in selected_idxs:
+            uuid = idx.data(self.model.UuidRole)
+            if uuid:
+                sample = self.data_source.get_sample(uuid)
+                if sample and sample.injection:
+                    self.sigAutoEnsembleRequested.emit(uuid)
+
+    def _request_ensemble_alignment(self):
+        """
+        Emit alignment signal with all selected sample UUIDs
+        """
+        selected_idxs: list['QtCore.QModelIndex'] = self.viewSampleTree.selectedIndexes()
+        uuids: list['SampleUUID'] = []
+        for idx in selected_idxs:
+            uuid = idx.data(self.model.UuidRole)
+            if uuid:
+                sample = self.data_source.get_sample(uuid)
+                if sample and sample.injection:
+                    if len(sample.injection.ensembles) > 0:
+                        uuids.append(uuid)
+
+        if len(uuids) >= 2:
+            self.sigAlignEnsemblesRequested.emit(uuids)

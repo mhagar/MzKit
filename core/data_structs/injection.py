@@ -11,7 +11,10 @@ from core.data_structs.scan_array import (
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
-from typing import Optional, TYPE_CHECKING
+import numpy as np
+from typing import Literal, Optional, TYPE_CHECKING
+
+AcquisitionMode = Literal['ms1_only', 'dda', 'dia']
 
 if TYPE_CHECKING:
     from core.data_structs import (
@@ -33,6 +36,7 @@ class Injection:
     sample_uuid: Optional['SampleUUID'] = None
     scan_array_ms1: Optional[ScanArray] = None
     scan_array_ms2: Optional[ScanArray] = None
+    acquisition_mode: AcquisitionMode = 'ms1_only'
     ensembles: dict['EnsembleUUID', 'Ensemble'] = field(
         default_factory=dict
     )
@@ -119,26 +123,77 @@ class Injection:
                 if self.scan_array_ms2:
                     return
 
-        # Iterate through experiment and retrieve appropriate spectra
+        # DDA at MS2: replicate MS2 scans of one precursor are interleaved
+        # with MS2s of other precursors, so any finite gap tolerance would
+        # fragment mass lanes incorrectly. The Ensemble layer does the
+        # compound-level filtering downstream.
+        is_dda_ms2 = (ms_level == 2 and self.acquisition_mode == 'dda')
+
+        # Iterate through experiment and retrieve appropriate spectra,
+        # tracking the most recent MS1 scan_num as we go (used to populate
+        # `triggering_ms1_scan_arr` for DDA MS2 ScanArrays).
         spectra: list[oms.MSSpectrum] = []
         scan_nums: list[int] = []
+        precursor_mzs: list[float] = []
+        precursor_charges: list[int] = []
+        isolation_los: list[float] = []
+        isolation_his: list[float] = []
+        triggering_ms1_scans: list[int] = []
+        last_ms1_scan_num: int = -1
 
         for num, spectrum in enumerate(self.exp.getSpectra()):
             spectrum: oms.MSSpectrum
 
-            if spectrum.getMSLevel() != ms_level:
+            current_level = spectrum.getMSLevel()
+            if current_level == 1:
+                last_ms1_scan_num = num
+
+            if current_level != ms_level:
                 continue
 
             spectra.append(spectrum)
             scan_nums.append(num)
 
+            if is_dda_ms2:
+                precursors = spectrum.getPrecursors()
+                if precursors:
+                    prec = precursors[0]
+                    prec_mz = prec.getMZ()
+                    lo_off = prec.getIsolationWindowLowerOffset()
+                    hi_off = prec.getIsolationWindowUpperOffset()
+                    precursor_mzs.append(prec_mz)
+                    precursor_charges.append(prec.getCharge())
+                    isolation_los.append(prec_mz - lo_off)
+                    isolation_his.append(prec_mz + hi_off)
+                else:
+                    # MS2 scan with no precursor metadata — shouldn't happen
+                    # in real DDA data but stay defensive
+                    precursor_mzs.append(np.nan)
+                    precursor_charges.append(0)
+                    isolation_los.append(np.nan)
+                    isolation_his.append(np.nan)
+                triggering_ms1_scans.append(last_ms1_scan_num)
+
+        effective_gap = scan_gap_tolerance
+        if is_dda_ms2:
+            # Disable gap-counting entirely. `build_features` compares
+            # gap_counter > tolerance, so any value >= len(spectra) suffices.
+            effective_gap = len(spectra) + 1
+
         scan_array: ScanArray = build_scan_array(
             spectra=spectra,
             mz_tolerance=mz_tolerance,
-            scan_gap_tolerance=scan_gap_tolerance,
+            scan_gap_tolerance=effective_gap,
             min_intsy=min_intsy,
             scan_nums=scan_nums,
         )
+
+        if is_dda_ms2:
+            scan_array.precursor_mz_arr = np.array(precursor_mzs, dtype='f4')
+            scan_array.precursor_charge_arr = np.array(precursor_charges, dtype='i4')
+            scan_array.isolation_lo_arr = np.array(isolation_los, dtype='f4')
+            scan_array.isolation_hi_arr = np.array(isolation_his, dtype='f4')
+            scan_array.triggering_ms1_scan_arr = np.array(triggering_ms1_scans, dtype='i4')
 
         match ms_level:
             case 1:
