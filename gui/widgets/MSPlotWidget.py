@@ -1092,8 +1092,12 @@ class MSLabelManager(QtCore.QObject):
         Sets the MS spectrum to check for overlaps
         """
         self.peak_data = data
+        # Guard against empty/peakless spectra (e.g. a blank scan, or a
+        # cleared plot): .max() has no identity on a zero-size array.
         self.absolute_intsy_threshold = (
                 data['intsy'].max() * self.intsy_threshold
+                if data['intsy'].size
+                else 0.0
         )
 
     def add_anchored_label(

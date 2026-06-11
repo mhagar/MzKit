@@ -11,19 +11,13 @@ if TYPE_CHECKING:
         Sample,
         SampleUUID,
         Injection,
-        Analyte,
-        AnalyteID,
         FeaturePointer,
         ScanArray,
     )
     from core.utils.array_types import (
         SpectrumArray
     )
-    from core.interfaces.data_sources import (
-        SampleDataSource,
-        AnalyteTableSource,
-        AnalyteSource,
-    )
+    from core.interfaces.data_sources import SampleDataSource
 
 class EnsembleExtractionManager(
     QtCore.QObject,
@@ -43,11 +37,7 @@ class EnsembleExtractionManager(
 
     def __init__(
         self,
-        data_source: Union[
-            'SampleDataSource',
-            'AnalyteTableSource',
-            'AnalyteSource',
-        ],
+        data_source: 'SampleDataSource',
     ):
         super().__init__()
         self.data_source = data_source

@@ -2,14 +2,13 @@ from .data_registry import DataRegistry
 from .sample import Sample
 from .fingerprint import Fingerprint
 from .injection import Injection
-from .analyte_table import AnalyteTable
-from .analyte import Analyte
 from .scan_array import ScanArray
 from .ensemble import Ensemble, IonAnnotation
 from .feature_pointer import FeaturePointer
+from .alignment import EnsembleAlignment, AlignedAnalyte, AlignmentParams
 from .uuid_types import (
     SampleUUID, FingerprintUUID, InjectionUUID, ScanArrayUUID,
-    AnalyteTableUUID, AnalyteID, EnsembleUUID,
+    EnsembleUUID, AlignmentUUID,
 )
 
 
@@ -18,17 +17,17 @@ __all__ = [
     "Sample",
     "Fingerprint",
     "Injection",
-    "AnalyteTable",
-    "Analyte",
     "ScanArray",
     "Ensemble",
     "EnsembleUUID",
+    "EnsembleAlignment",
+    "AlignedAnalyte",
+    "AlignmentParams",
     "IonAnnotation",
     "SampleUUID",
     "FingerprintUUID",
     "InjectionUUID",
     "ScanArrayUUID",
-    "AnalyteTableUUID",
-    "AnalyteID",
     "FeaturePointer",
+    "AlignmentUUID",
 ]

@@ -9,6 +9,7 @@ DDA-specific overlay layer for the SampleViewer's spectrum plot.
 """
 import numpy as np
 import pyqtgraph as pg
+from PyQt5 import QtCore
 
 from typing import TYPE_CHECKING, Optional
 
@@ -143,6 +144,11 @@ class DDAOverlayManager:
             hoverable=True,
         )
         scatter.sigClicked.connect(self._on_badge_clicked)
+        # Suppress the default pyqtgraph context menu (export/copy etc.)
+        # that otherwise opens on right-click.
+        scatter.getContextMenus = lambda event=None: None
+        # Hand cursor on hover signals clickability.
+        scatter.setCursor(QtCore.Qt.PointingHandCursor)
 
         self._badge_targets = [
             (float(prec_mz), int(idx))

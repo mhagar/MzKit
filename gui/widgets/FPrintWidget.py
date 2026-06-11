@@ -13,6 +13,8 @@ class FPrintWidget(pg.PlotWidget):
         int, # FPrint idx
     )
 
+    sigFPrintLeaved = pyqtSignal()
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -40,6 +42,9 @@ class FPrintWidget(pg.PlotWidget):
 
         self._configure_plotitem()
 
+    @property
+    def isEmpty(self) -> bool:
+        return bool(self._descriptors)
 
     def _configure_plotitem(self):
         """
@@ -65,6 +70,7 @@ class FPrintWidget(pg.PlotWidget):
         # Emit mouse location in scene coordinates
         pos: QPointF = ev.pos()
         if not self.sceneBoundingRect().contains(pos):
+            self.sigFPrintLeaved.emit()
             return
 
         vb: pg.ViewBox = self.getViewBox()

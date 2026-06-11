@@ -23,11 +23,7 @@ ScanArrayUUID = NewType(
     'ScanArrayUUID',
     int,
 )
-AnalyteTableUUID = NewType(
-    'AnalyteTableUUID',
-    int,
-)
-AnalyteID = NewType(
-    'AnalyteID',
+AlignmentUUID = NewType(
+    'AlignmentUUID',
     int,
 )

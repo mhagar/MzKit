@@ -23,26 +23,28 @@ def test_mzml_import(
         scan_array_params=scan_array_params,
     )
 
-    return samples
+    assert samples
+    assert len(samples) == len(sample_names)
 
 FILEPATHS = [
-    '/media/mostafah/KINGSTON/2025_07_08_HIFAN_SubBatch2_Plate400/20250716_Blank.mzML',
-    '/media/mostafah/KINGSTON/2025_07_08_HIFAN_SubBatch2_Plate400/20250716_L7161_3_3.mzML',
-    '/media/mostafah/KINGSTON/2025_07_08_HIFAN_SubBatch2_Plate400/20250716_L7161_3_6.mzML',
-    '/media/mostafah/KINGSTON/2025_07_08_HIFAN_SubBatch2_Plate400/20250716_L7161_3_7.mzML',
-    '/media/mostafah/KINGSTON/2025_07_08_HIFAN_SubBatch2_Plate400/20250716_L7161_3_12.mzML',
-    '/media/mostafah/KINGSTON/2025_07_08_HIFAN_SubBatch2_Plate400/20250716_L7161_3_16.mzML',
-    '/media/mostafah/KINGSTON/2025_07_08_HIFAN_SubBatch2_Plate400/20250716_L7161_3_17.mzML',
+    'tests/test_files/hifan_fractions/20250708_L97117_5_1.mzML',
+    'tests/test_files/hifan_fractions/20250708_L97117_5_3.mzML',
+    'tests/test_files/hifan_fractions/20250708_L97117_5_5.mzML',
+    'tests/test_files/hifan_fractions/20250708_L97117_5_7.mzML',
 ]
 
 SAMPLENAMES = [
-    'Blank',
-    'L7161_3_3',
-    'L7161_3_6',
-    'L7161_3_7',
-    'L7161_3_12',
-    'L7161_3_16',
-    'L7161_3_17',
+    # 'Blank',
+    # 'L7161_3_3',
+    # 'L7161_3_6',
+    # 'L7161_3_7',
+    # 'L7161_3_12',
+    # 'L7161_3_16',
+    # 'L7161_3_17',
+    'L97117_5_1',
+    'L97117_5_3',
+    'L97117_5_5',
+    'L97117_5_7',
 ]
 
 ms1_params = ScanArrayParameters(

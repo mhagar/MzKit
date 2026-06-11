@@ -22,8 +22,8 @@ class FindFormulaController(BaseToolController):
     """
     sigFormulaAssigned = QtCore.pyqtSignal(
         object,      # find_mfs.FormulaCandidate
-        int,       # ms_level
-        list,      # cofeature_idxs
+        int,                # ms_level
+        list,               # cofeature_idxs
     )
 
     def __init__(
@@ -41,7 +41,6 @@ class FindFormulaController(BaseToolController):
             config=ensemble_viewer.config,
             modal=True,
         )
-
         self._connect_signals()
 
     def _connect_signals(self):

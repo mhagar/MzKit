@@ -71,6 +71,17 @@ class BaseToolController(QtCore.QObject):
         """
         pass
 
+    def handle_ms_signal_hovered(
+        self,
+        data: tuple[float, float, int],  # mz, intsy, spec_idx
+        ms_level: Literal[1, 2],
+    ):
+        """
+        Called when user hovers on a signal in MS1/MS2 spectrum.
+        Override to implement tool-specific signal handling.
+        """
+        pass
+
 
 class MeasureLossController(BaseToolController):
     """
@@ -88,17 +99,24 @@ class MeasureLossController(BaseToolController):
         # Add tool-specific state here
 
     def on_activated(self):
-        """Called when Measure Loss tool is activated"""
+        """
+        Called when Measure Loss tool is activated
+        """
         # TODO: Implement tool initialization
+        print('Measure loss tool activated')
         self.viewer.tool_manager.request_next_stage()
 
     def on_enter_pressed(self):
-        """Called when user presses Enter while selecting signals"""
+        """
+        Called when user presses Enter while selecting signals
+        """
         # TODO: Implement confirmation behavior
         pass
 
     def on_cancelled(self):
-        """Called when tool is cancelled"""
+        """
+        Called when tool is cancelled
+        """
         # TODO: Implement cleanup
         pass
 
@@ -107,6 +125,8 @@ class MeasureLossController(BaseToolController):
         data: tuple[int, float],
         ms_level: Literal[1, 2],
     ):
-        """Handle signal clicks for measure loss tool"""
+        """
+        Handle signal clicks for measure loss tool
+        """
         # TODO: Implement signal selection logic
         pass

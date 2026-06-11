@@ -13,13 +13,12 @@ from typing import Optional, TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from core.data_structs import (
         Sample,
-        AnalyteTable,
         SampleUUID,
         InjectionUUID,
         FingerprintUUID,
-        AnalyteTableUUID,
-        AnalyteID,
+        AlignmentUUID,
     )
+    from core.data_structs.alignment import EnsembleAlignment
 
 class DataRegistry(
     QtCore.QObject,
@@ -40,28 +39,25 @@ class DataRegistry(
     sigSampleUpdated = QtCore.pyqtSignal(
         object  # Sample
     )
-    sigAnalyteTableAdded = QtCore.pyqtSignal(
-        object  # Sample
+    sigAlignmentAdded = QtCore.pyqtSignal(
+        object  # EnsembleAlignment
     )
-    sigAnalyteTableRemoved = QtCore.pyqtSignal(
-        object  # Sample
-    )
-    sigAnalyteTableUpdated = QtCore.pyqtSignal(
-        object  # Sample
+    sigAlignmentRemoved = QtCore.pyqtSignal(
+        object  # EnsembleAlignment
     )
 
     def __init__(self):
         self._samples: dict['SampleUUID', 'Sample'] = {}
         self._sample_name_to_uuid: dict[str, 'SampleUUID'] = {}
-        self._analyte_tables: dict['AnalyteTableUUID', 'AnalyteTable'] = {}
+        self._alignments: dict['AlignmentUUID', 'EnsembleAlignment'] = {}
         super().__init__()
 
     def subscribe_to_changes(
         self,
         addition_callback,
         removal_callback,
-        update_callback,
-        change_type: Literal['Sample', 'AnalyteTable'],
+        update_callback=None,
+        change_type: Literal['Sample', 'Alignment'] = 'Sample',
     ):
         match change_type:
             case 'Sample':
@@ -73,21 +69,18 @@ class DataRegistry(
                     removal_callback
                 )
 
-                self.sigSampleUpdated.connect(
-                    update_callback
-                )
+                if update_callback:
+                    self.sigSampleUpdated.connect(
+                        update_callback
+                    )
 
-            case 'AnalyteTable':
-                self.sigAnalyteTableAdded.connect(
+            case 'Alignment':
+                self.sigAlignmentAdded.connect(
                     addition_callback
                 )
 
-                self.sigAnalyteTableRemoved.connect(
+                self.sigAlignmentRemoved.connect(
                     removal_callback
-                )
-
-                self.sigAnalyteTableUpdated.connect(
-                    update_callback
                 )
 
     def register_sample(
@@ -169,55 +162,10 @@ class DataRegistry(
         Validates a sample for registration. This check must
         succeed before registering a sample.
 
-         # TODO: Re-implement this code from fingerprint_list_model.py
-        # # Used to enforce all same size
-        # if not self._fingerprint_array_size:
-        #     self._fingerprint_array_size = fingerprint.array.size
-        #
-        # # Used to enforce all same metadata fields
-        # if not self._fingerprint_metadata_fields:
-        #     self._fingerprint_metadata_fields = {
-        #         x for x in fingerprint.metadata.keys()
-        #     }
-        #
-        # # Used to enforce all same descriptors
-        # if not self._fingerprint_descriptors:
-        #     self._fingerprint_descriptors = set(fingerprint.descriptors)
-
-
-
-        # if fingerprint.samplename in self._fingerprint_names:
-        #     raise Exception(
-        #         f"Fingerprint with sample name {fingerprint.samplename} "
-        #         f"already exists"
-        #     )
-        #
-        # fingerprint_keys = {x for x in fingerprint.metadata.keys()}
-        # if fingerprint_keys != self._fingerprint_metadata_fields:
-        #     raise Exception(
-        #         f"Fingerprint {fingerprint.samplename} has different metadata "
-        #         f"fields than ones already loaded.\n"
-        #         f"Fingerprint {fingerprint.samplename}: {fingerprint.metadata.keys()}\n"
-        #         f"Others: {self._fingerprint_metadata_fields}"
-        #     )
-        #
-        # fingerprint_descriptors = set(fingerprint.descriptors)
-        # if fingerprint_descriptors != self._fingerprint_descriptors:
-        #     raise Exception(
-        #         f"Fingerprint {fingerprint.samplename} has different descriptors "
-        #         f"fields than ones already loaded.\n"
-        #         f"Fingerprint {fingerprint.samplename}: {fingerprint.descriptors}\n"
-        #         f"Others: {self._fingerprint_descriptors}"
-        #     )
-        #
-        #
-        # if self._fingerprint_array_size:
-        #     if fingerprint.array.size != self._fingerprint_array_size:
-        #         raise Exception(
-        #             f"Fingerprint {fingerprint.samplename} has "
-        #             f"{fingerprint.array.size} descriptors, whereas other "
-        #             f"fingerprints have {self._fingerprint_array_size}."
-        #         )
+        Currently enforces uuid uniqueness and that a Sample carries at
+        least one of (Injection, Fingerprint). Fingerprint cross-sample
+        consistency checks (matching array size / descriptors / metadata
+        fields) are not yet ported from the old fingerprint model.
 
         :param sample:
         :return:
@@ -293,8 +241,25 @@ class DataRegistry(
             self.sigSampleUpdated.emit(destination)
 
         # Merge the metadata attribute
-        for key, value in source.metadata:
-            destination.metadata[key] = value
+        destination.metadata.update(source.metadata)
+
+    def clear(self) -> None:
+        """
+        Empties the registry of all Samples and Alignments, emitting the
+        corresponding removal signals so that every subscribed model/view
+        resets to an empty state.
+
+        The DataRegistry instance itself is preserved (only its contents
+        are dropped), so all existing references and signal/slot
+        connections held by controllers, models and views remain valid.
+
+        Alignments are removed first, since they reference Samples.
+        """
+        for uuid in self.get_all_alignment_uuids():
+            self.remove_alignment(uuid)
+
+        for uuid in self.get_all_sample_uuids():
+            self.remove_sample(uuid)
 
     def sample_count(self) -> int:
         return len(self._samples)
@@ -327,41 +292,37 @@ class DataRegistry(
 
         self.sigSampleUpdated.emit(sample)
 
-    def register_analyte_table(
+    # --- Alignment methods ---
+
+    def register_alignment(
         self,
-        analyte_table: 'AnalyteTable'
+        alignment: 'EnsembleAlignment',
     ):
-        self._analyte_tables[analyte_table.uuid] = analyte_table
-        self.sigAnalyteTableAdded.emit(analyte_table)
+        self._alignments[alignment.uuid] = alignment
+        self.sigAlignmentAdded.emit(alignment)
 
-    def remove_analyte_table(
+    def remove_alignment(
         self,
-        uuid: 'AnalyteTableUUID',
+        uuid: 'AlignmentUUID',
     ):
-        if uuid in self._analyte_tables:
-            analyte_table_to_remove = self._analyte_tables[uuid]
-            self.sigAnalyteTableRemoved.emit(
-                analyte_table_to_remove
-            )
-            del self._analyte_tables[uuid]
+        if uuid in self._alignments:
+            alignment = self._alignments[uuid]
+            self.sigAlignmentRemoved.emit(alignment)
+            del self._alignments[uuid]
 
-            return
-
-    def get_analyte_table(
+    def get_alignment(
         self,
-        uuid: 'AnalyteTableUUID',
-    ) -> 'AnalyteTable':
-        return self._analyte_tables[uuid]
+        uuid: 'AlignmentUUID',
+    ) -> Optional['EnsembleAlignment']:
+        return self._alignments.get(uuid)
 
-
-    def get_all_analyte_table_uuids(
+    def get_all_alignment_uuids(
         self,
-    ) -> list['AnalyteTableUUID']:
-        return list(self._analyte_tables.keys())
+    ) -> list['AlignmentUUID']:
+        return list(self._alignments.keys())
 
-
-    def analyte_table_count(self) -> int:
-        return len(self._analyte_tables)
+    def alignment_count(self) -> int:
+        return len(self._alignments)
 
 def _merge_is_valid(
     source: 'Sample',

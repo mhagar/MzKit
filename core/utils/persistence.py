@@ -17,7 +17,7 @@ from core.data_structs.ensemble import (
     IonPairAnnotation,
     MzDiffAnnotation,
 )
-from core.cli.align_ensembles import (
+from core.data_structs.alignment import (
     EnsembleAlignment,
     AlignedAnalyte,
     AlignmentParams,

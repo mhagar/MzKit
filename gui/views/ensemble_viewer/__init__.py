@@ -3,13 +3,18 @@ from PyQt5.QtCore import Qt
 import pyqtgraph as pg
 import numpy as np
 from pyqtgraph import exporters
+from molmass import Formula
 
 from core.data_structs import Ensemble, IonAnnotation
 from core.data_structs.ensemble import MzDiffAnnotation, GenericAnnotation
 from find_mfs.isotopes.envelope import get_isotope_envelope
-from core.utils.spectrum_export import to_sirius_ms, to_mgf
+from core.cli.export_ensemble import (
+    build_ensemble_export,
+    write_ensemble_export,
+    safe_filename,
+)
 from core.utils.config import load_config
-from gui.utils.formula_formatting import format_formula_obj_to_html
+from core.utils.formula_formatting import format_formula_obj_to_html
 from gui.resources.EnsembleViewerWindow import Ui_Form
 from gui.views.ensemble_viewer.tools import (
     ToolType, ToolStage, Mode,
@@ -23,13 +28,9 @@ from gui.views.ensemble_viewer.plot_managers import (
     ChromatogramPlotManager,
     SpectrumPlotManager,
 )
-from gui.dialogues.CompoundExportWizard import NCICompoundExportWizard
 from gui.models.ensemble_properties_model import EnsemblePropertiesModel
 
 from pathlib import Path
-import json
-import subprocess
-import threading
 from typing import TYPE_CHECKING, Optional, Literal
 
 if TYPE_CHECKING:
@@ -63,8 +64,6 @@ class EnsembleViewer(
 
         self.ensemble: Optional['Ensemble'] = None
         self.properties_model: Optional['EnsemblePropertiesModel'] = None
-
-        self.wizard: Optional['NCICompoundExportWizard'] = None
 
         # Transient plot-id → annotation-uuid maps. These are populated
         # by the _draw_* methods and cleared at the top of every
@@ -251,7 +250,7 @@ class EnsembleViewer(
             self.actionExportSpec
         )
         self.actionExportSpec.triggered.connect(
-            self.show_export_cmpd_wizard
+            self.export_current_ensemble
         )
 
         # Clear-annotation triggers (not modes — just one-shot actions).
@@ -421,6 +420,21 @@ class EnsembleViewer(
         self.initialize_plots()
         self._redraw_annotations_for_current_scan()
         self.initialize_property_table()
+
+    def reset_for_new_project(self):
+        """
+        Drop the currently displayed ensemble when the workspace is
+        cleared, wiping all rendered curves/spectra/annotations so the
+        viewer no longer shows (or references) stale project data.
+        """
+        self.ensemble = None
+        self.chrom_manager.clear()
+        self.spectrum_manager.clear()
+        self.dda_overlay_mgr.clear()
+
+        # Clear the properties table.
+        self.tableViewProperties.setModel(None)
+        self.properties_model = None
 
     def _hide_misc_plots(self):
         self.checkShowMiscPlots.setChecked(False)
@@ -915,16 +929,10 @@ class EnsembleViewer(
             2: self.ms2_plot,
         }[annotation.ms_level]
 
-        envelope = get_isotope_envelope(
-            formula=annotation.formula.formula,
-            mz_tolerance=0.05,
-            threshold=0.005,
-        )
-
         plot_id = ms_plot.add_ion_annotation(
             spec_idxs=annotation.cofeature_idxs,
             text=annotation.format_string,
-            envelope=envelope,
+            envelope=annotation.isotope_envelope,
         )
         self._ion_annot_plot_ids[annotation.uuid] = plot_id
 
@@ -1177,203 +1185,70 @@ class EnsembleViewer(
 
 
 
-    def _run_annotation_async(self, compound_path: Path, ionmode: str = 'positive'):
+    def export_current_ensemble(self):
         """
-        Runs misc/annotate_compound.py then misc/generate_compound_reports.py
-        on the given compound folder in a background thread, then opens the report.
+        Export the currently displayed ensemble for ingestion by external
+        tools (SIRIUS, GNPS, etc.).
+
+        All metadata is read off the Ensemble itself (its `identity`,
+        `proposed_formula` and `user_metadata`, editable in the
+        properties table) — there is no separate data-entry step.
+        Spectra are pulled from the scan currently selected in the
+        viewer; if none is selected, the ensemble apex is used.
         """
-        misc_dir = Path("/home/mh/Dropbox/MzKit/misc")
-        annotate_script = misc_dir / "annotate_compound.py"
-        report_script   = misc_dir / "generate_compound_reports.py"
-        template        = misc_dir / "compound_report_template.html"
+        if not self.ensemble:
+            return
 
-        def _run():
-            import webbrowser
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Select directory to export ensemble into",
+        )
+        if not out_dir:
+            return
 
-            print(f"Starting annotation pipeline for: {compound_path.name}")
-            try:
-                result = subprocess.run(
-                    [
-                        "python", str(annotate_script), str(compound_path),
-                        "--ionmode", ionmode,
-                        "--sirius-bin", "/home/mh/Applications/sirius/bin/sirius"
-                    ],
-                    capture_output=False,
-                )
-                if result.returncode != 0:
-                    print(f"Annotation pipeline exited with code {result.returncode}")
-                    return
-
-                print(f"Generating report for: {compound_path.name}")
-                result = subprocess.run(
-                    [
-                        "python", str(report_script), str(compound_path),
-                        "--template", str(template),
-                    ],
-                    capture_output=False,
-                )
-                if result.returncode != 0:
-                    print(f"Report generation exited with code {result.returncode}")
-                    return
-
-                html_files = list(compound_path.glob("*_report.html"))
-                if html_files:
-                    webbrowser.open(html_files[0].as_uri())
-                else:
-                    print("Report generation finished but no HTML file found")
-
-            except Exception as e:
-                print(f"Annotation pipeline failed: {e}")
-
-        threading.Thread(target=_run, daemon=True).start()
-
-    def show_export_cmpd_wizard(self):
-        self.wizard = NCICompoundExportWizard()
-        self.wizard.show()
-        self.wizard.sigCompoundExportParamsGiven.connect(
-            self.handle_export_request
+        export = build_ensemble_export(
+            self.ensemble,
+            # Fall back to the apex (peak_rt) if no scan is selected.
+            rt=self.spectrum_manager.selected_rt or None,
+            normalize=True,
         )
 
-    def handle_export_request(
-        self,
-        params: dict
-    ):
-        compound_path = Path(params['export_dir']) / params['compound_name']
-        compound_path.mkdir(exist_ok=True)
-
-        # Save MS1/MS2 spectra
-        self.export_spectrum(
-            compound_path
+        # Group the artifacts in a per-ensemble subfolder.
+        compound_dir = Path(out_dir) / safe_filename(export.base_name)
+        written = write_ensemble_export(
+            export,
+            compound_dir,
+            formats=('mgf', 'ms', 'json'),
         )
+        written += self._export_plot_svgs(compound_dir, stem=export.base_name)
 
-        # Save chromatogram .svg
-        self.export_chromatogram(
-            compound_path
-        )
+        print(f"Exported ensemble to {compound_dir}")
+        for path in written:
+            print(f"  - {path.name}")
 
-        # Save everything else:
-        self.export_cmpd_metadata(
-            params, compound_path
-        )
-
-        print(
-            f"Compound saved to {compound_path}"
-        )
-
-        # Run annotation pipeline in background
-        ionmode = params.get('ionmode', 'positive')
-        self._run_annotation_async(compound_path, ionmode)
-
-    def export_spectrum(
+    def _export_plot_svgs(
         self,
         directory: Path,
-    ):
+        stem: str,
+    ) -> list[Path]:
         """
-        Rough placeholder, need roger's plots asap
+        Dump SVGs of the live MS1/MS2/chromatogram plots. GUI-only: these
+        capture the on-screen plots, so they live here rather than in the
+        Qt-free export core.
         """
-        # Shit out .svgs
-        for ms_level, plot_item in [
-            ('ms1', self.ms1_plot.pi),
-            ('ms2', self.ms2_plot.pi),
-        ]:
-            svg_exporter = exporters.SVGExporter(
-                plot_item
-            )
+        directory.mkdir(parents=True, exist_ok=True)
+        file_stem = safe_filename(stem)
 
-            filename = Path(directory) / f'{self.ensemble.format_string}_{ms_level}.svg'
-            svg_exporter.export(
-                filename
-            )
-
-            print(
-                f"Exported {filename}"
-            )
-
-        # Shit out .ms file
-        ms1_spec_arr = self.ensemble.get_spectrum(
-            ms_level=1,
-            scan_rt=self.spectrum_manager.selected_rt,
-        )
-
-        # This ought to be user-configured but whatever
-        base_mz = ms1_spec_arr["mz"][
-            np.argmax(ms1_spec_arr["intsy"])
+        targets = [
+            (f"{file_stem}_ms1.svg", self.ms1_plot.pi),
+            (f"{file_stem}_ms2.svg", self.ms2_plot.pi),
+            (f"{file_stem}_chromatogram.svg", self.chromPlotWidget.pi),
         ]
 
-        ms2_spec_arr = self.ensemble.get_spectrum(
-            ms_level=2,
-            scan_rt=self.spectrum_manager.selected_rt,
-        )
+        written: list[Path] = []
+        for filename, plot_item in targets:
+            path = directory / filename
+            exporters.SVGExporter(plot_item).export(str(path))
+            written.append(path)
 
-        sirius_format = to_sirius_ms(
-            compound=self.ensemble.format_string,
-            parent_mz=base_mz,
-            ms1_spec_arr=ms1_spec_arr,
-            ms2_spec_arr=ms2_spec_arr,
-        )
-
-        mgf_format = f"{
-        to_mgf(
-            pepmass=base_mz,
-            charge=1,  # TODO: make user configurable
-            mslevel=1,
-            spec_arr=ms1_spec_arr,
-            metadata={
-                'TITLE': self.ensemble.format_string
-            },
-        )}\n{
-        to_mgf(
-            pepmass=base_mz,
-            charge=1,  # TODO: make user configurable
-            mslevel=2,
-            spec_arr=ms2_spec_arr,
-            metadata={
-                'TITLE': self.ensemble.format_string
-            },
-        )}\n"
-
-        # Save as .mgf and .ms
-        ms_files = [
-            (sirius_format, f"{self.ensemble.format_string}.ms"),
-            (mgf_format, f"{self.ensemble.format_string}.mgf"),
-        ]
-        for contents, filename in ms_files:
-            with open(Path(directory) / filename, 'w') as f:
-                f.write(contents)
-
-            print(
-                f"Exported {Path(directory) / filename}"
-            )
-
-    def export_chromatogram(
-        self,
-        directory: Path,
-    ):
-        """
-        Rough placeholder, need roger's plots asap
-        """
-        svg_exporter = exporters.SVGExporter(
-            self.chromPlotWidget.pi
-        )
-
-        filename = Path(directory) / f'{self.ensemble.format_string}_chromatogram.svg'
-        svg_exporter.export(
-            filename
-        )
-
-        print(
-            f"Exported {filename}"
-        )
-
-
-    def export_cmpd_metadata(
-        self,
-        params: dict,
-        directory: Path,
-    ):
-        file_path = directory / "metadata.json"
-
-        with open(file_path, 'w') as f:
-            json.dump(params, f, indent=2)
-
-
+        return written

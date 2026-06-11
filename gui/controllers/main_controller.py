@@ -72,7 +72,6 @@ class MainController:
 
         # Initialize controllers (must be done at end)
         self.sample_controller.initialize_sample_model()
-        self.sample_controller.initialize_analyte_table_model()
         self.sample_controller.initialize_alignment_model()
 
 
@@ -93,12 +92,8 @@ class MainController:
             self._handle_view_samples_request
         )
 
-        self.main_view.sigImportAnalyteTableRequested.connect(
-            self._handle_import_analyte_table_request
-        )
-
-        self.main_view.sigShowAnalyteTableRequested.connect(
-            self._handle_view_analyte_table_request
+        self.main_view.sigShowAlignmentRequested.connect(
+            self._handle_view_alignment_request
         )
 
         self.main_view.actionSaveProject.triggered.connect(
@@ -108,6 +103,18 @@ class MainController:
         self.main_view.actionLoadProject.triggered.connect(
             self._handle_load_project_request
         )
+
+        # New/Close/Merge project actions (added to MainWindow.ui in
+        # Qt Designer). Guarded so the app still runs if the .ui has not
+        # yet been regenerated with these actions.
+        for action_name, slot in (
+            ('actionNewProject', self._handle_new_project_request),
+            ('actionCloseProject', self._handle_close_project_request),
+            ('actionMergeProject', self._handle_merge_project_request),
+        ):
+            action = getattr(self.main_view, action_name, None)
+            if action is not None:
+                action.triggered.connect(slot)
 
         self.main_view.sigImportFeatureTableRequested.connect(
             self._handle_import_feature_table_request
@@ -205,10 +212,6 @@ class MainController:
             self._run_metadata_import_process
         )
 
-        self.sample_controller.sigAnalyteTableImportWizardComplete.connect(
-            self._run_analyte_table_import_process
-        )
-
         self.sample_controller.sigFeatureTableImportWizardComplete.connect(
             self._run_feature_table_import_process
         )
@@ -251,7 +254,7 @@ class MainController:
 
     def _on_model_changed(
         self,
-        model_type: Literal['Sample', 'AnalyteTable'],
+        model_type: Literal['Sample', 'Alignment'],
         model,
     ) -> None:
         """
@@ -347,34 +350,6 @@ class MainController:
             on_completion_func=self.sample_controller.on_metadata_import_completion,
         )
 
-
-    def _run_analyte_table_import_process(
-        self,
-        analyte_table_csv_filepath: Path,
-        analyte_id_column: str,
-        sample_name_columns: list[str],
-        metadata_table_csv_filepath: Path,
-        metadata_id_column: str,
-        field_columns: list[str],
-
-    ):
-        self.process_controller.start_process(
-            module_path="core.cli.analyte_table_import",
-            function_name="main",
-            parameters={
-                "analyte_table_csv_filepath": Path(analyte_table_csv_filepath),
-                "analyte_id_column": analyte_id_column,
-                "sample_name_columns": sample_name_columns,
-                "metadata_table_csv_filepath": Path(metadata_table_csv_filepath),
-                "metadata_id_column": metadata_id_column,
-                "field_columns": field_columns,
-            },
-            on_completion_func=self.sample_controller.on_analyte_table_import_completion,
-        )
-
-
-    def _handle_import_analyte_table_request(self) -> None:
-        self.sample_controller.show_analyte_table_import_wizard()
 
     def _handle_import_feature_table_request(self) -> None:
         self.sample_controller.show_feature_table_import_wizard()
@@ -580,14 +555,10 @@ class MainController:
             visible=True,
         )
 
-        self.selection_manager.sigAnalyteSelectionChanged.connect(
-            sample_viewer.on_analyte_selection
-        )
-
         self.subwindow_manager.show_window('sample_viewer')
 
 
-    def _handle_view_analyte_table_request(
+    def _handle_view_alignment_request(
         self,
         index: list[QtCore.QModelIndex], # Qt signal is a list
     ):
@@ -631,6 +602,12 @@ class MainController:
         )
 
     def _handle_load_project_request(self):
+        """
+        Open a project, *replacing* the current workspace.
+        """
+        if not self._confirm_discard_workspace():
+            return
+
         filepath, _ = QFileDialog.getOpenFileName(
             parent=self.main_view,
             caption="Select project file to load",
@@ -641,20 +618,100 @@ class MainController:
         if not filepath:
             return
 
-        # Call the project loading process
+        # Clear the current workspace *before* the (threaded) load so the
+        # UI shows an empty state while loading, then append the new data
+        # on completion.
+        self._clear_workspace()
+
         self.process_controller.start_process(
             module_path="core.utils.persistence",
             function_name="load_project",
             parameters={
                 "filepath": Path(filepath),
             },
-            on_completion_func=self._on_project_loaded,
+            on_completion_func=self._register_loaded_project,
         )
 
-    def _on_project_loaded(
+    def _handle_merge_project_request(self):
+        """
+        Import another project's contents *into* the current workspace
+        without clearing it (the old "append" behaviour, now explicit).
+        """
+        filepath, _ = QFileDialog.getOpenFileName(
+            parent=self.main_view,
+            caption="Select project file to import / merge",
+            filter="*.mzk",
+            initialFilter="*.mzk",
+        )
+
+        if not filepath:
+            return
+
+        self.process_controller.start_process(
+            module_path="core.utils.persistence",
+            function_name="load_project",
+            parameters={
+                "filepath": Path(filepath),
+            },
+            on_completion_func=self._register_loaded_project,
+        )
+
+    def _handle_new_project_request(self):
+        """
+        Start a fresh, empty workspace.
+        """
+        if not self._confirm_discard_workspace():
+            return
+        self._clear_workspace()
+
+    def _handle_close_project_request(self):
+        """
+        Close the current project, leaving an empty workspace.
+        """
+        if not self._confirm_discard_workspace():
+            return
+        self._clear_workspace()
+
+    def _confirm_discard_workspace(self) -> bool:
+        """
+        Ask the user to confirm discarding the current workspace.
+
+        Returns True if it is OK to proceed (either the workspace is
+        already empty, or the user chose to discard).
+        """
+        is_empty = (
+            self.data_registry.sample_count() == 0
+            and self.data_registry.alignment_count() == 0
+        )
+        if is_empty:
+            return True
+
+        from PyQt5.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self.main_view,
+            "Discard current project?",
+            "Any unsaved changes to the current project will be lost.\n\n"
+            "Continue?",
+            QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        return reply == QMessageBox.Discard
+
+    def _clear_workspace(self) -> None:
+        """
+        Empty the data registry and reset all data-bound subwindows.
+        """
+        self.data_registry.clear()
+        self.subwindow_manager.reset_data_windows()
+
+    def _register_loaded_project(
         self,
         result: tuple[list['Sample'], list],
     ):
+        """
+        Register the contents of a loaded project into the (current)
+        registry. Used by both Open (after clearing) and Merge.
+        """
         samples, alignments = result
         self.data_registry.register_samples(samples)
         for alignment in alignments:
@@ -722,7 +779,7 @@ class MainController:
         if len(samples) < 2:
             return
 
-        from core.cli.align_ensembles import AlignmentParams
+        from core.data_structs.alignment import AlignmentParams
 
         # TODO: expose these params in the GUI
         params = AlignmentParams(

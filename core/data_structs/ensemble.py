@@ -6,12 +6,12 @@ import uuid
 from typing import Literal, Optional, TYPE_CHECKING
 
 import numpy as np
-from find_mfs import FormulaCandidate
+from find_mfs import FormulaCandidate, get_isotope_envelope
 from molmass import Formula
 from numpy.typing import NDArray
 
 from core.utils.array_types import to_spec_arr, to_ensemble_arr
-from gui.utils.formula_formatting import format_formula_obj_to_html
+from core.utils.formula_formatting import format_formula_obj_to_html
 
 if TYPE_CHECKING:
     from core.data_structs import(
@@ -162,18 +162,28 @@ class Ensemble:
         this ensemble. This retrieval is done only once, then
         cached for later use, unless 'force_refresh' is True
         """
-        # Select based on MS1 or MS2
-        mz_lane_idxs, cofeatures = {
-            1: (self._ms1_cofeature_mz_lane_idxs, self.ms1_cofeatures),
-            2: (self._ms2_cofeature_mz_lane_idxs, self.ms2_cofeatures),
-        }[ms_level]
+        # Select based on MS1 or MS2. (Use `is None` checks rather than
+        # truthiness — these are ndarrays, whose truth value is ambiguous.)
+        if ms_level == 1:
+            cached = self._ms1_cofeature_mz_lane_idxs
+            cofeatures = self.ms1_cofeatures
+        else:
+            cached = self._ms2_cofeature_mz_lane_idxs
+            cofeatures = self.ms2_cofeatures
 
-        if not force_refresh and mz_lane_idxs:
-            return mz_lane_idxs
+        if not force_refresh and cached is not None:
+            return cached
 
         mz_lane_idxs: NDArray[int] = np.array(
             [x.mz_lane_idx for x in cofeatures]
         )
+
+        # Write back to the cache (the previous implementation never did,
+        # so every call recomputed).
+        if ms_level == 1:
+            self._ms1_cofeature_mz_lane_idxs = mz_lane_idxs
+        else:
+            self._ms2_cofeature_mz_lane_idxs = mz_lane_idxs
 
         return mz_lane_idxs
 
@@ -507,6 +517,33 @@ class IonAnnotation:
         formula_html = format_formula_obj_to_html(self.formula.formula)
         return (f"{formula_html}<br>"
                 f"{self.formula.error_ppm:.1f} ppm")
+
+    @property
+    def isotope_envelope(self) -> np.ndarray:
+        """
+        Assembles the neutral formula + adduct + charge and then
+        returns the isotope envelope as a numpy array
+        (used for plotting)
+        """
+        # TODO: Crude/inelegant. Can probably just fix on find-mfs side
+        # Assemble formula:
+        ion_formula = str(self.formula.formula)
+        if self.formula.adduct:
+            ion_formula += self.formula.adduct
+
+        charge = self.formula.formula.charge
+        if charge > 0:
+            ion_formula += "+"*charge
+        if charge < 0:
+            ion_formula += "-"*charge
+
+        envelope = get_isotope_envelope(
+            formula=Formula(ion_formula),
+            mz_tolerance=0.1,
+            threshold=0.005,
+        )
+
+        return envelope
 
 
 @dataclass

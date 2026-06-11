@@ -6,6 +6,8 @@ import pyqtgraph as pg
 from PyQt5 import QtCore
 from scipy.stats import pearsonr, spearmanr
 
+from core.utils.array_types import to_spec_arr
+
 from gui.views.ensemble_viewer.utils import (
     match_chrom_arrs,
     normalize_chrom_arr,
@@ -72,6 +74,39 @@ class ChromatogramPlotManager(QtCore.QObject):
         )
 
         self.background_chrom = self.ensemble.injection.scan_array_ms1.get_bpc()
+
+    def clear(self):
+        """
+        Reset all chromatogram/correlation state and wipe both plots, so
+        no curves or markers from a previous ensemble remain rendered.
+        """
+        self.ensemble = None
+        self.base_chrom = None
+        self.background_chrom = None
+        self.selected_rt = 0.0
+        self.ms1_chroms = []
+        self.ms2_chroms = []
+        self._last_selected_mz = None
+        self._last_selected_ms_level = None
+        self._annotation_marker_rts = {1: [], 2: []}
+
+        # Wipe overlay peaks, transient highlights and the BPC trace.
+        self.chrom_plot.clearPeaks()
+        self.chrom_plot.clearHighlights()
+        self.chrom_plot.pi.clear_plots()
+
+        # Remove annotation markers.
+        for scatter in self._annotation_markers.values():
+            self.chrom_plot.pi.removeItem(scatter)
+        self._annotation_markers.clear()
+
+        # Hide the scan selector and clear the title.
+        self.chrom_plot.setSelectionIndicatorVisible(False)
+        self.chrom_plot.update_label("")
+
+        # Clear the correlation scatter plot.
+        self.corr_plot.plotItem.clear()
+        self.corr_plot.plotItem.setTitle(None)
 
     def _apply_selection_bounds(self):
         """
@@ -429,6 +464,26 @@ class SpectrumPlotManager(QtCore.QObject):
         ensemble: 'Ensemble',
     ):
         self.ensemble = ensemble
+
+    def clear(self):
+        """
+        Reset spectrum state and wipe both MS plots (including any signal
+        markers and ion annotations) so nothing from a previous ensemble
+        remains rendered.
+        """
+        self.ensemble = None
+        self.selected_rt = 0.0
+        self.clear_signal_markers()
+
+        empty = to_spec_arr(
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+        )
+        for plot in (self.ms1_plot, self.ms2_plot):
+            # setSpectrumArray also clears anchored labels / ion
+            # annotations / delta brackets on the plot.
+            plot.setSpectrumArray(empty)
+            plot.update_bpc_label("")
 
     def set_normalize_spectra(self, enabled: bool):
         """

@@ -317,9 +317,23 @@ class FingerprintTableModel(
 
     def _update_sample(
         self,
-        sample: 'SampleUUID',
+        uuid: 'SampleUUID',
     ):
-        pass
+        sample = self.sample_data_source.get_sample(
+            uuid
+        )
+
+        # Update metadata fields if new ones were added
+        if sample.metadata:
+            self.set_metadata_fields(
+                list(sample.metadata.keys())
+            )
+
+        # Update fingerprint descriptors if present
+        if sample.fingerprint:
+            self._descriptors.update(
+                sample.fingerprint.descriptors
+            )
 
 
     def rowCount(

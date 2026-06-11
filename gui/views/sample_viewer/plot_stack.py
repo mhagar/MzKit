@@ -235,6 +235,10 @@ class SampleStackView(
             self.on_chromatogram_click
         )
 
+        sample_widget.sigFPrintLeaved.connect(
+            self.on_fprint_leaved
+        )
+
         sample_widget.sigFPrintHovered.connect(
             self.on_fprint_hovered
         )
@@ -324,30 +328,49 @@ class SampleStackView(
 
     def on_fprint_hovered(
         self,
-        hovered_inj_uuid: int,
+        hovered_uuid: 'SampleUUID',
         idx: int,
     ):
         """
         Called when user hovers over a fingerprint
-
-        :param hovered_inj_uuid:
-        :param idx:
-        :return:
         """
-
-        # Update label in *all* Fprint plots
+        # Update label in *all* Fprint plots to show Fprint value
         for uuid, sample_widget in self.sample_wdgt_mgr.get_all_widgets().items():
-            fprint: 'Fingerprint' = self.model.getSample(uuid).fingerprint
+            if uuid == hovered_uuid:
+                continue
 
+            fprint: 'Fingerprint' = self.model.getSample(uuid).fingerprint
             if not fprint:
                 continue
-                
-            value = fprint.array[idx]
-            descriptor = fprint.descriptors[idx]
 
+            value = fprint.array[idx]
             sample_widget.setFprintLabel(
-                f"{value:.2f}\t{descriptor}"
+                f"{value:.2f}"
             )
+
+        # Update label for specifically the hovered one to include
+        # more information
+        sample_widget = self.sample_wdgt_mgr.get_widget(hovered_uuid)
+        fprint: 'Fingerprint' = self.model.getSample(hovered_uuid).fingerprint
+        if not fprint:
+            return
+
+        value = fprint.array[idx]
+        descriptor = fprint.descriptors[idx]
+
+        sample_widget.setFprintLabel(
+            f"{value:.2f}\t{descriptor}"
+        )
+
+    def on_fprint_leaved(
+        self,
+        uuid: 'SampleUUID',
+    ):
+        # TODO: testing: clear label. Doesn't seem to work lol
+        # I think I need to emit something from QWidget
+        sample_widget = self.sample_wdgt_mgr.get_widget(uuid)
+        sample_widget.setFprintLabel("")
+
 
     def on_ensemble_peak_hovered(
         self,
@@ -481,7 +504,7 @@ class SampleStackView(
 
                 self.sample_wdgt_mgr.remove_widget(uuid_to_remove)
 
-        self.chrom_mgr.link_chrom_widget_axes()
+        self.chrom_mgr.link_widget_axes()
 
     def on_rows_moved(self):
         # TODO: This isn't called by QStandardItem model. Meant for proxy models

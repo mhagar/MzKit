@@ -25,12 +25,13 @@ class Sample:
     metadata: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        # if not self.injection and not self.fingerprint:
-        #     raise ValueError(
-        #         f"Neither injection nor fingeprint argument given. "
-        #         f"(sample {self.name}"
-        #     )
-        pass
+        # A Sample may legitimately be constructed empty and have its
+        # Injection/Fingerprint attached later (set_injection /
+        # set_fingerprint). The "must have at least one" invariant is
+        # therefore enforced at registration time in
+        # DataRegistry.validate_new_sample, not here.
+        if self.injection:
+            self.injection.sample_uuid = self.uuid
 
     def set_injection(
         self,

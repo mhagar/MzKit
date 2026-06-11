@@ -38,7 +38,7 @@ def test_save_project(
 def test_load_project(
     data_registry: DataRegistry,
 ):
-    samples: list['Sample'] = persistence.load_project(
+    samples, alignments = persistence.load_project(
         filepath=Path('test_project.mzk')
     )
 
@@ -55,6 +55,13 @@ def test_populate_data_registry(
     Populates a DataRegistry using test files
     :return:
     """
+    import pytest
+    missing = [p for p in mzml_paths if not Path(p).exists()]
+    if missing:
+        pytest.skip(
+            f"test data not present (e.g. {missing[0]}); mzML is gitignored"
+        )
+
     data_registry = DataRegistry()
 
     scan_array_params = ScanArrayParameters(

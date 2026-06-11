@@ -2,7 +2,6 @@ from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt, QPointF
 import pyqtgraph as pg
 
-from core.interfaces.data_sources import AnalyteTableSource
 from core.utils.config import load_config
 from gui.views.sample_viewer.dda_overlays import DDAOverlayManager
 from gui.views.sample_viewer.ensemble_extraction import EnsembleExtractionManager
@@ -21,15 +20,12 @@ from typing import TYPE_CHECKING, Optional, Union, Literal
 if TYPE_CHECKING:
     from core.data_structs import (
         Sample, SampleUUID,
-        Injection, Analyte, AnalyteID,
+        Injection,
         FeaturePointer,
         ScanArray,
         EnsembleUUID, Ensemble,
     )
-    from core.interfaces.data_sources import (
-        SampleDataSource, AnalyteTableSource,
-        AnalyteSource,
-    )
+    from core.interfaces.data_sources import SampleDataSource
     from configparser import ConfigParser
 
 class SampleViewer(
@@ -56,9 +52,7 @@ class SampleViewer(
 
     def __init__(
         self,
-        data_source: Union[
-            'SampleDataSource', 'AnalyteTableSource', 'AnalyteSource'
-        ]
+        data_source: 'SampleDataSource',
     ):
         super().__init__()
         self.setupUi(self)
@@ -523,6 +517,18 @@ class SampleViewer(
 
         self.viewSampleStack.rebuild_plots()
 
+    def reset_for_new_project(self):
+        """
+        Remove all loaded samples (and their plots) when the workspace
+        is cleared, so no stale content from a previous project remains.
+        """
+        loaded_uuids = [
+            self.model.item(row).data(self.model.UuidRole)
+            for row in range(self.model.rowCount())
+        ]
+        if loaded_uuids:
+            self.remove_samples(loaded_uuids)
+
     def update_sample(
         self,
         sample: 'Sample',
@@ -804,30 +810,6 @@ class SampleViewer(
         )
 
         self.fprint_display_params_menu.show()
-
-    # ***ANALYTE SELECTION***
-    def on_analyte_selection(
-        self,
-        selection: dict,
-    ):
-        # TODO: PLACEHOLDER
-        print(
-            "TODO: TESTING ANALYTE SELECTION DRAWING"
-        )
-        for table_uuid, analyte_ids in selection.items():
-            analyte_ids: list['AnalyteID']
-
-            analyte_table: 'AnalyteSource' = self.data_source.get_analyte_table(
-                table_uuid
-            )
-            analyte: 'Analyte' = analyte_table.get_analyte(
-                analyte_id=analyte_ids[0]
-            )
-
-            self.viewSampleStack.set_extraction_range(
-                (( analyte.mz - 1 ),
-                 (analyte.mz + 1),)
-            )
 
     # ***SELECTING MS SIGNALS***
     def on_ms_signal_hovered(

@@ -21,11 +21,20 @@ class MainView(
     sigImportFingerprintsRequested = QtCore.pyqtSignal()
     sigImportMzMLsRequested = QtCore.pyqtSignal()
     sigImportMetadataRequested = QtCore.pyqtSignal()
-    sigImportAnalyteTableRequested = QtCore.pyqtSignal()
+    sigImportFeatureTableRequested = QtCore.pyqtSignal()
+    sigFilterAlignmentRequested = QtCore.pyqtSignal(
+        list,  # list[QModelIndex]
+    )
+    sigExportAlignmentRequested = QtCore.pyqtSignal(
+        list,  # list[QModelIndex]
+    )
+    sigLabelingRequested = QtCore.pyqtSignal(
+        #
+    )
     sigShowSampleViewerRequested = QtCore.pyqtSignal(
         list,  #list[QModelIndex]
     )
-    sigShowAnalyteTableRequested = QtCore.pyqtSignal(
+    sigShowAlignmentRequested = QtCore.pyqtSignal(
         list, # list[QModelIndex]
     )
     sigSampleFilterChanged = QtCore.pyqtSignal(
@@ -42,21 +51,19 @@ class MainView(
         self.setupUi(self)
         self._create_actions()
         self._configure_sample_listview()
-        self._configure_analyte_table_listview()
+        self._configure_alignment_listview()
 
     def set_sample_list_model(
         self,
-        model_type: Literal['Sample', 'AnalyteTable'],
+        model_type: Literal['Sample', 'Alignment'],
         model,
     ):
          match model_type:
             case 'Sample':
                 self.listViewSamples.setModel(model)
 
-            case 'AnalyteTable':
-                self.listViewAnalyteTables.setModel(
-                    model,
-                )
+            case 'Alignment':
+                self.listViewAlignments.setModel(model)
 
 
     def _configure_sample_listview(self):
@@ -77,21 +84,21 @@ class MainView(
         )
 
 
-    def _configure_analyte_table_listview(self):
-        self.listViewAnalyteTables.addAction(
-            self.actionShowSelectedAnalyteTable
+    def _configure_alignment_listview(self):
+        self.listViewAlignments.addAction(
+            self.actionShowSelectedAlignment
         )
 
-        self.listViewAnalyteTables.doubleClicked.connect(
-            self.actionShowSelectedAnalyteTable.trigger
+        self.listViewAlignments.doubleClicked.connect(
+            self.actionShowSelectedAlignment.trigger
         )
 
-        self.listViewAnalyteTables.setContextMenuPolicy(
+        self.listViewAlignments.setContextMenuPolicy(
             QtCore.Qt.CustomContextMenu
         )
 
-        self.listViewAnalyteTables.customContextMenuRequested.connect(
-            self._show_analyte_table_context_menu
+        self.listViewAlignments.customContextMenuRequested.connect(
+            self._show_alignment_context_menu
         )
 
 
@@ -116,12 +123,28 @@ class MainView(
             self._on_trigger_show_samples
         )
 
-        # Show selected analyte table
-        self.actionShowSelectedAnalyteTable = QtWidgets.QAction(
-            "Show analyte table in viewer",
+        # Show selected alignment
+        self.actionShowSelectedAlignment = QtWidgets.QAction(
+            "Show alignment in viewer",
         )
-        self.actionShowSelectedAnalyteTable.triggered.connect(
-            self._on_trigger_show_analyte_table,
+        self.actionShowSelectedAlignment.triggered.connect(
+            self._on_trigger_show_alignment,
+        )
+
+        # Filter alignment
+        self.actionFilterAlignment = QtWidgets.QAction(
+            "Filter Alignment...",
+        )
+        self.actionFilterAlignment.triggered.connect(
+            self._on_trigger_filter_alignment,
+        )
+
+        # Export alignment as table
+        self.actionExportAlignment = QtWidgets.QAction(
+            "Export as Table...",
+        )
+        self.actionExportAlignment.triggered.connect(
+            self._on_trigger_export_alignment,
         )
 
 
@@ -134,8 +157,11 @@ class MainView(
     def _on_trigger_import_metadata(self) -> None:
         self.sigImportMetadataRequested.emit()
 
-    def _on_trigger_import_analyte_table(self) -> None:
-        self.sigImportAnalyteTableRequested.emit()
+    def _on_trigger_import_feature_table(self) -> None:
+        self.sigImportFeatureTableRequested.emit()
+
+    def _on_trigger_label_peaks(self) -> None:
+        self.sigLabelingRequested.emit()
 
     def _on_trigger_show_samples(self) -> None:
         if not self.listViewSamples.selectionModel().hasSelection():
@@ -145,19 +171,39 @@ class MainView(
             self.listViewSamples.selectedIndexes()
         )
 
-    def _on_trigger_show_analyte_table(self) -> None:
-        if not self.listViewAnalyteTables.selectionModel().hasSelection():
+    def _on_trigger_show_alignment(self) -> None:
+        if not self.listViewAlignments.selectionModel().hasSelection():
             return
 
-        self.sigShowAnalyteTableRequested.emit(
-            self.listViewAnalyteTables.selectedIndexes()
+        self.sigShowAlignmentRequested.emit(
+            self.listViewAlignments.selectedIndexes()
         )
 
     def _show_samples_context_menu(self) -> None:
         pass
 
-    def _show_analyte_table_context_menu(self) -> None:
-        pass
+    def _on_trigger_filter_alignment(self) -> None:
+        if not self.listViewAlignments.selectionModel().hasSelection():
+            return
+
+        self.sigFilterAlignmentRequested.emit(
+            self.listViewAlignments.selectedIndexes()
+        )
+
+    def _on_trigger_export_alignment(self) -> None:
+        if not self.listViewAlignments.selectionModel().hasSelection():
+            return
+
+        self.sigExportAlignmentRequested.emit(
+            self.listViewAlignments.selectedIndexes()
+        )
+
+    def _show_alignment_context_menu(self, pos) -> None:
+        menu = QtWidgets.QMenu(self)
+        menu.addAction(self.actionShowSelectedAlignment)
+        menu.addAction(self.actionFilterAlignment)
+        menu.addAction(self.actionExportAlignment)
+        menu.exec_(self.listViewAlignments.mapToGlobal(pos))
 
     def _on_filter_changed(self) -> None:
         """

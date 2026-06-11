@@ -252,7 +252,7 @@ class ProcessController:
         """
         to_remove = []
         for pid, process in self.running_processes.items():
-            if process.status in ["completed", "failed", "error"]:
+            if process.status in ["completed", "failed", "error", "cancelled"]:
                 to_remove.append(pid)
 
         for pid in to_remove:
@@ -269,20 +269,23 @@ class ProcessController:
             process_id: int,
     ) -> bool:
         """
-        Mark a process for termination
+        Request cooperative cancellation of a process.
+
+        Sets the process's ``cancel_event``; the target function must check
+        this itself and return early. Python threads can't be force-killed,
+        so non-cooperative tasks will continue running until they finish.
 
         :param process_id: ID of process to terminate
-        :return: True if the process was found and marked for termination
+        :return: True if the process was found and signaled
         """
         process = self.get_process(
             process_id
         )
 
         if process:
-            # Set status to indicate that it should be cleaned up
-            process.status = "error"
+            process.cancel_event.set()
             self.logger.info(
-                f"Marked process {process_id} for termination"
+                f"Requested cancellation of process {process_id}"
             )
             return True
         return False
@@ -317,6 +320,21 @@ class ProcessController:
                     process_id, level, message
                 )
 
+            # Check for progress updates (latest-wins)
+            process = self.get_process(process_id)
+            if process is not None:
+                progress = process.get_progress()
+                if progress is not None:
+                    percent, prog_msg = progress
+                    prog_str = (
+                        f"{percent:.0f}% ; {prog_msg}" if prog_msg
+                        else f"{percent:.0f}%"
+                    )
+                    self.model.updateProcess(
+                        process_id=process_id,
+                        progress=prog_str,
+                    )
+
             # Check for status changes
             current_status = self.get_process_status(
                 process_id
@@ -331,7 +349,7 @@ class ProcessController:
                 )
 
                 # If process is completed, failed, or has an error:
-                if current_status in ["completed", "failed", "error"]:
+                if current_status in ["completed", "failed", "error", "cancelled"]:
                     result = self.get_process_result(
                         process_id
                     )

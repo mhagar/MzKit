@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from gui.views.sample_viewer.model import SampleViewerItemModel
     from core.data_structs import (
         Sample, SampleUUID,
-        Injection, Analyte, AnalyteID,
+        Injection,
         FeaturePointer,
         ScanArray,
     )
@@ -62,7 +62,7 @@ class SampleWidgetManager(QtCore.QObject):
         for widget in self.get_all_widgets().values():
             widget: 'SampleWidget'
 
-            target_height = self._parent.viewport().height() // num
+            target_height = self._parent.viewport().height() // max(num, 1)
             widget.setFixedHeight(target_height)
 
             widget.chromPlotWidget.showAxes(  # Hide axes of widget is small

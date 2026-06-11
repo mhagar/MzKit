@@ -43,6 +43,10 @@ class SampleWidget(
         int,  # Index of fingerprint feature being hovered
     )
 
+    sigFPrintLeaved = QtCore.pyqtSignal(
+        object, # UUID; Note: specifying `int` converts to 32bit (bad)
+    )
+
     # Ensemble peak interaction signals
     sigEnsemblePeakHovered = QtCore.pyqtSignal(
         object,  # SampleUUID
@@ -88,6 +92,10 @@ class SampleWidget(
             self.on_fprint_hovered
         )
 
+        self.fprintPlotWidget.sigFPrintLeaved.connect(
+            self.on_fprint_leaved
+        )
+
         # Ensemble peak interaction signals
         self.chromPlotWidget.sigEnsemblePeakHovered.connect(
             self.on_ensemble_peak_hovered
@@ -101,6 +109,20 @@ class SampleWidget(
 
         # TODO: Expose to user
         # self.setFixedHeight(150)
+
+    @property
+    def hasChrom(self) -> bool:
+        """
+        Returns true if this SampleWidget is displaying LCMS data
+        """
+        return bool(self.chromPlotWidget.pi.chrom_items)
+
+    @property
+    def hasFp(self) -> bool:
+        """
+        Returns true if this SampleWidget is displaying fingeprint data
+        """
+        return self.fprintPlotWidget.isEmpty
 
     def setName(
         self,
@@ -264,6 +286,16 @@ class SampleWidget(
         self.sigFPrintHovered.emit(
             self.UUID,
             idx,
+        )
+
+    def on_fprint_leaved(
+        self,
+    ):
+        """
+        Called when user stops hovering over a fprint plot
+        """
+        self.sigFPrintLeaved.emit(
+            self.UUID
         )
 
     def on_ensemble_peak_hovered(

@@ -40,6 +40,9 @@ def find_cofeatures_within_scan_array(
         min_intsy=min_intsy,
     )
 
+    if nonzero_mass_lane_idxs.size == 0:
+        return [search_target]
+
     # Generate XICs for all cofeatures and the search cofeature
     candidate_xics: np.ndarray[..., ...] = _get_xic_grid(
         mass_lane_idxs=nonzero_mass_lane_idxs,
@@ -62,11 +65,11 @@ def find_cofeatures_within_scan_array(
     )
 
     # For testing:
-    print("Pearson correlations:")
-    for xic_idx, mass_lane_idx in enumerate(nonzero_mass_lane_idxs):
-        mz = scan_array.mz_lane_label[mass_lane_idx]
-        corr = correlations[xic_idx]
-        print(f"mz: {mz} \t corr: {corr}")
+    # print("Pearson correlations:")
+    # for xic_idx, mass_lane_idx in enumerate(nonzero_mass_lane_idxs):
+    #     mz = scan_array.mz_lane_label[mass_lane_idx]
+    #     corr = correlations[xic_idx]
+    #     print(f"mz: {mz} \t corr: {corr}")
 
     # Get the ones that surpass min corr. threshold
     matching_mass_lane_idxs = _filter_candidates_by_correlation(
@@ -250,6 +253,8 @@ def find_cofeatures_across_scan_array(
         (rt_start < target_scan_array.rt_arr) &
         (target_scan_array.rt_arr < rt_end)
     )[0]
+    if target_scan_idxs.size == 0:
+        return []
     target_scan_start = target_scan_idxs.min()
     target_scan_end = target_scan_idxs.max()
 
@@ -313,8 +318,8 @@ def find_cofeatures_across_scan_array(
             ),
         )
 
-    if len(matching_cofeatures) == 0:
-        print('hi')
+    # if len(matching_cofeatures) == 0:
+    #     print('hi')
 
     return matching_cofeatures
 

@@ -77,6 +77,6 @@ def _format_spectrum_array(
         arr['mz'],
         arr['intsy'],
     ):
-        output.append(f"{mz:.5f} {intsy:.0f}")
+        output.append(f"{mz:.5f} {intsy:.2f}")
 
     return output

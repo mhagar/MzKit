@@ -5,14 +5,12 @@ from gui.utils.ms_arrays import zero_pad_arrays
 from PyQt5 import QtCore, QtWidgets
 
 from core.utils.natural_sort import natural_sort_key
-from gui.models.analyte_table_list_model import AnalyteTableListModel
 from gui.models.alignment_list_model import AlignmentListModel
 from gui.models.sample_list_model import SampleListModel
 from gui.models.sample_proxy_model import SampleProxyModel
 from gui.dialogues.MzMLImportWizard import MzMLImportWizard
 from gui.dialogues.MetadataImportWizard import MetadataImportWizard
 from gui.dialogues.FingerprintImportWizard import FingerprintImportWizard
-from gui.dialogues.AnalyteTableImportWizard import AnalyteTableImportWizard
 from gui.dialogues.FeatureTableImportWizard import FeatureTableImportWizard
 
 import logging
@@ -22,11 +20,9 @@ if TYPE_CHECKING:
         DataRegistry,
         Sample,
         SampleUUID,
-        AnalyteTable,
         Ensemble,
     )
     from core.utils.array_types import SpectrumArray
-    from core.interfaces.data_sources import AnalyteTableSource
     from core.data_structs.scan_array import ScanArrayParameters
     from core.data_structs.fingerprint import FingerprintImportParams
     from configparser import ConfigParser
@@ -52,15 +48,6 @@ class SampleController(QtCore.QObject):
         object,    # list[Sample]
     )
 
-    sigAnalyteTableImportWizardComplete = QtCore.pyqtSignal(
-        object,  # analyte table csv filepath
-        object, # analyte_id column
-        object, # sample name columns
-        object, # analyte metadata table csv filepath
-        object, # analyte metadata id column
-        object, # field columns
-    )
-
     sigFeatureTableImportWizardComplete = QtCore.pyqtSignal(
         object,  # list[FeatureCoordinate]
         object,  # FeatureTableImportParams
@@ -71,7 +58,7 @@ class SampleController(QtCore.QObject):
     )
 
     sigModelChanged = QtCore.pyqtSignal(
-        str,   # Model type: 'Sample' or 'AnalyteTable'
+        str,   # Model type: 'Sample' or 'Alignment'
         object,  # SampleListModel
     )
 
@@ -84,13 +71,11 @@ class SampleController(QtCore.QObject):
         self.mzml_import_wizard = MzMLImportWizard()
         self.fingerprint_import_wizard = FingerprintImportWizard()
         self.metadata_import_wizard = MetadataImportWizard()
-        self.analyte_table_import_wizard = AnalyteTableImportWizard()
         self.data_registry: 'DataRegistry' = data_registry
         self.config = config
 
         self.sample_list_model: Optional[SampleListModel] = None
         self.sample_proxy_model: Optional[SampleProxyModel] = None
-        self.analyte_table_list_model: Optional[AnalyteTableListModel] = None
         self.alignment_list_model: Optional[AlignmentListModel] = None
 
 
@@ -109,15 +94,6 @@ class SampleController(QtCore.QObject):
         self.sigModelChanged.emit(
             'Sample',
             self.sample_proxy_model,
-        )
-
-    def initialize_analyte_table_model(self):
-        self.analyte_table_list_model = AnalyteTableListModel(
-            registry=self.data_registry,
-        )
-        self.sigModelChanged.emit(
-            'AnalyteTable',
-            self.analyte_table_list_model,
         )
 
     def initialize_alignment_model(self):
@@ -238,33 +214,6 @@ class SampleController(QtCore.QObject):
                 metadata=metadata,
             )
 
-    def show_analyte_table_import_wizard(self):
-        """
-        Placeholder
-        """
-        self.analyte_table_import_wizard = AnalyteTableImportWizard()
-        self.analyte_table_import_wizard.sigImportParamsGiven.connect(
-            self.analyte_table_wizard_completed
-        )
-        self.analyte_table_import_wizard.show()
-
-
-    def analyte_table_wizard_completed(
-        self,
-        arg_dict: dict
-    ):
-        self.sigAnalyteTableImportWizardComplete.emit(
-            *arg_dict.values()
-        )
-
-    def on_analyte_table_import_completion(
-        self,
-        results: 'AnalyteTable'
-    ):
-        self.data_registry.register_analyte_table(
-            results
-        )
-
     def show_feature_table_import_wizard(self):
         self.feature_table_import_wizard = FeatureTableImportWizard()
         self.feature_table_import_wizard.sigImportParamsGiven.connect(
@@ -326,17 +275,6 @@ class SampleController(QtCore.QObject):
             samples,
             key=lambda x: natural_sort_key(x.name)
         )
-
-    def get_analyte_table_by_index(
-        self,
-        index: QtCore.QModelIndex,
-    ) -> 'AnalyteTable':
-        """
-        Called when user requests an analyte table is displyaed
-        :param index:
-        :return:
-        """
-        return self.analyte_table_list_model.getAnalyteTableAtIndex(index)
 
     def get_alignment_by_index(
         self,

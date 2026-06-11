@@ -39,13 +39,6 @@ class ChromPlotWidget(pg.PlotWidget):
             ),
         )
 
-        # Set up axis units
-        # self.setLabel(
-        #     'bottom',
-        #     'R.T.',
-        #     units='s'
-        # )
-
         # self.setBackground(None)
         self.pi: ChromPlotItem = self.getPlotItem()
 
@@ -55,7 +48,8 @@ class ChromPlotWidget(pg.PlotWidget):
         # Set up floating label
         self.floating_label = QtWidgets.QLabel(self)
         self.floating_label.setStyleSheet(
-            "QLabel { color: black; background-color: rgba(225, 225, 225, 128) }"
+            "QLabel { color: white; background-color: black }"
+            # "QLabel { color: black; background-color: rgba(225, 225, 225, 128) }"
         ) # TODO: experiment with translucent background
         self.floating_label.move(60, 5)
         self.floating_label.raise_()

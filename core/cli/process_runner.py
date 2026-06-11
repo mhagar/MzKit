@@ -9,11 +9,22 @@ from typing import Literal, Any, Union, Optional, TextIO
 
 from typing import Literal
 
+
 class ProcessRunner(
     threading.Thread,
 ):
     """
-    Runs a Python function/script in a background thread
+    Runs a Python function/script in a background thread.
+
+    Every wrapped function is unconditionally called with two extra kwargs:
+      - ``progress_callback(percent: float, message: str = "")`` — emits a
+        progress update routed to the ProcessController's table model.
+      - ``cancel_event: threading.Event`` — target should periodically check
+        ``cancel_event.is_set()`` and return early (with whatever partial
+        result is sensible) if so.
+
+    Functions that don't need progress/cancellation should still accept
+    these two kwargs and ignore them.
     """
     def __init__(
             self,
@@ -27,7 +38,13 @@ class ProcessRunner(
         self.function_name = function_name
         self.parameters = parameters or {}
         self.output_queue: queue.Queue = queue.Queue()
-        self.status: Literal['ready','running', 'completed', 'failed', 'error'] = 'ready'
+        # Progress updates: (percent: float, message: str). Kept separate from
+        # output_queue so progress polling doesn't interleave with log polling.
+        self.progress_queue: queue.Queue = queue.Queue()
+        # Cooperative cancellation: set by ProcessController.cancel_process();
+        # target function must check this if it wants to be cancellable.
+        self.cancel_event: threading.Event = threading.Event()
+        self.status: Literal['ready', 'running', 'completed', 'failed', 'error', 'cancelled'] = 'ready'
         self.progress: str = ""
         self.daemon = True  # Allow main program to exit
         self.result = None
@@ -102,13 +119,25 @@ class ProcessRunner(
             original_handlers = list(module_logger.handlers)
             module_logger.addHandler(self.queue_handler)
 
-            # Run the function with provided parameters
+            # Run the function with provided parameters. The runner always
+            # injects progress_callback + cancel_event; callees must accept
+            # them (even if just to ignore).
             try:
-                self.result = func(**self.parameters)
-                self.status = "completed"
-                self.logger.info(
-                    f"Process completed: {self.module_path}.{self.function_name}",
+                self.result = func(
+                    **self.parameters,
+                    progress_callback=self._emit_progress,
+                    cancel_event=self.cancel_event,
                 )
+                if self.cancel_event.is_set():
+                    self.status = "cancelled"
+                    self.logger.info(
+                        f"Process cancelled: {self.module_path}.{self.function_name}",
+                    )
+                else:
+                    self.status = "completed"
+                    self.logger.info(
+                        f"Process completed: {self.module_path}.{self.function_name}",
+                    )
             except Exception as e:
                 self.status = "failed"
                 self.logger.error(
@@ -152,6 +181,28 @@ class ProcessRunner(
         except queue.Empty:
             return None
 
+
+    def _emit_progress(
+            self,
+            percent: float,
+            message: str = "",
+    ) -> None:
+        """Callback handed to the wrapped function for progress reporting."""
+        try:
+            self.progress_queue.put_nowait((float(percent), str(message)))
+        except Exception:
+            # Never let progress reporting take down the worker
+            pass
+
+    def get_progress(self) -> Optional[tuple[float, str]]:
+        """Return the most recent progress update, or None."""
+        latest = None
+        while True:
+            try:
+                latest = self.progress_queue.get_nowait()
+            except queue.Empty:
+                break
+        return latest
 
     def get_all_output(self):
         """

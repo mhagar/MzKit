@@ -21,6 +21,8 @@ def main(
     metadata_columns: list[str],
     samples: list['Sample'],
     verbose: bool = False,
+    progress_callback=None,  # injected by ProcessRunner; unused here
+    cancel_event=None,       # injected by ProcessRunner; unused here
 ) -> dict[ 'SampleUUID', dict[str, any] ]:
     """
     Main entry point for both CLI and program use

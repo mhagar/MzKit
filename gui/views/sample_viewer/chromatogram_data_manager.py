@@ -87,7 +87,7 @@ class ChromatogramDataManager(QtCore.QObject):
         for uuid, widget in self._widget_mgr.get_all_widgets().items():
             self.update_chromatogram(uuid)
 
-        self.link_chrom_widget_axes()
+        self.link_widget_axes()
 
     def update_chromatogram(
         self,
@@ -101,7 +101,7 @@ class ChromatogramDataManager(QtCore.QObject):
         chrom_array: "ChromArray" = self._get_chrom_array(scan_array)
 
         self._widget_mgr.get_widget(uuid).setChromArray(strip_empty_values(chrom_array))
-        self.link_chrom_widget_axes()
+        self.link_widget_axes()
 
     def _get_chrom_array(
         self,
@@ -130,32 +130,44 @@ class ChromatogramDataManager(QtCore.QObject):
                     f"{self._xic_mode}"
                 )
 
-    def link_chrom_widget_axes(
+    def link_widget_axes(
         self,
         link_x: bool = True,
         link_y: bool = True,
     ):
         """
-        Iterates over the chrom_widgets and links their axes together
+        Iterates over the chrom_widgets and fp_widgets and
+        links their axes together
+
+        # TODO: Move this up into the sample widget manager, since it's
+        # not just for chromatograms
         :return:
         """
-        previous_chrom_vb: Optional['ChromViewBox'] = None
-        previous_fprint_vb: Optional['pg.ViewBox'] = None
+        # Get main vb to link all widgets to
+        main_chrom_vb: Optional['ChromViewBox'] = None
+        main_fprint_vb: Optional['pg.ViewBox'] = None
         for uuid, sample_widget in self._widget_mgr.get_all_widgets().items():
-            if not previous_chrom_vb:
-                previous_chrom_vb = sample_widget.chromPlotWidget.pi.vb
-                previous_fprint_vb = sample_widget.fprintPlotWidget.pi.vb
-                continue
+            if not main_chrom_vb and sample_widget.hasChrom:
+                main_chrom_vb = sample_widget.chromPlotWidget.pi.vb
 
+            if not main_fprint_vb and sample_widget.hasFp:
+                main_fprint_vb = sample_widget.fprintPlotWidget.pi.vb
+
+            if main_fprint_vb and main_chrom_vb:
+                break
+
+        # Iterate over all widgets and link them to main ones
+        for uuid, sample_widget in self._widget_mgr.get_all_widgets().items():
             vb_chrom: ChromViewBox = sample_widget.chromPlotWidget.pi.vb
             vb_fprint: pg.ViewBox = sample_widget.fprintPlotWidget.pi.vb
+
             if link_x:
-                vb_chrom.setXLink(previous_chrom_vb)
-                vb_fprint.setXLink(previous_fprint_vb)
+                vb_chrom.setXLink(main_chrom_vb)
+                vb_fprint.setXLink(main_fprint_vb)
 
             if link_y:
-                vb_chrom.setYLink(previous_chrom_vb)
-                vb_fprint.setYLink(previous_fprint_vb)
+                vb_chrom.setYLink(main_chrom_vb)
+                vb_fprint.setYLink(main_fprint_vb)
 
     def update_all_fingerprints(self):
         """
@@ -174,6 +186,7 @@ class ChromatogramDataManager(QtCore.QObject):
                 fprint.array,
                 fprint.descriptors,
             )
+            self.link_widget_axes()
 
     def update_all_plots(self):
         if not self._model:
