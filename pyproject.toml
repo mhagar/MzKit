@@ -8,8 +8,8 @@ dependencies = [
     "find-mfs>=0.4.0",
     "ipython>=9.9.0",
     "isospecpy>=2.2.3",
-    "jinja2>=3.1.6",
-    "molecular-string-renderer>=0.1.0",
+#    "jinja2>=3.1.6",
+#    "molecular-string-renderer>=0.1.0",
     "numba>=0.61",
     "numpy<=2.2",
     "pandas-stubs==2.3.2.250926",
@@ -42,8 +42,10 @@ dev = [
 pythonpath = ["."]
 testpaths = ["tests"]
 
-[tool.uv.sources]
-# NOTE: find-mfs is published on PyPI; this local editable path is only here
-# while MzKit depends on unreleased features. Once those ship, delete this
-# section and pin a normal version (e.g. find-mfs>=X.Y) in [project.dependencies].
-# find-mfs = { path = "../../PycharmProjects/find-mfs", editable = true }
+[tool.uv]
+required-environments = [
+    "sys_platform == 'linux'   and platform_machine == 'x86_64'",
+    "sys_platform == 'win32'   and platform_machine == 'AMD64'",
+    "sys_platform == 'darwin'  and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin'  and platform_machine == 'arm64'",
+]
