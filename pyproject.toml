@@ -5,7 +5,7 @@ description = "Toolkit for inspecting LC/MS data"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "find-mfs",
+    "find-mfs>=0.4.0",
     "ipython>=9.9.0",
     "isospecpy>=2.2.3",
     "jinja2>=3.1.6",
@@ -23,10 +23,27 @@ dependencies = [
 [project.scripts]
 mzkit = "core.cli.main:main"
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Flat layout: the importable packages live at the repo root.
+packages = ["core", "gui"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
 ]
 
+[tool.pytest.ini_options]
+# Put the repo root on sys.path so `import core` / `import gui` work when
+# running `uv run pytest` without installing the project.
+pythonpath = ["."]
+testpaths = ["tests"]
+
 [tool.uv.sources]
-find-mfs = { path = "../../PycharmProjects/find-mfs", editable = true }
+# NOTE: find-mfs is published on PyPI; this local editable path is only here
+# while MzKit depends on unreleased features. Once those ship, delete this
+# section and pin a normal version (e.g. find-mfs>=X.Y) in [project.dependencies].
+# find-mfs = { path = "../../PycharmProjects/find-mfs", editable = true }
