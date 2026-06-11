@@ -531,11 +531,11 @@ class IonAnnotation:
         if self.formula.adduct:
             ion_formula += self.formula.adduct
 
-        charge = self.formula.formula.charge
-        if charge > 0:
-            ion_formula += "+"*charge
-        if charge < 0:
-            ion_formula += "-"*charge
+            charge = self.formula.formula.charge
+            if charge > 0:
+                ion_formula += "+"*charge
+            if charge < 0:
+                ion_formula += "-"*charge
 
         envelope = get_isotope_envelope(
             formula=Formula(ion_formula),
