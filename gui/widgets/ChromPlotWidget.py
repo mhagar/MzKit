@@ -268,6 +268,10 @@ class ChromPlotItem(pg.PlotItem):
         )
         self.plot_widget = plot_widget
 
+        # Back-reference so the ViewBox can delegate auto-scaling to us
+        # (data-driven, see autoScale()).
+        self.vb._plot_item = self
+
         # Slider/selector
         self.slider_selector = pg.InfiniteLine(
             pos=0,
@@ -634,6 +638,52 @@ class ChromPlotItem(pg.PlotItem):
             max=view_left,
         )
 
+    def autoScale(self) -> None:
+        """
+        Auto-range the view to fit all plotted chromatogram data.
+
+        Unlike pyqtgraph's generic ``autoRange()``, this computes the
+        bounds directly from the chromatogram data arrays and always pins
+        the Y-axis floor to 0. The generic auto-range is unsuitable for
+        LC/MS data because:
+          - Non-data items (InfiniteLine cursors/indicators, region
+            selectors) contribute their *view-dependent* bounding rects to
+            the range calculation. This anchors the new range to the stale
+            previous one, so a single auto-scale often fails to converge
+            (hence "I have to auto-scale several times") and can get stuck
+            in a negative Y window.
+          - A negative Y window is meaningless for intensity data.
+        """
+        sources: list[ChromGraphicItem] = list(self.chrom_items)
+        sources.extend(self.peak_overlays.values())
+        if self.highlight_trace is not None:
+            sources.append(self.highlight_trace)
+
+        rt_min = rt_max = intsy_max = None
+        for item in sources:
+            if item.rt_arr is None or item.rt_arr.size == 0:
+                continue
+            i_rt_min = float(np.nanmin(item.rt_arr))
+            i_rt_max = float(np.nanmax(item.rt_arr))
+            i_intsy_max = float(np.nanmax(item.intsy_arr))
+
+            rt_min = i_rt_min if rt_min is None else min(rt_min, i_rt_min)
+            rt_max = i_rt_max if rt_max is None else max(rt_max, i_rt_max)
+            intsy_max = i_intsy_max if intsy_max is None else max(intsy_max, i_intsy_max)
+
+        # No data to scale to — leave the view as-is.
+        if rt_min is None or intsy_max is None:
+            return
+
+        # Guard against degenerate ranges
+        if rt_max <= rt_min:
+            rt_max = rt_min + 1.0
+        if not intsy_max > 0:
+            intsy_max = 1.0
+
+        self.vb.setXRange(rt_min, rt_max, padding=0.0)
+        self.vb.setYRange(0, intsy_max * 1.05, padding=0.0)
+
     def clear_plots(
             self,
     ):
@@ -713,10 +763,20 @@ class ChromViewBox(pg.ViewBox):
             **kwargs,
     ):
         super(ChromViewBox, self).__init__(*args, **kwargs)
+        # Intensity is never negative in LC/MS data — never let the view
+        # descend below zero (which otherwise occasionally happens while
+        # auto-ranging against non-data items).
+        self.setLimits(yMin=0)
 
     def mouseDoubleClickEvent(self, ev):
-        self.autoRange()
-        print("ChromViewBox double clicked")
+        # Delegate to the PlotItem's data-driven auto-scale rather than
+        # pyqtgraph's generic autoRange(), which mis-behaves for LC/MS
+        # (see ChromPlotItem.autoScale).
+        plot_item = getattr(self, '_plot_item', None)
+        if plot_item is not None:
+            plot_item.autoScale()
+        else:
+            self.autoRange()
 
     def mouseDragEvent(self, ev, axis=None):
         # if axis is specified, event will only affect that axis.

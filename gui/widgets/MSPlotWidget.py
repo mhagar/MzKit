@@ -666,6 +666,10 @@ class MSPlotItem(pg.PlotItem):
         )
         self.plot_widget = plot_widget
 
+        # Back-reference so the ViewBox can delegate auto-scaling to us
+        # (data-driven, see scaleViewboxToSpectrumArray()).
+        self.vb._plot_item = self
+
         # Spectrum PlotDataItem
         # TODO: Optimize w bespoke QGraphicsItem
         self.spectrum_plot: pg.PlotDataItem = pg.PlotDataItem(
@@ -754,7 +758,7 @@ class MSPlotItem(pg.PlotItem):
         """
         Scales viewbox to fit the spectrum array
         """
-        if not self.spectrum_array:
+        if self.spectrum_array is None:
             return
 
         if self.spectrum_array['mz'].size == 0:
@@ -907,7 +911,20 @@ class MSViewBox(
     def __init__(self, *args, **kwargs):
         super(MSViewBox, self).__init__(*args, **kwargs)
         self.disableAutoRange()
-        self.setLimits(xMin=0.0)
+        # Neither m/z nor intensity is ever negative — clamp the view so it
+        # can never descend below zero on either axis.
+        self.setLimits(xMin=0.0, yMin=0.0)
+
+    def mouseDoubleClickEvent(self, ev):
+        # Delegate to the PlotItem's data-driven auto-scale rather than
+        # pyqtgraph's generic autoRange(), which can produce a negative
+        # Y window when ranging against non-data items (vert cursor,
+        # region selector).
+        plot_item = getattr(self, '_plot_item', None)
+        if plot_item is not None:
+            plot_item.scaleViewboxToSpectrumArray()
+        else:
+            self.autoRange()
 
     def mouseDragEvent(self, ev, axis=None):
         # if axis is specified, event will only affect that axis.
