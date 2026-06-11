@@ -17,8 +17,9 @@
 import sys
 import os
 
-# Force X11 (Wayland is a problem) - must be set before importing Qt
-os.environ['QT_QPA_PLATFORM'] = 'xcb'
+# Force X11 on Linux (Wayland causes issues) - must be set before importing Qt
+if sys.platform == 'linux':
+    os.environ.setdefault('QT_QPA_PLATFORM', 'xcb')
 
 from gui.controllers import MainController
 from core.utils.config import load_config
