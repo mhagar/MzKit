@@ -1,5 +1,7 @@
 # MzKit
 
+https://github.com/user-attachments/assets/a50fba54-3e47-4139-bbc5-2cf3a4c48969
+
 A toolkit for inspecting LC/MS data, built for natural-products chemists.
 
 This is not intended to be a metaboomics pipeline; rather, it's designed
