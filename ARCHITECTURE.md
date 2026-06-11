@@ -14,11 +14,11 @@ fast, manual, fine-grained inspection and annotation.
 
 ```
  GUI (PyQt5, gui/)                          core/ (Qt-free*, importable by CLI and GUI)
- ┌──────────────────┐   start_process(      ┌────────────────────┐
- │  MainController   │     module_path,      │  ProcessController  │ ─ daemon thread ─▶ core/cli/*.py
- │  + SubWindowMgr   │ ──  fn_name, params) ─▶│  (QTimer polls      │                   (pure functions:
- │  + views/widgets  │ ◀── result via ───────│   every 100 ms)     │ ◀── return value ─ import / align /
- └──────────────────┘     pyqtSignal        └────────────────────┘                     export / extract)
+ ┌──────────────────┐   start_process(       ┌─────────────────────┐
+ │  MainController  │     module_path,       │  ProcessController  │ ─ daemon thread ─▶ core/cli/*.py
+ │  + SubWindowMgr  │ ──  fn_name, params) ─▶│  (QTimer polls      │                   (pure functions:
+ │  + views/widgets │ ◀── result via ─────── │   every 100 ms)     │ ◀── return value ─ import / align /
+ └──────────────────┘     pyqtSignal         └─────────────────────┘                     export / extract)
         │  on_completion_func                                                                  │
         │  mutates registry                                                                    ▼
         ▼                                                                          mutates ─▶ DataRegistry
@@ -28,15 +28,19 @@ fast, manual, fine-grained inspection and annotation.
 
 \* `core` is GUI-independent **except** two classes that use Qt *signals only*
 (no widgets): `DataRegistry` and `ProcessController`. Importing anything under
-`core` must never pull in `gui` — this is enforceable by eye and worth keeping
-true (a smoke test: `python -c "import core.data_structs; import sys;
+`core` must never pull in `gui`.
+
+This is enforceable by eye and should be adhered to.
+(to test: `python -c "import core.data_structs; import sys;
 assert not [m for m in sys.modules if m.startswith('gui')]"`).
 
-**The load-bearing idea:** all heavy/processing logic lives as plain, stateless,
-Qt-free functions in `core/cli/`. The GUI never calls them directly. It hands a
-`(module_path, function_name, parameters)` triple to `ProcessController`, which
-imports and runs the function on a background daemon thread and delivers the
-return value back to an `on_completion_func` on the main thread via a Qt signal.
+**The central design principle:**
+All heavy/processing logic lives as plain, stateless, Qt-free functions in `core/cli/`.
+The GUI never calls them directly. It hands a `(module_path, function_name, parameters)`
+triple to `ProcessController`, which imports and runs the function on a background daemon
+thread and delivers the return value back to an `on_completion_func` on the main thread
+via a Qt signal.
+
 That same function is also the CLI subcommand implementation. Write processing
 logic once; it serves both front-ends.
 
@@ -127,7 +131,7 @@ gui/
   utils/          GUI-only helpers (graphics, ms array shaping).
 ```
 
-**Rule:** dependencies point `gui → core`, never the reverse. `core/cli/*`
+**Rule:** dependencies point `gui => core`, never the reverse. `core/cli/*`
 functions must stay stateless and Qt-free so they run identically under the GUI
 (threaded, via ProcessController) and the CLI.
 
@@ -161,7 +165,7 @@ the round-trip.
 ## 5. Feature extraction (the hot path)
 
 `core/data_structs/scan_array.py` turns a stack of same-MS-level spectra into a
-`ScanArray` via a MassCube-style "mass lane" builder:
+`ScanArray` via a "mass lane" builder:
 
 - `build_features` — dense parallel-array implementation. Output is
   `(n_features, n_scans)` m/z and intensity buffers.
@@ -205,8 +209,8 @@ Known trade-offs (fine for V1, flagged for later):
 - Run everything through `uv run` (never bare `python`).
 - `.ui` files are edited in Qt Designer and compiled with
   `pyuic5 -o gui/resources/Foo.py gui/resources/Foo.ui`. Never hand-edit the
-  generated `.py`.
-- New processing logic → a stateless function in `core/cli/`, exposed as a
+  `.ui` files or generated `.py`.
+- New processing logic => a stateless function in `core/cli/`, exposed as a
   `mzkit` subcommand in `core/cli/main.py` *and* callable from the GUI via
   `ProcessController`.
 - Config lives in `default_config.ini`, loaded by `core/utils/config.py`.
@@ -231,9 +235,6 @@ Tracked here so they're explicit rather than surprising:
   `sample_viewer/__init__.py` still hold a large not-yet-extracted remainder.
   Decomposition has started (`plot_managers.py`, `tool_controllers.py`,
   `dda_overlays.py`); continue lowest-risk-first (export, annotation drawing).
-- **`find-mfs` local path dependency** — `[tool.uv.sources]` points at a local
-  checkout because MzKit uses unreleased `find-mfs` features. Swap to a PyPI
-  version pin once they ship.
 - **Cross-platform** — `main.py` forces `QT_QPA_PLATFORM=xcb` (X11). Must be
   conditioned on Linux before shipping to macOS/Windows users.
 - **Annotation caveats** — e.g. `Ensemble.add_ion_pair_annot` does not yet handle

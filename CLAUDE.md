@@ -12,6 +12,7 @@ LC/MS metabolomics analysis toolkit. PyQt5 GUI + headless CLI.
 
 ## Architecture
 
+See ARCHITECTURE.md for a more thorough breakdown
 ```
 core/               # GUI-independent logic (importable by CLI and GUI)
   cli/              # Processing scripts (ensemble generation, alignment, import, export)
@@ -66,7 +67,8 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 
 ## UUID system
 
-All domain objects use `int` UUIDs (from `uuid.uuid4().int`). Type aliases in `core/data_structs/uuid_types.py` (SampleUUID, EnsembleUUID, AlignmentUUID, etc.) for type safety via `NewType`.
+All domain objects use `int` UUIDs (from `uuid.uuid4().int`). Type aliases in `core/data_structs/uuid_types.py`
+(SampleUUID, EnsembleUUID, AlignmentUUID, etc.) for type safety via `NewType`.
 
 ## Conventions
 
