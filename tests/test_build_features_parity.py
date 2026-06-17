@@ -13,6 +13,16 @@ from core.data_structs.scan_array import (
     _build_features_legacy,
 )
 
+# The pure-Python feature kernel is being dropped, and ``build_features`` now
+# returns sparse ``csr_array``s assembled from the numba kernel's COO output
+# rather than dense arrays. This legacy-parity module is retired; skip the whole
+# file. (Kept on disk for reference until the deprecation is finalized.)
+pytest.skip(
+    "Legacy parity test retired: pure-Python kernel deprecated and "
+    "build_features now returns sparse arrays.",
+    allow_module_level=True,
+)
+
 
 class MockSpectrum:
     """

@@ -440,21 +440,21 @@ def build_scan_array(
     if not scan_nums:
         scan_nums = list(range(len(spectra)))
 
-    out_mz, out_intsy, rt_per_scan = build_features(
+    mz_arr, intsy_arr, rt_per_scan = build_features(
         spectra=spectra,
         mz_tolerance=mz_tolerance,
         scan_gap_tolerance=scan_gap_tolerance,
         min_intsy=min_intsy,
     )
 
-    if out_mz.shape[0] == 0:
+    if mz_arr.shape[0] == 0:
         raise ValueError(
             "No signals found in .mzML file"
         )
 
     scan_array = ScanArray(
-        mz_arr=csr_array(out_mz),
-        intsy_arr=csr_array(out_intsy),
+        mz_arr=mz_arr,
+        intsy_arr=intsy_arr,
         scan_num_arr=np.array(scan_nums, dtype='u4'),
         rt_arr=rt_per_scan.astype('f4'),
     )
@@ -641,7 +641,7 @@ def build_features(
     mz_tolerance: float,
     scan_gap_tolerance: int,
     min_intsy: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[csr_array, csr_array, np.ndarray]:
     """
     Parallel-array reimplementation of the MassCube-style feature builder.
 
@@ -661,14 +661,20 @@ def build_features(
 
     Returns:
         Tuple of:
-          - ``out_mz``: ``(n_features, n_scans)`` float64 — m/z per feature
-            per scan; zero where the feature had no signal in that scan.
-          - ``out_intsy``: ``(n_features, n_scans)`` float64 — intensities,
-            aligned with ``out_mz``.
+          - ``mz_arr``: ``csr_array`` of shape ``(n_features, n_scans)`` —
+            m/z per feature per scan; implicit zero where the feature had no
+            signal in that scan.
+          - ``intsy_arr``: ``csr_array`` of shape ``(n_features, n_scans)`` —
+            intensities, aligned with ``mz_arr``.
           - ``rt_per_scan``: ``(n_scans,)`` float64 — retention time of
             each scan (taken from ``spectrum.getRT()``).
 
         Features are sorted by mean nonzero m/z.
+
+        The matching kernel writes exactly one cell per kept peak, so the
+        output is assembled directly as sparse triplets — never as a dense
+        ``(n_features, n_scans)`` buffer, which would scale with n_scans and
+        blow up memory on peak-dense or many-scan data.
 
     Notes:
         - The first scan does not apply ``min_intsy`` (legacy behavior).
@@ -710,33 +716,60 @@ def build_features(
         peaks_mz_flat, peaks_intsy_flat, peak_offsets = _flatten_peaks(
             peaks_mz, peaks_intsy
         )
-        out_mz, out_intsy = _run_feature_kernel_numba(
-            peaks_mz_flat=peaks_mz_flat,
-            peaks_intsy_flat=peaks_intsy_flat,
-            peak_offsets=peak_offsets,
-            n_scans=n_scans,
-            mz_tolerance=float(mz_tolerance),
-            scan_gap_tolerance=int(scan_gap_tolerance),
+        coo_rows, coo_cols, coo_mz, coo_intsy, n_alloc = (
+            _run_feature_kernel_numba(
+                peaks_mz_flat=peaks_mz_flat,
+                peaks_intsy_flat=peaks_intsy_flat,
+                peak_offsets=peak_offsets,
+                n_scans=n_scans,
+                mz_tolerance=float(mz_tolerance),
+                scan_gap_tolerance=int(scan_gap_tolerance),
+            )
         )
-    else:
-        out_mz, out_intsy = _run_feature_kernel(
-            peaks_mz=peaks_mz,
-            peaks_intsy=peaks_intsy,
-            n_scans=n_scans,
-            mz_tolerance=mz_tolerance,
-            scan_gap_tolerance=scan_gap_tolerance,
-        )
+        if n_alloc == 0:
+            empty = csr_array((0, n_scans), dtype=np.float64)
+            return empty, empty, rt_per_scan
 
+        # Sort features (lanes) by mean nonzero m/z (matches legacy final
+        # sort). Every stored COO entry is a real peak, so a per-row mean over
+        # the triplets equals the mean over nonzero columns.
+        counts = np.bincount(coo_rows, minlength=n_alloc)
+        sums = np.bincount(coo_rows, weights=coo_mz, minlength=n_alloc)
+        mean_mz = sums / counts
+        order = np.argsort(mean_mz, kind='stable')
+        # Remap each old lane id to its position in the sorted order.
+        new_row_of = np.empty(n_alloc, dtype=np.int64)
+        new_row_of[order] = np.arange(n_alloc)
+        rows_sorted = new_row_of[coo_rows]
+
+        mz_arr = csr_array(
+            (coo_mz, (rows_sorted, coo_cols)), shape=(n_alloc, n_scans)
+        )
+        intsy_arr = csr_array(
+            (coo_intsy, (rows_sorted, coo_cols)), shape=(n_alloc, n_scans)
+        )
+        return mz_arr, intsy_arr, rt_per_scan
+
+    # Pure-Python fallback (deprecated). It still returns a dense
+    # (n_features, n_scans) buffer; densify-then-sparsify so build_features
+    # always hands back csr_arrays regardless of which kernel ran.
+    out_mz, out_intsy = _run_feature_kernel(
+        peaks_mz=peaks_mz,
+        peaks_intsy=peaks_intsy,
+        n_scans=n_scans,
+        mz_tolerance=mz_tolerance,
+        scan_gap_tolerance=scan_gap_tolerance,
+    )
     if out_mz.shape[0] == 0:
-        return out_mz, out_intsy, rt_per_scan
+        empty = csr_array((0, n_scans), dtype=np.float64)
+        return empty, empty, rt_per_scan
 
-    # Sort features by mean nonzero m/z (matches legacy final sort).
     mean_mz = _row_mean_nonzero(out_mz, out_intsy)
     order = np.argsort(mean_mz, kind='stable')
     out_mz = np.ascontiguousarray(out_mz[order])
     out_intsy = np.ascontiguousarray(out_intsy[order])
 
-    return out_mz, out_intsy, rt_per_scan
+    return csr_array(out_mz), csr_array(out_intsy), rt_per_scan
 
 
 def _row_mean_nonzero(
@@ -1015,6 +1048,11 @@ if _NUMBA_KERNEL_AVAILABLE:
         Numba-JIT version of ``_run_feature_kernel``. Algorithmically identical;
         operates on flat input arrays and preallocated scratch buffers.
 
+        Returns sparse COO triplets rather than a dense matrix:
+        ``(coo_rows, coo_cols, coo_mz, coo_intsy, n_alloc)`` where ``n_alloc``
+        is the number of lanes (output rows). Each kept peak is one triplet, so
+        memory is O(total peaks) instead of O(n_lanes * n_scans).
+
         Notes on parity:
           - Uses ``np.argsort(-x)`` for the per-scan WIP intensity sort. This
             is not guaranteed stable, but on real data ties are vanishingly
@@ -1022,12 +1060,18 @@ if _NUMBA_KERNEL_AVAILABLE:
           - Matching semantics (closest peak in m/z, claim-once, no fallback
             to next-closest) preserved exactly via manual binary search.
         """
-        # === Output buffers (grow on demand) ===
-        BUF_INITIAL = 4096
-        buf_cap = BUF_INITIAL
-        out_mz = np.zeros((buf_cap, n_scans), dtype=np.float64)
-        out_intsy = np.zeros((buf_cap, n_scans), dtype=np.float64)
-        n_alloc = 0
+        # === Output as sparse COO triplets ===
+        # The algorithm writes exactly one cell per kept peak, so the number of
+        # nonzeros is bounded by the total peak count. Preallocate to that bound
+        # (no growth needed) instead of a dense (n_lanes x n_scans) buffer whose
+        # n_scans factor blows up memory on peak-dense / many-scan data.
+        total_peaks = int(peak_offsets[n_scans])
+        coo_rows = np.empty(total_peaks, dtype=np.int64)
+        coo_cols = np.empty(total_peaks, dtype=np.int64)
+        coo_mz = np.empty(total_peaks, dtype=np.float64)
+        coo_intsy = np.empty(total_peaks, dtype=np.float64)
+        nnz = 0
+        n_alloc = 0  # number of lanes (output rows) created so far
 
         # === WIP feature scratch (grow on demand) ===
         WIP_INITIAL = 4096
@@ -1060,14 +1104,7 @@ if _NUMBA_KERNEL_AVAILABLE:
         s1 = int(peak_offsets[1])
         n_peaks_0 = s1 - s0
 
-        # Ensure out_* and wip_* fit.
-        if n_alloc + n_peaks_0 > buf_cap:
-            new_cap = buf_cap
-            while new_cap < n_alloc + n_peaks_0:
-                new_cap *= 2
-            out_mz = _grow_2d(out_mz, n_alloc, new_cap)
-            out_intsy = _grow_2d(out_intsy, n_alloc, new_cap)
-            buf_cap = new_cap
+        # Ensure wip_* fit. (Output COO is preallocated; no output growth.)
         if n_wip + n_peaks_0 > wip_cap:
             new_cap = wip_cap
             while new_cap < n_wip + n_peaks_0:
@@ -1087,8 +1124,11 @@ if _NUMBA_KERNEL_AVAILABLE:
             if peaks_intsy_flat[k] == 0.0:
                 continue
             row = n_alloc
-            out_mz[row, 0] = peaks_mz_flat[k]
-            out_intsy[row, 0] = peaks_intsy_flat[k]
+            coo_rows[nnz] = row
+            coo_cols[nnz] = 0
+            coo_mz[nnz] = peaks_mz_flat[k]
+            coo_intsy[nnz] = peaks_intsy_flat[k]
+            nnz += 1
             n_alloc += 1
             wip_latest_mz[n_wip] = peaks_mz_flat[k]
             wip_latest_intsy[n_wip] = peaks_intsy_flat[k]
@@ -1171,8 +1211,11 @@ if _NUMBA_KERNEL_AVAILABLE:
                 if k >= 0:
                     mz_val = peaks_mz_flat[ps + k]
                     intsy_val = peaks_intsy_flat[ps + k]
-                    out_mz[row, scan_num] = mz_val
-                    out_intsy[row, scan_num] = intsy_val
+                    coo_rows[nnz] = row
+                    coo_cols[nnz] = scan_num
+                    coo_mz[nnz] = mz_val
+                    coo_intsy[nnz] = intsy_val
+                    nnz += 1
                     new_wip_latest_mz[n_new] = mz_val
                     new_wip_latest_intsy[n_new] = intsy_val
                     new_wip_gap[n_new] = 0
@@ -1189,28 +1232,17 @@ if _NUMBA_KERNEL_AVAILABLE:
                     n_new += 1
 
             # === New features from unclaimed signals ===
-            # First, count and grow output buffer if needed.
-            n_unmatched = 0
-            for k in range(n_peaks):
-                if avlb_signals[k]:
-                    n_unmatched += 1
-
-            if n_alloc + n_unmatched > buf_cap:
-                new_cap = buf_cap
-                while new_cap < n_alloc + n_unmatched:
-                    new_cap *= 2
-                out_mz = _grow_2d(out_mz, n_alloc, new_cap)
-                out_intsy = _grow_2d(out_intsy, n_alloc, new_cap)
-                buf_cap = new_cap
-
             for k in range(n_peaks):
                 if not avlb_signals[k]:
                     continue
                 row = n_alloc
                 mz_val = peaks_mz_flat[ps + k]
                 intsy_val = peaks_intsy_flat[ps + k]
-                out_mz[row, scan_num] = mz_val
-                out_intsy[row, scan_num] = intsy_val
+                coo_rows[nnz] = row
+                coo_cols[nnz] = scan_num
+                coo_mz[nnz] = mz_val
+                coo_intsy[nnz] = intsy_val
+                nnz += 1
                 n_alloc += 1
                 new_wip_latest_mz[n_new] = mz_val
                 new_wip_latest_intsy[n_new] = intsy_val
@@ -1233,8 +1265,14 @@ if _NUMBA_KERNEL_AVAILABLE:
                     wip_row[i] = new_wip_row[j]
             n_wip = n_new
 
-        # Trim to actual feature count.
-        return out_mz[:n_alloc].copy(), out_intsy[:n_alloc].copy()
+        # Return COO triplets (trimmed to actual nonzeros) plus the lane count.
+        return (
+            coo_rows[:nnz].copy(),
+            coo_cols[:nnz].copy(),
+            coo_mz[:nnz].copy(),
+            coo_intsy[:nnz].copy(),
+            n_alloc,
+        )
 
 
 def _find_closest_idx(
