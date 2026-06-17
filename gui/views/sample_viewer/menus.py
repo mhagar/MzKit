@@ -46,7 +46,8 @@ class EnsembleExtractionSettingsMenu(QtWidgets.QWidget):
         dict,  # { ms1_corr_threshold: float,
     )          #   ms2_corr_threshold: float,
                #   min_intsy: float,
-               #   use_rel_intsy: bool, }
+               #   use_rel_intsy: bool,
+               #   method: str ('cosine' | 'pearson'), }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,22 +57,44 @@ class EnsembleExtractionSettingsMenu(QtWidgets.QWidget):
         )
 
         self.setMaximumSize(
-            QtCore.QSize(400, 200)
+            QtCore.QSize(400, 240)
         )
 
         layout = QtWidgets.QVBoxLayout(self)
 
-        # *** Correlation threshold spinners ***
+        # *** Scoring method ***
+        # Cosine similarity of XICs empirically discriminates peak shapes
+        # better than Pearson correlation, so it's the default. The combo's
+        # userData carries the metric string consumed downstream.
         layout.addWidget(
             QtWidgets.QLabel(
-                "MS1 correlation threshold:"
+                "Scoring method:"
+            )
+        )
+        self.comboMethod = QtWidgets.QComboBox()
+        self.comboMethod.addItem("Cosine", "cosine")
+        self.comboMethod.addItem("Pearson", "pearson")
+        self.comboMethod.setCurrentIndex(0)  # cosine
+        self.comboMethod.currentIndexChanged.connect(
+            self.param_changed
+        )
+        layout.addWidget(
+            self.comboMethod
+        )
+
+        # *** Correlation threshold spinners ***
+        # Defaults are tuned for cosine (runs higher than Pearson):
+        # ~0.95 MS1 / ~0.90 MS2. Step in 0.01 for fine control near the top.
+        layout.addWidget(
+            QtWidgets.QLabel(
+                "MS1 score threshold:"
             )
         )
         self.spinnerMS1Threshold = QtWidgets.QDoubleSpinBox()
-        self.spinnerMS1Threshold.setSingleStep(0.1)
+        self.spinnerMS1Threshold.setSingleStep(0.01)
         self.spinnerMS1Threshold.setMinimum(0.01)
         self.spinnerMS1Threshold.setMaximum(0.999)
-        self.spinnerMS1Threshold.setValue(0.8)
+        self.spinnerMS1Threshold.setValue(0.95)
         self.spinnerMS1Threshold.valueChanged.connect(
             self.param_changed
         )
@@ -82,14 +105,14 @@ class EnsembleExtractionSettingsMenu(QtWidgets.QWidget):
 
         layout.addWidget(
             QtWidgets.QLabel(
-                "MS2 correlation threshold:"
+                "MS2 score threshold:"
             )
         )
         self.spinnerMS2Threshold = QtWidgets.QDoubleSpinBox()
-        self.spinnerMS2Threshold.setSingleStep(0.1)
+        self.spinnerMS2Threshold.setSingleStep(0.01)
         self.spinnerMS2Threshold.setMinimum(0.01)
         self.spinnerMS2Threshold.setMaximum(0.999)
-        self.spinnerMS2Threshold.setValue(0.8)
+        self.spinnerMS2Threshold.setValue(0.90)
         self.spinnerMS2Threshold.valueChanged.connect(
             self.param_changed
 
@@ -149,4 +172,5 @@ class EnsembleExtractionSettingsMenu(QtWidgets.QWidget):
             'ms2_corr_threshold': float(self.spinnerMS2Threshold.value()),
             'min_intsy': float(self.spinnerMinIntsy.value()),
             'use_rel_intsy': self.checkRelativeIntensity.isChecked(),
+            'method': self.comboMethod.currentData(),
         }

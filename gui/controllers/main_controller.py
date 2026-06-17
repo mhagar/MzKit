@@ -732,6 +732,7 @@ class MainController:
                 "min_intsy": input_params.min_intsy,
                 "use_rel_intsy": input_params.use_rel_intsy,
                 "precursor_mz_tolerance": input_params.precursor_mz_tolerance,
+                "method": input_params.method,
             },
             on_completion_func=self.sample_controller.on_ensemble_generation,
         )

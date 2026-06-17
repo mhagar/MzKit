@@ -4,9 +4,43 @@ the scan number's corresponding ScanArray, returns a list of
 FeaturePointers which specify features in the ScanArray that
 have matching peak-shapes (within some correlation R)
 """
+from typing import Literal
+
 import numpy as np
 
 from core.data_structs import FeaturePointer, ScanArray
+
+
+# Peak-shape scoring metric used to group co-features. Cosine similarity of the
+# XICs empirically discriminates peak shapes better than (masked) Pearson
+# correlation, so it's the default; Pearson is kept selectable.
+#
+# NOTE: the `min_correlation` threshold is interpreted by whichever metric is
+# active. Cosine of two non-negative XICs lives in [0, 1] and runs high, so a
+# cosine threshold should be set higher than a Pearson one (~0.95 MS1 / 0.90
+# MS2 are sane starting points).
+CofeatureMetric = Literal["cosine", "pearson"]
+DEFAULT_COFEATURE_METRIC: 'CofeatureMetric' = "cosine"
+
+
+def _calculate_cofeature_scores(
+    candidate_xics: np.ndarray,
+    search_xic: np.ndarray,
+    method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC,
+) -> np.ndarray:
+    """
+    Dispatch to the selected peak-shape scoring metric. Both metrics return an
+    array of length n_candidates where higher == better match and NaN == "not
+    enough overlap to judge" (NaNs get dropped downstream since NaN comparisons
+    are False).
+    """
+    if method == "cosine":
+        return _calculate_cosine_scores(candidate_xics, search_xic)
+    if method == "pearson":
+        return _calculate_pearson_correlations(candidate_xics, search_xic)
+    raise ValueError(
+        f"Unknown co-feature metric {method!r}; expected 'cosine' or 'pearson'"
+    )
 
 
 def find_cofeatures_within_scan_array(
@@ -15,6 +49,7 @@ def find_cofeatures_within_scan_array(
     min_correlation: float,
     min_intsy: float,
     use_rel_intsy: bool,
+    method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC,
 ) -> list['FeaturePointer']:
     """
     Given a *SOURCE* ScanArray, and a target FeaturePointer,
@@ -58,10 +93,11 @@ def find_cofeatures_within_scan_array(
     if use_rel_intsy:
         search_xic /= search_xic.max()
 
-    # Calculate their Pearson correlation coeffs against search_target xic
-    correlations = _calculate_pearson_correlations(
+    # Score candidate XICs against the search XIC (cosine or Pearson)
+    correlations = _calculate_cofeature_scores(
         candidate_xics,
         search_xic,
+        method=method,
     )
 
     # For testing:
@@ -211,6 +247,50 @@ def _calculate_pearson_correlations(
     return correlations
 
 
+def _calculate_cosine_scores(
+    candidate_xics: np.ndarray,
+    search_xic: np.ndarray,
+    min_nonzero_overlap: int = 4,  # TODO: Expose to user
+) -> np.ndarray:
+    """
+    Cosine similarity between each candidate XIC and the search XIC.
+
+    Unlike the Pearson path, cosine is computed over the *full* extraction
+    window (not just the both-non-zero overlap) and the vectors are NOT
+    mean-centered. This is deliberate: it's exactly the misalignment of the
+    zero/low regions that makes cosine discriminate peak shapes — masking to
+    the overlap would throw that signal away and push every score toward 1.
+
+    We still require a minimum number of co-occurring non-zero points before
+    trusting a score, to avoid declaring a match off a single coincident scan.
+
+    :param candidate_xics: 2D array (n_candidates x n_timepoints)
+    :param search_xic: 1D array (n_timepoints)
+    :param min_nonzero_overlap: Minimum overlapping non-zero points required
+    :return: Array of cosine scores in [0, 1] (NaN for insufficient overlap)
+    """
+    n_candidates = candidate_xics.shape[0]
+    scores = np.full(n_candidates, np.nan)
+
+    search_norm = np.linalg.norm(search_xic)
+    if search_norm == 0:
+        return scores
+
+    # Per-candidate dot products and norms, all in one shot.
+    dots = candidate_xics @ search_xic
+    candidate_norms = np.linalg.norm(candidate_xics, axis=1)
+
+    # Gate on co-occurring non-zero points (cheap sanity check), and drop
+    # zero-norm candidates (which would divide by zero).
+    n_overlap = np.count_nonzero(
+        (candidate_xics != 0) & (search_xic != 0), axis=1
+    )
+    valid = (n_overlap >= min_nonzero_overlap) & (candidate_norms > 0)
+
+    scores[valid] = dots[valid] / (candidate_norms[valid] * search_norm)
+    return scores
+
+
 def find_cofeatures_across_scan_array(
     source_scan_array: 'ScanArray',
     target_scan_array: 'ScanArray',
@@ -218,6 +298,7 @@ def find_cofeatures_across_scan_array(
     min_correlation: float,
     min_intsy: float,
     use_rel_intsy: bool,
+    method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC,
 ) -> list['FeaturePointer']:
     """
     Given a *TARGET* ScanArray, and a search_target FeaturePointer,
@@ -295,11 +376,12 @@ def find_cofeatures_across_scan_array(
         fp=search_xic,
     )
 
-    # Calculate XIC grid Pearson correlation coeffs against *interpolated*
-    #   search_target xic
-    correlations = _calculate_pearson_correlations(
+    # Score XIC grid against *interpolated* search_target xic (cosine or
+    # Pearson)
+    correlations = _calculate_cofeature_scores(
         candidate_xics=candidate_xics,
         search_xic=interp_search_xic,  # type: ignore
+        method=method,
     )
 
     # Get the ones that surpass min threshold

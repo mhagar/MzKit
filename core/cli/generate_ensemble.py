@@ -15,6 +15,8 @@ from core.cli.find_cofeatures import (
     find_cofeatures_within_scan_array,
     find_cofeatures_across_scan_array,
     get_all_features_in_scan_array, # for testing
+    CofeatureMetric,
+    DEFAULT_COFEATURE_METRIC,
 )
 from core.cli.segment_chromatogram import find_peak_boundaries, validate_peak
 
@@ -36,6 +38,8 @@ class EnsembleExtractionParams(NamedTuple):
     # the settings menu post-ASMS; for now a wide default that comfortably
     # covers typical DDA isolation widths even when not explicitly encoded.
     precursor_mz_tolerance: float = 0.5
+    # Peak-shape scoring metric for co-feature grouping ('cosine' | 'pearson').
+    method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC
 
 
 def get_cofeature_ensembles(
@@ -46,6 +50,7 @@ def get_cofeature_ensembles(
     min_intsy: float,
     use_rel_intsy: bool,
     precursor_mz_tolerance: float = 0.5,
+    method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC,
     progress_callback=None,  # injected by ProcessRunner; unused here
     cancel_event=None,       # injected by ProcessRunner; unused here
 ) -> list[ Ensemble ]:
@@ -78,6 +83,7 @@ def get_cofeature_ensembles(
             search_ftr_ptr=search_ftr_ptr,
             use_rel_intsy=use_rel_intsy,
             precursor_mz_tolerance=precursor_mz_tolerance,
+            method=method,
         )
 
         ensembles.append(
@@ -95,6 +101,7 @@ def get_cofeature_ensemble(
     min_intsy: float,
     use_rel_intsy: bool,
     precursor_mz_tolerance: float = 0.5,
+    method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC,
 ) -> Ensemble:
     ms1_cofeatures = find_cofeatures_within_scan_array(
         scan_array=injection.scan_array_ms1,
@@ -102,6 +109,7 @@ def get_cofeature_ensemble(
         min_correlation=ms1_corr_threshold,
         min_intsy=min_intsy,
         use_rel_intsy=use_rel_intsy,
+        method=method,
     )
 
     ms2_cofeatures: list['FeaturePointer'] = []
@@ -128,6 +136,7 @@ def get_cofeature_ensemble(
             min_correlation=ms2_corr_threshold,
             min_intsy=min_intsy,
             use_rel_intsy=use_rel_intsy,
+            method=method,
         )
 
     ensemble = Ensemble(
@@ -294,6 +303,8 @@ class AutoEnsembleParams(NamedTuple):
     min_rise_ratio: float = 2.0
     min_peak_width: int = 5
     rt_range: tuple[float, float] | None = None
+    # Peak-shape scoring metric for co-feature grouping ('cosine' | 'pearson').
+    method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC
 
 
 def auto_generate_ensembles(
@@ -422,6 +433,7 @@ def auto_generate_ensembles(
             min_correlation=params.ms1_corr_threshold,
             min_intsy=params.cofeature_threshold,
             use_rel_intsy=params.use_rel_intsy,
+            method=params.method,
         )
 
         # Find MS2 cofeatures (if MS2 data exists)
@@ -434,6 +446,7 @@ def auto_generate_ensembles(
                 min_correlation=params.ms2_corr_threshold,
                 min_intsy=params.cofeature_threshold,
                 use_rel_intsy=params.use_rel_intsy,
+                method=params.method,
             )
 
         ensemble = Ensemble(

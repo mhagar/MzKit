@@ -65,6 +65,7 @@ class EnsembleExtractionManager(
         ms2_corr_threshold: float,
         min_intsy: float,
         use_rel_intsy: bool,
+        method: str = "cosine",
     ):
         """
         Emits a signal that queues ensemble extraction
@@ -96,6 +97,7 @@ class EnsembleExtractionManager(
             ms2_corr_threshold=ms2_corr_threshold,
             min_intsy=min_intsy,
             use_rel_intsy=use_rel_intsy,
+            method=method,
         )
 
         self.sigEnsembleExtractionRequested.emit(
