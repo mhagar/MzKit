@@ -18,7 +18,7 @@ from core.cli.find_cofeatures import (
     CofeatureMetric,
     DEFAULT_COFEATURE_METRIC,
 )
-from core.cli.segment_chromatogram import find_peak_boundaries, validate_peak
+from core.cli.segment_chromatogram import find_peak_boundaries, is_peak
 
 if TYPE_CHECKING:
     from core.data_structs import (
@@ -200,10 +200,14 @@ def _dda_link_ms2_cofeatures(
     if matched_ms2_idxs.size == 0:
         return [], None, None
 
-    # Find MS2 mass lanes that carry signal in the matched scans.
+    # Find MS2 mass lanes that carry signal in the matched scans. NOT
+    # intensity-filtered: in DDA every peak in the precursor's MS2 scans is a
+    # real fragment of that precursor (MS2 is never noise-filtered at build
+    # time), so applying `min_intsy` here would silently drop low-intensity
+    # fragment peaks from the ensemble's reconstructed spectrum.
     intsy_slice = ms2_arr.intsy_arr[:, matched_ms2_idxs]
     lane_max = intsy_slice.max(axis=1).toarray().flatten()
-    active_lane_idxs = np.where(lane_max >= min_intsy)[0]
+    active_lane_idxs = np.where(lane_max > 0)[0]
 
     ms2_cofeatures: list['FeaturePointer'] = [
         ms2_arr.make_feature_pointer(
@@ -288,8 +292,10 @@ class AutoEnsembleParams(NamedTuple):
         regardless of peak shape.
     edge_fraction: For consumption boundaries — stop descending
         when intensity drops below this fraction of apex.
-    min_rise_ratio: Peak apex must be at least this many times
-        the edge intensity to be considered valid.
+    min_prominence: Bilateral peak prominence (`is_peak`) — the apex
+        must rise to at least this fraction of its height above the
+        surrounding baseline on its weaker side. Rejects slopes and
+        smeared/constant background signals. 0.5 => apex >= 2x baseline.
     min_peak_width: Peak must span at least this many scans to
         be considered valid.
     """
@@ -300,7 +306,7 @@ class AutoEnsembleParams(NamedTuple):
     use_rel_intsy: bool = True
     extraction_half_width: int = 10
     edge_fraction: float = 0.1
-    min_rise_ratio: float = 2.0
+    min_prominence: float = 0.5
     min_peak_width: int = 5
     rt_range: tuple[float, float] | None = None
     # Peak-shape scoring metric for co-feature grouping ('cosine' | 'pearson').
@@ -400,13 +406,13 @@ def auto_generate_ensembles(
         )
 
         # Validate: is this a real peak worth extracting?
-        if not validate_peak(
+        if not is_peak(
             chromatogram,
             max_scan_idx,
             seg_start,
             seg_end,
-            min_rise_ratio=params.min_rise_ratio,
             min_peak_width=params.min_peak_width,
+            min_prominence=params.min_prominence,
         ):
             # Bad peak: zero out and skip, no cofeatures consumed
             _zero_out_lane_region(
