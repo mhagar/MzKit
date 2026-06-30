@@ -73,6 +73,26 @@ def load_config() -> configparser.ConfigParser:
     return config
 
 
+def load_default_config() -> configparser.ConfigParser:
+    """
+    Loads a ConfigParser object from the shipped default template only,
+    ignoring any user overrides. Used to restore defaults.
+    :return:
+    """
+    config = configparser.ConfigParser()
+    default_config_template_path = get_default_config_template_path()
+
+    if not default_config_template_path.exists():
+        raise FileNotFoundError(
+            f"Unable to find default configuration template."
+            f" Expected path: {default_config_template_path}"
+        )
+
+    config.read(default_config_template_path)
+
+    return config
+
+
 def save_config(config: configparser.ConfigParser) -> None:
     """
     Saves config to disk

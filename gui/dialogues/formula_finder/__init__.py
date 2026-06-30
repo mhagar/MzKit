@@ -315,8 +315,9 @@ class FormulaFinderDialog(
                 self._write_params_to_config()
 
             case QtWidgets.QDialogButtonBox.StandardButton.RestoreDefaults:
-                # TODO: Implement this
-                print("Not yet implemented :))")
+                # Populate the UI from the shipped default template,
+                # ignoring any saved user overrides.
+                self._load_params_from_config(load_default_config())
 
             case QtWidgets.QDialogButtonBox.StandardButton.Reset:
                 self._load_params_from_config()
