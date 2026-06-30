@@ -7,7 +7,7 @@ from PyQt5 import QtWidgets, QtCore
 from find_mfs import FormulaFinder, IsotopeMatchConfig, FormulaPrior
 
 from gui.resources.FormulaFinderWindow import Ui_Form
-from core.utils.config import save_config
+from core.utils.config import save_config, load_default_config
 from core.utils.formula_formatting import format_formula_obj_to_html
 from gui.dialogues.formula_finder.tables import HTMLDelegate
 
@@ -255,12 +255,14 @@ class FormulaFinderDialog(
         }
 
         isotope_params = {
-            "mz_tolerance_ppm": self.spinErrorPpmIsotopes.value(),
-            "mz_tolerance_da": self.spinErrorDaIsotopes.value(),
-            "minimum_rmse": self.spinMinIsotopeRMSE.value() / 100,  # Search w 3x requested tol
+            "mz_tolerance_ppm": self.spinErrorPpmIsotopes.value() * 5,
+            "mz_tolerance_da": self.spinErrorDaIsotopes.value() * 5  ,
+            "minimum_rmse": self.spinMinIsotopeRMSE.value() * 3 / 100,  # Search w 3x requested tol
         }                                                          # This is readjusted in posterior score
 
-        self._check_finder_element_set(self.comboElementSet.currentText())
+        self._check_finder_element_set(
+            self.comboElementSet.currentText()
+        )
 
         return mf_params, isotope_params
 
@@ -396,53 +398,60 @@ class FormulaFinderDialog(
 
     def _load_params_from_config(
         self,
+        config: Optional["ConfigParser"] = None,
     ):
         """
-        Skips if not initialized with configparser argument
+        Populates the UI from a ConfigParser. Defaults to the dialog's own
+        config (user settings); pass a different config (e.g. the default
+        template) to restore those values instead.
+
+        Skips if no config is available.
         """
-        if not self.config:
+        config = config if config is not None else self.config
+
+        if not config:
             return
 
-        self.spinCharge.setValue(self.config.getint("findmfs", "charge", fallback=0))
+        self.spinCharge.setValue(config.getint("findmfs", "charge", fallback=0))
 
         self.spinErrorPpm.setValue(
-            self.config.getfloat("findmfs", "error_ppm", fallback=0.0)
+            config.getfloat("findmfs", "error_ppm", fallback=0.0)
         )
 
         self.spinErrorDa.setValue(
-            self.config.getfloat("findmfs", "error_da", fallback=0.0)
+            config.getfloat("findmfs", "error_da", fallback=0.0)
         )
 
         self.lineMinCounts.setText(
-            self.config.get("findmfs", "min_counts", fallback="")
+            config.get("findmfs", "min_counts", fallback="")
         )
 
         self.lineMaxCounts.setText(
-            self.config.get("findmfs", "max_counts", fallback="")
+            config.get("findmfs", "max_counts", fallback="")
         )
 
         self.spinRDBEMin.setValue(
-            self.config.getfloat("findmfs", "min_rdbe", fallback=0.0)
+            config.getfloat("findmfs", "min_rdbe", fallback=0.0)
         )
 
         self.spinRDBEMax.setValue(
-            self.config.getfloat("findmfs", "max_rdbe", fallback=0.0)
+            config.getfloat("findmfs", "max_rdbe", fallback=0.0)
         )
 
         self.checkOctet.setChecked(
-            self.config.getboolean("findmfs", "check_octet", fallback=True)
+            config.getboolean("findmfs", "check_octet", fallback=True)
         )
 
         self.spinMinIsotopeRMSE.setValue(
-            self.config.getfloat("findmfs", "min_isotope_rmse", fallback=10)
+            config.getfloat("findmfs", "min_isotope_rmse", fallback=10)
         )
 
         self.spinErrorPpmIsotopes.setValue(
-            self.config.getfloat("findmfs", "error_ppm", fallback=0.0)
+            config.getfloat("findmfs", "error_ppm", fallback=0.0)
         )
 
         self.spinErrorDaIsotopes.setValue(
-            self.config.getfloat("findmfs", "error_da", fallback=0.1)
+            config.getfloat("findmfs", "error_da", fallback=0.1)
         )
 
 
