@@ -101,7 +101,8 @@ class IonAnnotationGraphic:
             return
 
         # envelope is [[mz, rel_intsy], ...] with monoisotopic = 1.0
-        mono_intsy = intsy_values[spec_idxs[0]]
+        # mono_intsy = intsy_values[spec_idxs[0]]
+        mono_intsy = intsy_values[spec_idxs].max()
         scaled_intsy = envelope[:, 1] * mono_intsy
 
         # Zero-pad for stick plot (connect='pairs')

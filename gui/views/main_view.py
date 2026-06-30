@@ -179,8 +179,13 @@ class MainView(
             self.listViewAlignments.selectedIndexes()
         )
 
-    def _show_samples_context_menu(self) -> None:
-        pass
+    def _show_samples_context_menu(self, pos) -> None:
+        if not self.listViewSamples.selectionModel().hasSelection():
+            return
+
+        menu = QtWidgets.QMenu(self)
+        menu.addAction(self.actionShowSelectedSamples)
+        menu.exec_(self.listViewSamples.mapToGlobal(pos))
 
     def _on_trigger_filter_alignment(self) -> None:
         if not self.listViewAlignments.selectionModel().hasSelection():

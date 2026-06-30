@@ -225,7 +225,9 @@ class MainController:
         )
 
 
-    def _connect_sample_viewer_signals(self) -> None:
+    def _connect_sample_viewer_signals(
+            self
+    ) -> None:
         """
         TODO: refactor this out. Maybe establish an interface?
         Should be called whenever a SampleViewer window is created
