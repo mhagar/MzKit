@@ -742,6 +742,7 @@ class MainController:
     def _handle_auto_ensemble_request(
         self,
         sample_uuid: 'data_structs.SampleUUID',
+        auto_params: dict,
     ):
         sample = self.data_registry.get_sample(sample_uuid)
         if not sample or not sample.injection:
@@ -749,15 +750,9 @@ class MainController:
 
         from core.cli.generate_ensemble import AutoEnsembleParams
 
-        # TODO: expose these params in the GUI
-        params = AutoEnsembleParams(
-            parent_threshold=2e4,
-            cofeature_threshold=1000,
-            ms1_corr_threshold=0.8,
-            ms2_corr_threshold=0.7,
-            use_rel_intsy=True,
-            rt_range=(60,380),
-        )
+        # Params come from the Sample Viewer's extraction settings menu
+        # (shared with manual extraction, plus the auto-only controls).
+        params = AutoEnsembleParams(**auto_params)
 
         self.process_controller.start_process(
             module_path="core.cli.generate_ensemble",

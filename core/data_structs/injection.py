@@ -231,6 +231,12 @@ class Injection:
         if uuid in self.ensembles:
             del self.ensembles[uuid]
 
+    def remove_all_ensembles(self) -> None:
+        """
+        Remove every ensemble from this injection.
+        """
+        self.ensembles.clear()
+
     @property
     def name(self) -> str:
         """

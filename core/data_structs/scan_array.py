@@ -456,10 +456,39 @@ def build_scan_array(
         mz_arr=mz_arr,
         intsy_arr=intsy_arr,
         scan_num_arr=np.array(scan_nums, dtype='u4'),
-        rt_arr=rt_per_scan.astype('f4'),
+        rt_arr=_sanitize_rt_axis(rt_per_scan).astype('f4'),
     )
 
     return scan_array
+
+
+def _sanitize_rt_axis(rt_per_scan: np.ndarray) -> np.ndarray:
+    """
+    Repair the per-scan retention-time axis so it is strictly time-valid
+
+    Some vendor/converter mzMLs emit placeholder MS1 spectra (empty scans
+    carrying no peaks and a retention time of exactly 0) interleaved *inside*
+    an otherwise monotonic run (e.g. Waters reference/lockmass or dropped-scan
+    fillers).
+
+    `build_features` faithfully keeps them as columns, leaving `rt == 0` holes in
+     the time axis. A FeaturePointer whose scan window borders such a scan yields a
+    `(rt=0, intsy=0)` point. These scans carry no signal.
+
+    This sanitizer replaces their missing retention time with one linearly interpolated
+     from the nearest valid neighbours.
+
+    A run with no valid RTs at all is returned untouched
+    """
+    rt = np.asarray(rt_per_scan, dtype=np.float64)
+    valid = rt > 0
+    if valid.all() or not valid.any():
+        return rt
+
+    idxs = np.arange(rt.size)
+    repaired = rt.copy()
+    repaired[~valid] = np.interp(idxs[~valid], idxs[valid], rt[valid])
+    return repaired
 
 
 def argrange(

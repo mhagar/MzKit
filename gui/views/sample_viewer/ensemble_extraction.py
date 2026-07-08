@@ -7,6 +7,7 @@ from gui.views.sample_viewer.menus import EnsembleExtractionSettingsMenu
 from typing import TYPE_CHECKING, Union, Optional, Literal
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
     from core.data_structs import (
         Sample,
         SampleUUID,
@@ -38,10 +39,11 @@ class EnsembleExtractionManager(
     def __init__(
         self,
         data_source: 'SampleDataSource',
+        config: Optional['ConfigParser'] = None,
     ):
         super().__init__()
         self.data_source = data_source
-        self.settings_menu = EnsembleExtractionSettingsMenu()
+        self.settings_menu = EnsembleExtractionSettingsMenu(config=config)
 
     def request_using_current_params(
         self,

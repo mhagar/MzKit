@@ -4,6 +4,7 @@ MzKit CLI entry point.
 Usage:
     mzkit import-mzml      - Import .mzML files as samples and save to .mzk
     mzkit import-features  - Import a feature table and generate ensembles
+    mzkit auto-extract     - Auto-generate ensembles from each sample's MS1 data
     mzkit filter           - Filter an alignment by expression
     mzkit export-table     - Export alignment as a feature table
     mzkit export-bpcs      - Export base peak chromatograms
@@ -301,6 +302,90 @@ def cmd_import_features(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_auto_extract(args: argparse.Namespace) -> None:
+    from core.utils.config import load_config
+    from core.cli.generate_ensemble import (
+        AutoEnsembleParams,
+        auto_generate_ensembles,
+        auto_params_from_config,
+    )
+
+    mzk_path = Path(args.mzk)
+    registry = _load_registry(mzk_path)
+
+    # Config is the base; any CLI flag that was actually provided overrides it.
+    # rt window / persistence disable are handled specially (composite params).
+    params = auto_params_from_config(load_config())
+    params = params._replace(**_auto_extract_overrides(args))
+
+    samples = registry.get_all_samples()
+    if args.sample_name:
+        samples = [s for s in samples if s.name in set(args.sample_name)]
+        if not samples:
+            raise ValueError(
+                f"No samples matched --sample-name {args.sample_name}"
+            )
+
+    total = 0
+    processed = 0
+    for sample in samples:
+        injection = sample.injection
+        if injection is None or injection.scan_array_ms1 is None:
+            logger.info(f"Skipping '{sample.name}' (no MS1 data)")
+            continue
+        if args.replace:
+            injection.remove_all_ensembles()
+        ensembles = auto_generate_ensembles(injection, params)
+        processed += 1
+        total += len(ensembles)
+        logger.info(f"'{sample.name}': {len(ensembles)} ensembles")
+
+    if processed == 0:
+        logger.warning("No samples with MS1 data were processed")
+        return
+
+    output = _resolve_output(args, mzk_path)
+    save_project(output, registry)
+    logger.info(
+        f"Saved {total} ensembles across {processed} sample(s) to {output}"
+    )
+
+
+def _auto_extract_overrides(args: argparse.Namespace) -> dict:
+    """
+    Collect the AutoEnsembleParams overrides for flags the user actually passed
+    (all default to None so an unspecified flag leaves the config value intact).
+    """
+    overrides: dict = {}
+    simple = {
+        'parent_threshold': args.parent_threshold,
+        'cofeature_threshold': args.cofeature_threshold,
+        'ms1_corr_threshold': args.ms1_corr,
+        'ms2_corr_threshold': args.ms2_corr,
+        'min_prominence': args.min_prominence,
+        'min_peak_width': args.min_peak_width,
+        'peak_method': args.peak_method,
+        'smoothing_sigma': args.smoothing_sigma,
+        'min_smoothing_survival': args.min_smoothing_survival,
+        'method': args.method,
+    }
+    overrides.update({k: v for k, v in simple.items() if v is not None})
+
+    if args.no_smoothing_survival:
+        overrides['require_smoothing_survival'] = False
+    if args.no_reject_persistent:
+        overrides['max_lane_persistence'] = None
+    elif args.max_lane_persistence is not None:
+        overrides['max_lane_persistence'] = args.max_lane_persistence
+
+    if args.rt_start_min is not None and args.rt_end_min is not None:
+        overrides['rt_range'] = (
+            args.rt_start_min * 60.0, args.rt_end_min * 60.0,
+        )
+
+    return overrides
+
+
 def cmd_filter(args: argparse.Namespace) -> None:
     mzk_path = Path(args.mzk)
     registry = _load_registry(mzk_path)
@@ -589,6 +674,63 @@ def build_parser() -> argparse.ArgumentParser:
         help='Correlation threshold for pre-grouping (default: 0.8)',
     )
     p_import.set_defaults(func=cmd_import_features)
+
+    # --- auto-extract ---
+    p_auto = subparsers.add_parser(
+        'auto-extract',
+        help='Auto-generate ensembles from each sample\'s MS1 data',
+    )
+    p_auto.add_argument(
+        'mzk',
+        help='.mzk file containing sample data',
+    )
+    p_auto.add_argument(
+        '--output-mzk',
+        default=None,
+        help='Output .mzk file (default: modify input in place)',
+    )
+    p_auto.add_argument(
+        '--sample-name',
+        nargs='+', default=None,
+        help='Only process these sample(s) by name (default: all)',
+    )
+    p_auto.add_argument(
+        '--replace',
+        action='store_true', default=False,
+        help='Clear existing ensembles on each sample before extracting',
+    )
+    # Overrides (all default None -> fall back to [auto_ensemble] config values)
+    p_auto.add_argument('--parent-threshold', type=float, default=None,
+                        help='Min apex intensity to seed an ensemble')
+    p_auto.add_argument('--cofeature-threshold', type=float, default=None,
+                        help='Min intensity for a signal to be a cofeature')
+    p_auto.add_argument('--ms1-corr', type=float, default=None,
+                        help='MS1 cofeature correlation threshold')
+    p_auto.add_argument('--ms2-corr', type=float, default=None,
+                        help='MS2 cofeature correlation threshold')
+    p_auto.add_argument('--min-prominence', type=float, default=None,
+                        help='Peak-validation prominence (is_peak)')
+    p_auto.add_argument('--min-peak-width', type=int, default=None,
+                        help='Minimum peak width in scans')
+    p_auto.add_argument('--peak-method', choices=['prominence', 'flank'],
+                        default=None, help='is_peak shape test')
+    p_auto.add_argument('--method', choices=['cosine', 'pearson'],
+                        default=None, help='Cofeature scoring metric')
+    p_auto.add_argument('--smoothing-sigma', type=float, default=None,
+                        help='Gaussian sigma for the smoothing-survival gate')
+    p_auto.add_argument('--min-smoothing-survival', type=float, default=None,
+                        help='Min fraction of apex height surviving smoothing')
+    p_auto.add_argument('--no-smoothing-survival', action='store_true',
+                        default=False, help='Disable the smoothing-survival gate')
+    p_auto.add_argument('--max-lane-persistence', type=float, default=None,
+                        help='Drop lanes present in > this fraction of scans')
+    p_auto.add_argument('--no-reject-persistent', action='store_true',
+                        default=False, help='Disable persistent-lane rejection')
+    p_auto.add_argument('--rt-start-min', type=float, default=None,
+                        help='RT window start in minutes (needs --rt-end-min)')
+    p_auto.add_argument('--rt-end-min', type=float, default=None,
+                        help='RT window end in minutes (needs --rt-start-min)')
+    p_auto.set_defaults(func=cmd_auto_extract)
 
     # --- filter ---
     p_filter = subparsers.add_parser(

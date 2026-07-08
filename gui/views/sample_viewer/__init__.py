@@ -42,6 +42,7 @@ class SampleViewer(
     )
     sigAutoEnsembleRequested = QtCore.pyqtSignal(
         object,  # SampleUUID
+        object,  # auto-generation params dict (from settings menu)
     )
     sigAlignEnsemblesRequested = QtCore.pyqtSignal(
         object,  # list[SampleUUID]
@@ -121,7 +122,8 @@ class SampleViewer(
 
         # Ensemble Extraction
         self.ensemble_extraction_mgr = EnsembleExtractionManager(
-            data_source=self.data_source
+            data_source=self.data_source,
+            config=self.config,
         )
 
         # DDA overlay layer for the MS spectrum plot
@@ -946,6 +948,9 @@ class SampleViewer(
         auto_ensemble_action = context_menu.addAction(
             "Auto-generate Ensembles"
         )
+        delete_ensembles_action = context_menu.addAction(
+            "Delete All Ensembles"
+        )
         align_action = context_menu.addAction(
             "Align Ensembles Across Samples"
         )
@@ -961,6 +966,8 @@ class SampleViewer(
             self.toggle_selected_sample_visibility()
         elif action == auto_ensemble_action:
             self._request_auto_ensemble_generation()
+        elif action == delete_ensembles_action:
+            self._delete_all_ensembles_for_selected()
         elif action == align_action:
             self._request_ensemble_alignment()
 
@@ -1001,15 +1008,68 @@ class SampleViewer(
 
     def _request_auto_ensemble_generation(self):
         """
-        Emit auto-ensemble signal for each selected sample
+        Emit auto-ensemble signal (with the current settings-menu params) for
+        each selected sample.
         """
+        auto_params = (
+            self.ensemble_extraction_mgr.settings_menu.get_auto_params()
+        )
         selected_idxs: list['QtCore.QModelIndex'] = self.viewSampleTree.selectedIndexes()
         for idx in selected_idxs:
             uuid = idx.data(self.model.UuidRole)
             if uuid:
                 sample = self.data_source.get_sample(uuid)
                 if sample and sample.injection:
-                    self.sigAutoEnsembleRequested.emit(uuid)
+                    self.sigAutoEnsembleRequested.emit(uuid, auto_params)
+
+    def _delete_all_ensembles_for_selected(self):
+        """
+        Delete every ensemble from each selected sample's injection (after
+        confirmation), then refresh the plots. Handy for re-running auto
+        generation with different settings.
+        """
+        selected_idxs: list['QtCore.QModelIndex'] = self.viewSampleTree.selectedIndexes()
+
+        # Collect unique selected injections and count their ensembles.
+        injections: list[tuple['SampleUUID', 'Injection']] = []
+        seen: set['SampleUUID'] = set()
+        total = 0
+        for idx in selected_idxs:
+            uuid = idx.data(self.model.UuidRole)
+            if not uuid or uuid in seen:
+                continue
+            seen.add(uuid)
+            sample = self.data_source.get_sample(uuid)
+            if sample and sample.injection:
+                injections.append((uuid, sample.injection))
+                total += len(sample.injection.ensembles)
+
+        if total == 0:
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            'Delete All Ensembles',
+            f'Delete all {total} ensemble(s) from {len(injections)} '
+            f'sample(s)? This cannot be undone.',
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        for uuid, injection in injections:
+            injection.remove_all_ensembles()
+
+            # Drop any dangling ensemble selection belonging to this sample.
+            if (
+                self._selected_ensemble is not None
+                and self._selected_ensemble[0] == uuid
+            ):
+                self._selected_ensemble = None
+
+            # Re-render (clears the peak overlays now that there are none).
+            self.data_source.notify_sample_updated(uuid)
 
     def _request_ensemble_alignment(self):
         """
