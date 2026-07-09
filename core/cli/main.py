@@ -5,6 +5,7 @@ Usage:
     mzkit import-mzml      - Import .mzML files as samples and save to .mzk
     mzkit import-features  - Import a feature table and generate ensembles
     mzkit auto-extract     - Auto-generate ensembles from each sample's MS1 data
+    mzkit align            - Align ensembles across samples by spectral similarity
     mzkit filter           - Filter an alignment by expression
     mzkit export-table     - Export alignment as a feature table
     mzkit export-bpcs      - Export base peak chromatograms
@@ -298,6 +299,61 @@ def cmd_import_features(args: argparse.Namespace) -> None:
     logger.info(
         f"Saved to {output}: "
         f"{alignment.analyte_count} analytes across "
+        f"{alignment.sample_count} samples"
+    )
+
+
+def cmd_align(args: argparse.Namespace) -> None:
+    # Imported lazily so matchms is only pulled in for the align command.
+    from core.cli.align_ensembles import align_ensembles
+
+    mzk_path = Path(args.mzk)
+    registry = _load_registry(mzk_path)
+
+    samples = registry.get_all_samples()
+    if args.sample_name:
+        samples = [s for s in samples if s.name in set(args.sample_name)]
+        if not samples:
+            raise ValueError(
+                f"No samples matched --sample-name {args.sample_name}"
+            )
+
+    samples = [s for s in samples if s.injection is not None]
+    if len(samples) < 2:
+        raise ValueError(
+            f"Alignment needs at least 2 samples with MS data; got {len(samples)}"
+        )
+
+    params = AlignmentParams(
+        rt_tolerance=args.rt_tolerance,
+        mz_tolerance=args.mz_tolerance,
+        ms1_similarity_threshold=args.ms1_threshold,
+        ms2_similarity_threshold=args.ms2_threshold,
+        ms1_weight=args.ms1_weight,
+        ms2_weight=args.ms2_weight,
+    )
+
+    n_ens = sum(len(s.injection.ensembles) for s in samples)
+    logger.info(f"Aligning {len(samples)} samples ({n_ens} ensembles)")
+
+    alignment = align_ensembles(samples, params)
+
+    if args.name:
+        alignment = EnsembleAlignment(
+            sample_uuids=alignment.sample_uuids,
+            analytes=alignment.analytes,
+            parameters=alignment.parameters,
+            uuid=alignment.uuid,
+            name=args.name,
+        )
+
+    registry.register_alignment(alignment)
+
+    output = _resolve_output(args, mzk_path)
+    save_project(output, registry)
+
+    logger.info(
+        f"Saved to {output}: {alignment.analyte_count} analytes across "
         f"{alignment.sample_count} samples"
     )
 
@@ -731,6 +787,44 @@ def build_parser() -> argparse.ArgumentParser:
     p_auto.add_argument('--rt-end-min', type=float, default=None,
                         help='RT window end in minutes (needs --rt-start-min)')
     p_auto.set_defaults(func=cmd_auto_extract)
+
+    # --- align ---
+    p_align = subparsers.add_parser(
+        'align',
+        help='Align ensembles across samples by spectral similarity',
+    )
+    p_align.add_argument(
+        'mzk',
+        help='.mzk file containing samples with ensembles',
+    )
+    p_align.add_argument(
+        '--output-mzk',
+        default=None,
+        help='Output .mzk file (default: modify input in place)',
+    )
+    p_align.add_argument(
+        '--name',
+        default=None,
+        help='Name for the resulting alignment',
+    )
+    p_align.add_argument(
+        '--sample-name',
+        nargs='+', default=None,
+        help='Only align these sample(s) by name (default: all)',
+    )
+    p_align.add_argument('--rt-tolerance', type=float, default=10.0,
+                         help='Max RT difference in seconds (default: 10.0)')
+    p_align.add_argument('--mz-tolerance', type=float, default=0.01,
+                         help='m/z tolerance for peak pairing (default: 0.01)')
+    p_align.add_argument('--ms1-threshold', type=float, default=0.7,
+                         help='Min MS1 cosine similarity (default: 0.7)')
+    p_align.add_argument('--ms2-threshold', type=float, default=0.6,
+                         help='Min MS2 cosine similarity (default: 0.6)')
+    p_align.add_argument('--ms1-weight', type=float, default=0.5,
+                         help='Weight of MS1 similarity in score (default: 0.5)')
+    p_align.add_argument('--ms2-weight', type=float, default=0.5,
+                         help='Weight of MS2 similarity in score (default: 0.5)')
+    p_align.set_defaults(func=cmd_align)
 
     # --- filter ---
     p_filter = subparsers.add_parser(

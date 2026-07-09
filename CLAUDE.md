@@ -58,7 +58,7 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 - `segment_chromatogram.py` - Peak boundary detection
 - `export_bpcs.py` - Export base peak chromatograms for all samples in an .mzk file (JSON)
 - `export_compound.py` - Export XIC + MS1/MS2 spectra for a single analyte (JSON)
-- `main.py` - Unified CLI entry point (`mzkit import-features`, `mzkit filter`, `mzkit export-table`, `mzkit export-bpcs`, `mzkit export-compound`)
+- `main.py` - Unified CLI entry point (`mzkit import-features`, `mzkit align`, `mzkit filter`, `mzkit export-table`, `mzkit export-bpcs`, `mzkit export-compound`)
 
 ## GUI resources
 
