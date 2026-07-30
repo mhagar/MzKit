@@ -410,6 +410,11 @@ class EnsembleViewer(
         self,
         ensemble: 'Ensemble'
     ):
+        # Discard any in-progress tool selection (e.g. Find Formula
+        # signal picks) from the previous ensemble — the selected
+        # cofeature indices/markers don't carry over to a new ensemble.
+        self.tool_manager.request_cancel()
+
         self.ensemble = ensemble
 
         # Update plot managers with ensemble
@@ -454,8 +459,8 @@ class EnsembleViewer(
 
         # For DDA, snap the initial spectrum RT onto a matched MS2 scan
         # so we never open onto a scan that doesn't belong to this
-        # ensemble. For non-DDA, peak_rt passes through unchanged.
-        initial_rt = self._snap_rt_to_ensemble(self.ensemble.peak_rt)
+        # ensemble. For non-DDA, the apex RT passes through unchanged.
+        initial_rt = self._snap_rt_to_ensemble(self._ensemble_apex_rt())
 
         # Populate plots using managers
         self.spectrum_manager.populate_spectrum_plot(
@@ -466,10 +471,112 @@ class EnsembleViewer(
             peak_rt=initial_rt
         )
 
+        # Open on a meaningful selection: overlay the MS1/MS2 base-peak
+        # XICs and populate the correlation plot, as if the user had
+        # clicked those signals.
+        self._preselect_base_peaks(scan_rt=initial_rt)
+
         # Connect chromatogram selector signal
         self.chromPlotWidget.pi.selection_indicator.sigPositionChanged.connect(
             self.onChromatogramSelectorMoved
         )
+
+    def _ensemble_apex_rt(self) -> float:
+        """
+        Retention time of the tallest MS1 point in the ensemble.
+
+        `Ensemble.peak_rt` is derived from `FeaturePointer.get_chrom_array`,
+        whose underlying slice (`scan_start:scan_end`) is end-exclusive and
+        so drops each cofeature's final scan. When a cofeature apexes on
+        that last scan, `peak_rt` lands a scan early — or on the wrong
+        cofeature, since the base-cofeature pick suffers the same
+        truncation. Here we recompute over the *inclusive* scan span of
+        every MS1 cofeature so the initial selection sits on the true apex.
+        """
+        ensemble = self.ensemble
+        scan_array = ensemble.injection.scan_array_ms1
+
+        best_rt = ensemble.peak_rt
+        best_intsy = -np.inf
+        for cofeature in ensemble.ms1_cofeatures:
+            s0 = int(cofeature.scan_idxs[0])
+            s1 = int(cofeature.scan_idxs[-1])
+            intsys = scan_array.intsy_arr[
+                cofeature.mz_lane_idx, s0:s1 + 1
+            ].toarray().flatten()
+            if intsys.size == 0:
+                continue
+            i = int(intsys.argmax())
+            if intsys[i] > best_intsy:
+                best_intsy = float(intsys[i])
+                best_rt = float(scan_array.rt_arr[s0 + i])
+
+        return float(best_rt)
+
+    def _tallest_ms2_cofeature_idx(self) -> Optional[int]:
+        """
+        Index of the most intense MS2 cofeature (the MS2 'base peak'), or
+        None if this ensemble carries no MS2 cofeatures.
+        """
+        ensemble = self.ensemble
+        if not ensemble.ms2_cofeatures:
+            return None
+        scan_array = ensemble.injection.scan_array_ms2
+        if scan_array is None:
+            return None
+        intsys = [c.get_max_intsy(scan_array) for c in ensemble.ms2_cofeatures]
+        return int(np.argmax(intsys))
+
+    def _preselect_base_peaks(self, scan_rt: float):
+        """
+        Overlay the MS1 (and, if present, MS2) base-peak XICs on the
+        chromatogram plot and populate the correlation plot, exactly as
+        if the user had clicked those signals in the spectra.
+
+        No spectral selection markers are dropped here — the base peak
+        is always the tallest signal (argmax), which is already visually
+        obvious, so a marker would be redundant clutter (and would be
+        indistinguishable from the Find Formula tool's own selection
+        markers).
+
+        The spectra plot signals in cofeature order, so a cofeature's
+        index doubles as its `spec_idx`.
+        """
+        ensemble = self.ensemble
+        is_dda = (
+            ensemble.injection is not None
+            and ensemble.injection.acquisition_mode == 'dda'
+        )
+
+        # --- MS1 base peak ---
+        ms1_idx = ensemble.base_ms1_cofeature_idx
+        self.chrom_manager.set_ms1_chroms(
+            ensemble.get_chromatograms(
+                ms_level=1, idxs=slice(ms1_idx, ms1_idx + 1)
+            )
+        )
+        self.chrom_manager.set_last_selection(mz=ensemble.base_mz, ms_level=1)
+
+        # --- MS2 base peak (tallest MS2 cofeature), if any ---
+        ms2_idx = self._tallest_ms2_cofeature_idx()
+        if ms2_idx is not None:
+            self.chrom_manager.set_ms2_chroms(
+                ensemble.get_chromatograms(
+                    ms_level=2, idxs=slice(ms2_idx, ms2_idx + 1)
+                )
+            )
+            # Make the MS2 base peak the correlation readout target — but
+            # not for DDA, where the correlation plot suppresses MS2.
+            if not is_dda:
+                ms2_mz = float(
+                    ensemble.ms2_cofeatures[ms2_idx].get_mz_values(
+                        ensemble.injection.scan_array_ms2
+                    ).mean()
+                )
+                self.chrom_manager.set_last_selection(mz=ms2_mz, ms_level=2)
+
+        self.chrom_manager.update_chromatogram_plot()
+        self.chrom_manager.update_correlation_plot()
 
     def initialize_property_table(
         self,
