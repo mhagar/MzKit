@@ -6,6 +6,7 @@ Usage:
     mzkit import-features  - Import a feature table and generate ensembles
     mzkit auto-extract     - Auto-generate ensembles from each sample's MS1 data
     mzkit align            - Align ensembles across samples by spectral similarity
+    mzkit merge-alignments - Merge existing alignments by matching analytes
     mzkit filter           - Filter an alignment by expression
     mzkit export-table     - Export alignment as a feature table
     mzkit export-bpcs      - Export base peak chromatograms
@@ -358,6 +359,68 @@ def cmd_align(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_merge_alignments(args: argparse.Namespace) -> None:
+    # Imported lazily so matchms is only pulled in when actually merging.
+    from core.cli.align_alignments import align_alignments
+
+    mzk_path = Path(args.mzk)
+    registry = _load_registry(mzk_path)
+
+    all_alignments = [
+        registry.get_alignment(u) for u in registry.get_all_alignment_uuids()
+    ]
+    alignments = all_alignments
+
+    if args.alignment_name:
+        wanted = set(args.alignment_name)
+        alignments = [a for a in all_alignments if a.name in wanted]
+        missing = wanted - {a.name for a in alignments}
+        if missing:
+            raise ValueError(
+                f"No alignment(s) named {sorted(missing)}. "
+                f"Available: {[a.name for a in all_alignments]}"
+            )
+
+    if len(alignments) < 2:
+        raise ValueError(
+            f"Merging needs at least 2 alignments; got {len(alignments)}"
+        )
+
+    params = AlignmentParams(
+        rt_tolerance=args.rt_tolerance,
+        mz_tolerance=args.mz_tolerance,
+        ms1_similarity_threshold=args.ms1_threshold,
+        ms2_similarity_threshold=args.ms2_threshold,
+        ms1_weight=args.ms1_weight,
+        ms2_weight=args.ms2_weight,
+    )
+
+    samples = registry.get_all_samples()
+    n_analytes = sum(a.analyte_count for a in alignments)
+    logger.info(
+        f"Merging {len(alignments)} alignments ({n_analytes} analytes)"
+    )
+
+    merged = align_alignments(alignments, samples, params)
+
+    if args.name:
+        merged.name = args.name
+
+    if args.replace:
+        for a in alignments:
+            registry.remove_alignment(a.uuid)
+
+    registry.register_alignment(merged)
+
+    output = _resolve_output(args, mzk_path)
+    save_project(output, registry)
+
+    logger.info(
+        f"Saved to {output}: {merged.analyte_count} analytes across "
+        f"{merged.sample_count} samples"
+    )
+
+
 def cmd_auto_extract(args: argparse.Namespace) -> None:
     from core.utils.config import load_config
     from core.cli.generate_ensemble import (
@@ -488,6 +551,8 @@ def cmd_export_table(args: argparse.Namespace) -> None:
         sample_names=sample_names,
         output=Path(args.output),
         separator=sep,
+        write_mgf=args.mgf,
+        mgf_mode='per_sample' if args.mgf_mode == 'per-sample' else 'consensus',
     )
 
 
@@ -826,6 +891,50 @@ def build_parser() -> argparse.ArgumentParser:
                          help='Weight of MS2 similarity in score (default: 0.5)')
     p_align.set_defaults(func=cmd_align)
 
+    # --- merge-alignments ---
+    p_merge = subparsers.add_parser(
+        'merge-alignments',
+        help='Merge existing alignments by matching analytes (cheaper '
+             'than re-aligning all samples from scratch)',
+    )
+    p_merge.add_argument(
+        'mzk',
+        help='.mzk file containing the alignments to merge',
+    )
+    p_merge.add_argument(
+        '--output-mzk',
+        default=None,
+        help='Output .mzk file (default: modify input in place)',
+    )
+    p_merge.add_argument(
+        '--name',
+        default=None,
+        help='Name for the merged alignment',
+    )
+    p_merge.add_argument(
+        '--alignment-name',
+        nargs='+', default=None,
+        help='Names of alignments to merge (default: all in the file)',
+    )
+    p_merge.add_argument(
+        '--replace',
+        action='store_true', default=False,
+        help='Remove the source alignments after merging',
+    )
+    p_merge.add_argument('--rt-tolerance', type=float, default=10.0,
+                         help='Max RT difference in seconds (default: 10.0)')
+    p_merge.add_argument('--mz-tolerance', type=float, default=0.01,
+                         help='m/z tolerance for peak pairing (default: 0.01)')
+    p_merge.add_argument('--ms1-threshold', type=float, default=0.7,
+                         help='Min MS1 cosine similarity (default: 0.7)')
+    p_merge.add_argument('--ms2-threshold', type=float, default=0.6,
+                         help='Min MS2 cosine similarity (default: 0.6)')
+    p_merge.add_argument('--ms1-weight', type=float, default=0.5,
+                         help='Weight of MS1 similarity in score (default: 0.5)')
+    p_merge.add_argument('--ms2-weight', type=float, default=0.5,
+                         help='Weight of MS2 similarity in score (default: 0.5)')
+    p_merge.set_defaults(func=cmd_merge_alignments)
+
     # --- filter ---
     p_filter = subparsers.add_parser(
         'filter',
@@ -876,6 +985,20 @@ def build_parser() -> argparse.ArgumentParser:
         '--alignment-name',
         default=None,
         help='Name of alignment to export (required if multiple exist)',
+    )
+    p_export.add_argument(
+        '--mgf',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Also write a companion .mgf next to the table (default: on; '
+             'disable with --no-mgf)',
+    )
+    p_export.add_argument(
+        '--mgf-mode',
+        choices=['consensus', 'per-sample'],
+        default='consensus',
+        help='consensus: best (most-intense) ensemble per analyte; '
+             'per-sample: every aligned ensemble (default: consensus)',
     )
     p_export.set_defaults(func=cmd_export_table)
 

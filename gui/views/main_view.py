@@ -28,6 +28,9 @@ class MainView(
     sigExportAlignmentRequested = QtCore.pyqtSignal(
         list,  # list[QModelIndex]
     )
+    sigMergeAlignmentsRequested = QtCore.pyqtSignal(
+        list,  # list[QModelIndex]
+    )
     sigLabelingRequested = QtCore.pyqtSignal(
         #
     )
@@ -147,6 +150,14 @@ class MainView(
             self._on_trigger_export_alignment,
         )
 
+        # Merge selected alignments into one
+        self.actionMergeAlignments = QtWidgets.QAction(
+            "Merge Alignments...",
+        )
+        self.actionMergeAlignments.triggered.connect(
+            self._on_trigger_merge_alignments,
+        )
+
 
     def _on_trigger_import_mzmls(self) -> None:
         self.sigImportMzMLsRequested.emit()
@@ -203,11 +214,29 @@ class MainView(
             self.listViewAlignments.selectedIndexes()
         )
 
+    def _selected_alignment_indexes(self) -> list:
+        """Selected rows in the alignment list (one QModelIndex per row)."""
+        selection = self.listViewAlignments.selectionModel()
+        if not selection:
+            return []
+        return selection.selectedRows() or self.listViewAlignments.selectedIndexes()
+
+    def _on_trigger_merge_alignments(self) -> None:
+        indexes = self._selected_alignment_indexes()
+        if len(indexes) < 2:
+            return
+        self.sigMergeAlignmentsRequested.emit(indexes)
+
     def _show_alignment_context_menu(self, pos) -> None:
         menu = QtWidgets.QMenu(self)
         menu.addAction(self.actionShowSelectedAlignment)
         menu.addAction(self.actionFilterAlignment)
         menu.addAction(self.actionExportAlignment)
+        # Merging only makes sense with 2+ alignments selected.
+        self.actionMergeAlignments.setEnabled(
+            len(self._selected_alignment_indexes()) >= 2
+        )
+        menu.addAction(self.actionMergeAlignments)
         menu.exec_(self.listViewAlignments.mapToGlobal(pos))
 
     def _on_filter_changed(self) -> None:
