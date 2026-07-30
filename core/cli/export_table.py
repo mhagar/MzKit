@@ -1,17 +1,35 @@
 """
-Export an EnsembleAlignment as a feature table (CSV/TSV).
+Export an EnsembleAlignment as a feature table (CSV/TSV), optionally with
+a companion .mgf of the aligned spectra.
 
 Rows are analytes, columns are samples, values are base intensity.
+
+The MGF is built via the shared, Qt-free `core.cli.export_ensemble` machinery
+(same code path as the single-compound / SIRIUS exports), so ensemble metadata
+(identity -> NAME, formula -> FORMULA, adduct/charge, and any user_metadata)
+comes along for free. Two modes:
+
+- ``consensus`` (default): one MGF entry per analyte, using the most-intense
+  ensemble (highest base intensity) across all samples it was detected in.
+- ``per_sample``: one MGF entry per (analyte, sample) it was detected in, i.e.
+  every ensemble participating in the alignment.
+
+In both modes each entry is stamped with ``FEATURE_ID`` = the analyte's row id,
+so the table's ``analyte_id`` column cross-references the MGF (GNPS-FBMN style).
 """
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Literal, Optional, TYPE_CHECKING
+
+from core.cli.export_ensemble import build_ensemble_export
 
 if TYPE_CHECKING:
-    from core.data_structs import Sample, SampleUUID
+    from core.data_structs import Sample, SampleUUID, Ensemble
     from core.data_structs.alignment import EnsembleAlignment
 
 logger = logging.getLogger(__name__)
+
+MgfMode = Literal['consensus', 'per_sample']
 
 
 def export_feature_table(
@@ -65,15 +83,99 @@ def export_feature_table(
     return '\n'.join(lines) + '\n'
 
 
+def _best_ensemble(
+    analyte,
+    samples: dict['SampleUUID', 'Sample'],
+) -> Optional['Ensemble']:
+    """
+    Most-intense ensemble (by base intensity) across every sample the
+    analyte was detected in, or None.
+    """
+    best_ensemble = None
+    best_intsy = -1.0
+    for sample_uuid, ens_uuid in analyte.ensemble_map.items():
+        sample = samples.get(sample_uuid)
+        if not sample or not sample.injection:
+            continue
+        ensemble = sample.injection.ensembles.get(ens_uuid)
+        if not ensemble:
+            continue
+        if ensemble.base_intsy > best_intsy:
+            best_intsy = ensemble.base_intsy
+            best_ensemble = ensemble
+    return best_ensemble
+
+
+def export_feature_mgf(
+    alignment: 'EnsembleAlignment',
+    samples: dict['SampleUUID', 'Sample'],
+    mode: MgfMode = 'consensus',
+    normalize: bool = True,
+) -> str:
+    """
+    Build an MGF string for an alignment's aligned spectra.
+
+    :param mode: ``'consensus'`` for one entry per analyte (best ensemble
+        across samples) or ``'per_sample'`` for one entry per aligned
+        (analyte, sample).
+    :param normalize: normalize spectra to 0-100.
+    :return: MGF text (empty string if nothing exportable).
+    """
+    blocks: list[str] = []
+
+    for i, analyte in enumerate(alignment.analytes):
+        if mode == 'consensus':
+            ensemble = _best_ensemble(analyte, samples)
+            if ensemble is None:
+                continue
+            export = build_ensemble_export(
+                ensemble, rt=None, normalize=normalize,
+            )
+            export.metadata['FEATURE_ID'] = str(i)
+            text = export.to_mgf_text()
+            if text:
+                blocks.append(text)
+        else:  # per_sample
+            for sample_uuid, ens_uuid in analyte.ensemble_map.items():
+                sample = samples.get(sample_uuid)
+                if not sample or not sample.injection:
+                    continue
+                ensemble = sample.injection.ensembles.get(ens_uuid)
+                if not ensemble:
+                    continue
+                export = build_ensemble_export(
+                    ensemble, rt=None, normalize=normalize,
+                )
+                export.metadata['FEATURE_ID'] = str(i)
+                export.metadata['SAMPLE'] = sample.name
+                text = export.to_mgf_text()
+                if text:
+                    blocks.append(text)
+
+    return '\n\n'.join(blocks) + '\n' if blocks else ''
+
+
 def export_feature_table_to_file(
     alignment: 'EnsembleAlignment',
     samples: dict['SampleUUID', 'Sample'],
     sample_names: dict['SampleUUID', str],
     output: Path,
     separator: str = '\t',
-) -> None:
+    write_mgf: bool = True,
+    mgf_mode: MgfMode = 'consensus',
+    normalize: bool = True,
+) -> Optional[Path]:
     """
-    Export a feature table to a file.
+    Export a feature table to a file, and (by default) a companion .mgf.
+
+    The MGF is written as a sibling of ``output`` with a ``.mgf`` suffix
+    (``features.tsv`` -> ``features.mgf``).
+
+    :param write_mgf: also write the companion MGF.
+    :param mgf_mode: ``'consensus'`` (best ensemble per analyte) or
+        ``'per_sample'`` (every aligned ensemble).
+    :param normalize: normalize MGF spectra to 0-100.
+    :return: the MGF path if one was written, else None.
     """
     table = export_feature_table(
         alignment=alignment,
@@ -92,3 +194,19 @@ def export_feature_table_to_file(
         f"Exported {n_analytes} analytes x "
         f"{n_samples} samples to {output}"
     )
+
+    if not write_mgf:
+        return None
+
+    mgf_text = export_feature_mgf(
+        alignment=alignment,
+        samples=samples,
+        mode=mgf_mode,
+        normalize=normalize,
+    )
+    mgf_path = output.with_suffix('.mgf')
+    mgf_path.write_text(mgf_text)
+    logger.info(
+        f"Exported {mgf_mode} MGF to {mgf_path}"
+    )
+    return mgf_path

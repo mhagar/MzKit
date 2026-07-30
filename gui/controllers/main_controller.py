@@ -69,6 +69,7 @@ class MainController:
         self._connect_view_signals()
         self._connect_sample_controller_signals()
         self._connect_sample_viewer_signals()
+        self._connect_alignment_viewer_signals()
 
         # Initialize controllers (must be done at end)
         self.sample_controller.initialize_sample_model()
@@ -126,6 +127,10 @@ class MainController:
 
         self.main_view.sigExportAlignmentRequested.connect(
             self._handle_export_alignment_request
+        )
+
+        self.main_view.sigMergeAlignmentsRequested.connect(
+            self._handle_merge_alignments_request
         )
 
         self.main_view.sigSampleFilterChanged.connect(
@@ -253,6 +258,36 @@ class MainController:
         sample_viewer.sigViewEnsembleRequested.connect(
             self._handle_view_ensemble_request
         )
+
+    def _connect_alignment_viewer_signals(self) -> None:
+        """
+        Wire the Alignment Viewer's action signals. Safe to call at init:
+        SubWindowManager.initialize_all_windows() creates every window up
+        front, so the viewer already exists here.
+        """
+        alignment_viewer = self.subwindow_manager.get_window(
+            'alignment_viewer'
+        )
+        if not alignment_viewer:
+            return
+
+        alignment_viewer.sigViewEnsembleRequested.connect(
+            self._handle_view_ensemble_request
+        )
+        alignment_viewer.sigAddSamplesRequested.connect(
+            self._handle_add_samples_request
+        )
+
+    def _handle_add_samples_request(
+        self,
+        sample_uuids: list,
+    ) -> None:
+        """Add the given samples to the Sample Viewer and show it."""
+        if not sample_uuids:
+            return
+        self.subwindow_manager.show_window('sample_viewer')
+        sample_viewer = self.subwindow_manager.get_window('sample_viewer')
+        sample_viewer.add_samples(list(sample_uuids), visible=True)
 
     def _on_model_changed(
         self,
@@ -539,6 +574,57 @@ class MainController:
             separator=separator,
         )
         print(f"Exported to {path}")
+
+    def _handle_merge_alignments_request(
+        self,
+        indexes: list[QtCore.QModelIndex],
+    ):
+        """
+        Merge the selected alignments into a new one by matching their
+        analytes (far cheaper than re-aligning every sample from scratch).
+        """
+        alignments = []
+        seen_uuids = set()
+        for index in indexes:
+            alignment = self.sample_controller.get_alignment_by_index(index)
+            if alignment is None or alignment.uuid in seen_uuids:
+                continue
+            seen_uuids.add(alignment.uuid)
+            alignments.append(alignment)
+
+        if len(alignments) < 2:
+            return
+
+        # Samples needed to build each analyte's consensus spectrum: the
+        # union across all selected alignments.
+        sample_uuids = {
+            uuid for a in alignments for uuid in a.sample_uuids
+        }
+        samples = [
+            self.data_registry.get_sample(uuid) for uuid in sample_uuids
+        ]
+        samples = [s for s in samples if s is not None]
+
+        from core.data_structs.alignment import AlignmentParams
+
+        # TODO: expose these params in the GUI (shared with align).
+        params = AlignmentParams(
+            rt_tolerance=10.0,
+            mz_tolerance=0.01,
+            ms1_similarity_threshold=0.7,
+            ms2_similarity_threshold=0.6,
+        )
+
+        self.process_controller.start_process(
+            module_path="core.cli.align_alignments",
+            function_name="align_alignments",
+            parameters={
+                "alignments": alignments,
+                "samples": samples,
+                "params": params,
+            },
+            on_completion_func=self._on_alignment_complete,
+        )
 
     def _handle_view_samples_request(
         self,

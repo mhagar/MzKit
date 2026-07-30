@@ -144,6 +144,16 @@ class Injection:
         for num, spectrum in enumerate(self.exp.getSpectra()):
             spectrum: oms.MSSpectrum
 
+            # Some vendor/converter mzMLs (e.g. Agilent files with a UV/PDA
+            # detector channel) inject non-MS entries (CV term MS:1000804
+            # "electromagnetic radiation spectrum") into the spectrum list,
+            # mislabeled as msLevel=1 since they carry no MS-level cvParam
+            # for pyopenms to read. They carry no polarity either, unlike
+            # every real scan, so that's the cheapest reliable discriminator
+            # exposed by pyopenms's API.
+            if spectrum.getInstrumentSettings().getPolarity() == oms.IonSource.Polarity.POLNULL:
+                continue
+
             current_level = spectrum.getMSLevel()
             if current_level == 1:
                 last_ms1_scan_num = num

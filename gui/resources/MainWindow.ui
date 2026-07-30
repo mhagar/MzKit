@@ -123,6 +123,9 @@
            <property name="frameShadow">
             <enum>QFrame::Raised</enum>
            </property>
+           <property name="selectionMode">
+            <enum>QAbstractItemView::MultiSelection</enum>
+           </property>
           </widget>
          </item>
          <item>

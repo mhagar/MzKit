@@ -67,6 +67,7 @@ class Ui_MainWindow(object):
         self.verticalLayout_3.setObjectName("verticalLayout_3")
         self.listViewAlignments = QtWidgets.QListView(self.tabAlignments)
         self.listViewAlignments.setFrameShadow(QtWidgets.QFrame.Raised)
+        self.listViewAlignments.setSelectionMode(QtWidgets.QAbstractItemView.MultiSelection)
         self.listViewAlignments.setObjectName("listViewAlignments")
         self.verticalLayout_3.addWidget(self.listViewAlignments)
         self.horizontalLayout = QtWidgets.QHBoxLayout()
