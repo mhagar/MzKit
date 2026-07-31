@@ -4,7 +4,7 @@ Rushed to make something useable
 """
 import numpy as np
 from PyQt5 import QtWidgets, QtCore
-from find_mfs import FormulaFinder, IsotopeMatchConfig, FormulaPrior
+from find_mfs import FormulaFinder, FormulaScorer
 
 from gui.resources.FormulaFinderWindow import Ui_Form
 from core.utils.config import save_config, load_default_config
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 # By default, use the pre-shipped COCONUT GMM.
 # TODO: Expose route to user for training their own GMM
-SCORER = FormulaPrior.default()
+SCORER = FormulaScorer.default()
 
 class FormulaFinderDialog(
     QtWidgets.QWidget,
@@ -106,42 +106,37 @@ class FormulaFinderDialog(
         envelope: NDArray = np.array(self.search_query)
         search_mz = envelope[:, 0].min()  # Uses lowest m/z.. for now?
 
-        mf_params, isotope_params = self._retrieve_params_from_ui()
+        mf_params, score_params = self._retrieve_params_from_ui()
 
-        iso_matching_config: Optional["IsotopeMatchConfig"] = None
-        if envelope.shape[0] > 1:
-            # Search query contains isotope envelopes
-            iso_matching_config = IsotopeMatchConfig(
-                envelope=envelope,
-                **isotope_params,
-            )
+        has_envelope = envelope.shape[0] > 1
 
         results = self.finder.find_formulae(
             mass=search_mz,
-            isotope_match=iso_matching_config,
+            # Perf-only prefilter; actual isotope scoring happens below via SCORER.score()
+            isotope_prefilter=envelope if has_envelope else None,
             **mf_params,
         )
 
-        SCORER.score_results(
-            results=results,
-            mass_sigma_ppm=mf_params['error_ppm']/3,
-            isotope_sigma=isotope_params['minimum_rmse']/3,
+        SCORER.score(
+            results,
+            ms1_peaks=envelope if has_envelope else None,
+            precursor_mz=search_mz,
+            mass_sigma_ppm=mf_params['error_ppm'] / 3,
+            **score_params,
         )
 
         match self._retrieve_requested_sort():
             case "mass_error":
                 self.search_results = results.sort_by_error()
 
-            case "envelope_rmse":
-                self.search_results = results.sort_by_rmse()
+            case "isotope_envelope":
+                self.search_results = results.sort_by_iso_loglik()
 
-            case "prior":
-                self.search_results = results.sort_by_prior()
+            case "chemical_prior":
+                self.search_results = results.sort_by_chem_logprior()
 
             case "posterior":
                 self.search_results = results.sort_by_posterior()
-
-        # self.search_results = results.sort_by_posterior()
 
         self._populate_results_table()
 
@@ -180,9 +175,10 @@ class FormulaFinderDialog(
                 (1, f"{candidate.error_ppm:.2f}"),
                 (2, f"{candidate.error_da:.6f}"),
                 (3, f"{candidate.rdbe:.1f}"),
-                (4, _get_intensity_rmse(candidate)),
-                (5, f"{candidate.prior_score:.2f}"),
-                (6, f"{candidate.posterior_score:.2f}"),
+                (4, f"{candidate.mass_loglik:.2f}"),
+                (5, _get_iso_loglik(candidate)),
+                (6, f"{candidate.chem_logprior:.2f}"),
+                (7, f"{candidate.log_posterior:.2f}"),
             ]:
                 item = QtWidgets.QTableWidgetItem(
                     text,
@@ -215,25 +211,27 @@ class FormulaFinderDialog(
 
     def _retrieve_requested_sort(
         self,
-    ) -> Literal["mass_error", "envelope_rmse", "prior", "posterior"]:
+    ) -> Literal["mass_error", "isotope_envelope", "chemical_prior", "posterior"]:
         """
         Retrieves state of 'sort by' combobox from UI
         """
-        if "mass" in self.comboSortBy.currentText().lower():
+        text = self.comboSortBy.currentText().lower()
+
+        if "mass" in text:
             return "mass_error"
 
-        if "envelope" in self.comboSortBy.currentText().lower():
-            return "envelope_rmse"
+        if "isotope" in text:
+            return "isotope_envelope"
 
-        if "prior" in self.comboSortBy.currentText().lower():
-            return "prior"
+        if "chemical" in text or "prior" in text:
+            return "chemical_prior"
 
-        if "posterior" in self.comboSortBy.currentText().lower():
+        if "posterior" in text:
             return "posterior"
 
         raise ValueError(
             f"Invalid combobox state: '{self.comboSortBy.currentText()}'. \n"
-            f"Must contain either 'mass' or 'envelope'"
+            f"Must contain 'mass', 'isotope', 'chemical', or 'posterior'"
         )
 
     def _retrieve_params_from_ui(self) -> tuple[dict, dict]:
@@ -243,8 +241,8 @@ class FormulaFinderDialog(
         mf_params = {
             "adduct": self.lineAdduct.text() or None,
             "charge": self.spinCharge.value(),
-            "error_ppm": self.spinErrorPpm.value() * 3, # Search with 3x requested tol
-            "error_da": self.spinErrorDa.value() * 3,  # This is readjusted in posterior score
+            "error_ppm": self.spinMassErrorPpm.value(),
+            "error_da": self.spinMassErrorDa.value(),
             "min_counts": self.lineMinCounts.text(),
             "max_counts": self.lineMaxCounts.text(),
             "filter_rdbe": (
@@ -254,17 +252,22 @@ class FormulaFinderDialog(
             "check_octet": self.checkOctet.isChecked(),
         }
 
-        isotope_params = {
-            "mz_tolerance_ppm": self.spinErrorPpmIsotopes.value() * 5,
-            "mz_tolerance_da": self.spinErrorDaIsotopes.value() * 5  ,
-            "minimum_rmse": self.spinMinIsotopeRMSE.value() * 3 / 100,  # Search w 3x requested tol
-        }                                                          # This is readjusted in posterior score
+        score_params = {
+            "iso_ppm": self.spinIsotopeErrorPpm.value(),
+            "iso_mz_match_da": self.spinIsotopeMatchTolDa.value(),
+            "iso_min_rel": self.spinIsotopeMinRelIntsy.value(),
+            "iso_weight": self.spinIsotopeWeight.value(),
+            "mass_weight": self.spinMassErrorWeight.value(),
+            "chem_weight": self.spinChemPriorWeight.value(),
+            "chem_strength": self.spinChemStrength.value(),
+            "chem_softness": self.spinChemSoftness.value(),
+        }
 
         self._check_finder_element_set(
             self.comboElementSet.currentText()
         )
 
-        return mf_params, isotope_params
+        return mf_params, score_params
 
     def _check_finder_element_set(
         self, element_set: Literal["CHNOPS", "CHNOPS + Halogens"]
@@ -354,10 +357,13 @@ class FormulaFinderDialog(
             section="findmfs", option="charge", value=str(self.spinCharge.value())
         )
         self.config.set(
-            section="findmfs", option="error_ppm", value=str(self.spinErrorPpm.value())
+            section="findmfs", option="error_ppm", value=str(self.spinMassErrorPpm.value())
         )
         self.config.set(
-            section="findmfs", option="error_da", value=str(self.spinErrorDa.value())
+            section="findmfs", option="error_da", value=str(self.spinMassErrorDa.value())
+        )
+        self.config.set(
+            section="findmfs", option="mass_weight", value=str(self.spinMassErrorWeight.value())
         )
         self.config.set(
             section="findmfs", option="min_counts", value=str(self.lineMinCounts.text())
@@ -377,21 +383,45 @@ class FormulaFinderDialog(
             value=str(self.checkOctet.isChecked()),
         )
 
-        # === Isotope Matching ===
+        # === Isotope Envelope Scoring ===
         self.config.set(
             section="findmfs",
-            option="min_isotope_rmse",
-            value=str(self.spinMinIsotopeRMSE.value()),
+            option="iso_ppm",
+            value=str(self.spinIsotopeErrorPpm.value()),
         )
         self.config.set(
             section="findmfs",
-            option="isotope_error_ppm",
-            value=str(self.spinErrorPpmIsotopes.value()),
+            option="iso_mz_match_da",
+            value=str(self.spinIsotopeMatchTolDa.value()),
         )
         self.config.set(
             section="findmfs",
-            option="isotope_error_da",
-            value=str(self.spinErrorDaIsotopes.value()),
+            option="iso_min_rel",
+            value=str(self.spinIsotopeMinRelIntsy.value()),
+        )
+        self.config.set(
+            section="findmfs",
+            option="iso_weight",
+            value=str(self.spinIsotopeWeight.value()),
+        )
+
+        # === Chemical Prior ===
+        self.config.set(
+            section="findmfs",
+            option="chem_weight",
+            value=str(self.spinChemPriorWeight.value()),
+        )
+
+        self.config.set(
+            section="findmfs",
+            option="chem_strength",
+            value=str(self.spinChemPriorStrength.value()),
+        )
+
+        self.config.set(
+            section="findmfs",
+            option="chem_softness",
+            value=str(self.spinChemPriorSoftness.value()),
         )
 
         save_config(self.config)
@@ -414,12 +444,16 @@ class FormulaFinderDialog(
 
         self.spinCharge.setValue(config.getint("findmfs", "charge", fallback=0))
 
-        self.spinErrorPpm.setValue(
-            config.getfloat("findmfs", "error_ppm", fallback=0.0)
+        self.spinMassErrorPpm.setValue(
+            config.getfloat("findmfs", "error_ppm", fallback=5.0)
         )
 
-        self.spinErrorDa.setValue(
-            config.getfloat("findmfs", "error_da", fallback=0.0)
+        self.spinMassErrorDa.setValue(
+            config.getfloat("findmfs", "error_da", fallback=0.01)
+        )
+
+        self.spinMassErrorWeight.setValue(
+            config.getfloat("findmfs", "mass_weight", fallback=1.0)
         )
 
         self.lineMinCounts.setText(
@@ -442,25 +476,41 @@ class FormulaFinderDialog(
             config.getboolean("findmfs", "check_octet", fallback=True)
         )
 
-        self.spinMinIsotopeRMSE.setValue(
-            config.getfloat("findmfs", "min_isotope_rmse", fallback=10)
+        self.spinIsotopeErrorPpm.setValue(
+            config.getfloat("findmfs", "iso_ppm", fallback=5.0)
         )
 
-        self.spinErrorPpmIsotopes.setValue(
-            config.getfloat("findmfs", "error_ppm", fallback=0.0)
+        self.spinIsotopeMatchTolDa.setValue(
+            config.getfloat("findmfs", "iso_mz_match_da", fallback=0.02)
         )
 
-        self.spinErrorDaIsotopes.setValue(
-            config.getfloat("findmfs", "error_da", fallback=0.1)
+        self.spinIsotopeMinRelIntsy.setValue(
+            config.getfloat("findmfs", "iso_min_rel", fallback=0.02)
+        )
+
+        self.spinIsotopeWeight.setValue(
+            config.getfloat("findmfs", "iso_weight", fallback=1.0)
+        )
+
+        self.spinChemPriorWeight.setValue(
+            config.getfloat("findmfs", "chem_weight", fallback=1.0)
+        )
+
+        self.spinChemPriorStrength.setValue(
+            config.getfloat("findmfs", "chem_strength", fallback=1.0)
+        )
+
+        self.spinChemPriorSoftness.setValue(
+            config.getfloat("findmfs", "chem_softness", fallback=1.0)
         )
 
 
-def _get_intensity_rmse(candidate: "FormulaCandidate") -> str:
+def _get_iso_loglik(candidate: "FormulaCandidate") -> str:
     """
-    Helper; returns either a FormulaCandidate's isotope envelope rmse,
-    or '' if no isotope matching was performed
+    Helper; returns either a FormulaCandidate's isotope log-likelihood,
+    or '' if no isotope scoring was performed
     """
-    if candidate.isotope_match_result is None:
+    if candidate.iso_loglik is None:
         return ""
 
-    return f"{candidate.isotope_match_result.intensity_rmse:.2f}"
+    return f"{candidate.iso_loglik:.2f}"

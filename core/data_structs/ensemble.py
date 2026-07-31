@@ -128,6 +128,7 @@ class Ensemble:
         ms_level: Literal[1, 2],
         scan_num: Optional[int] = None,
         scan_rt: Optional[float] = None,
+        normalized: bool = False,
     ) -> NDArray:
         scan_array = self._get_scan_array(ms_level)
         if not scan_num:
@@ -149,7 +150,11 @@ class Ensemble:
             print("EMPTY SPEC!!")
             return spec
 
-        return spec[mz_lane_idxs]
+        spec_arr = spec[mz_lane_idxs]
+        if normalized:
+            spec_arr['intsy'] = spec_arr['intsy'] / spec_arr['intsy'].max()
+
+        return spec_arr
 
 
     def _get_mz_lane_idxs(

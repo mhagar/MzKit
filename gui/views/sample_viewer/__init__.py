@@ -331,7 +331,9 @@ class SampleViewer(
         )
 
     def _setup_ensemble_interaction_signals(self):
-        """Connect ensemble peak interaction signals"""
+        """
+        Connect ensemble peak interaction signals
+        """
         self.viewSampleStack.sigEnsemblePeakHovered.connect(
             self.on_ensemble_peak_hovered
         )
@@ -571,14 +573,18 @@ class SampleViewer(
         self,
         sample_uuid: 'SampleUUID',
         ensemble_uuid: 'EnsembleUUID',
-    ) -> Optional['Ensemble']:
+    ) -> 'Ensemble':
         injection = self.model.getInjection(sample_uuid)
         if not injection:
-            return None
+            raise ValueError(
+                f"Invalid sample_uuid: {sample_uuid}"
+            )
 
         ensemble = injection.ensembles.get(ensemble_uuid)
         if not ensemble:
-            return None
+            raise ValueError(
+                f"Invalid ensemble_uuid: {ensemble_uuid}"
+            )
 
         return ensemble
 
@@ -595,9 +601,6 @@ class SampleViewer(
         ensemble = self._get_ensemble(
             sample_uuid, ensemble_uuid
         )
-
-        if not ensemble:
-            return
 
         # Update status bar with ensemble info
         tooltip_text = (
@@ -631,6 +634,8 @@ class SampleViewer(
     ):
         """
         Select an ensemble (visual feedback only for now)
+
+        Highlights the peak curve, and updates the spectrum preview
         """
         # Clear previous selection
         if self._selected_ensemble:
@@ -653,6 +658,7 @@ class SampleViewer(
         ensemble = self._get_ensemble(
             sample_uuid, ensemble_uuid
         )
+
         sample_name = self.data_source.get_sample(sample_uuid).name
 
         self.status_bar.showMessage(
@@ -678,6 +684,7 @@ class SampleViewer(
             ensemble.get_spectrum(
                 ms_level=self.selection_mgr.selected_ms_level,
                 scan_rt=ensemble.peak_rt,
+                normalized=True,
             )
         )
 

@@ -5,7 +5,7 @@ description = "Toolkit for inspecting LC/MS data"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "find-mfs>=0.4.0",
+    "find-mfs>=0.5.0",
     "ipython>=9.9.0",
     "isospecpy>=2.2.3",
     #    "jinja2>=3.1.6",
@@ -43,6 +43,9 @@ dev = [
 # running `uv run pytest` without installing the project.
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+find-mfs = { git = "https://github.com/mhagar/find-mfs", branch = "improve-mf-scoring" }
 
 [tool.uv]
 required-environments = [

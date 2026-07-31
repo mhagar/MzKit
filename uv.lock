@@ -158,8 +158,8 @@ wheels = [
 
 [[package]]
 name = "find-mfs"
-version = "0.4.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.5.0"
+source = { git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring#26a1477a36edfadd90f86227637a936d035bfa88" }
 dependencies = [
     { name = "isospecpy" },
     { name = "molmass" },
@@ -167,7 +167,6 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/03/b9049489fcde6e2cf419fe022aa648f876a1312fbe23bcccc50e4133672d/find_mfs-0.4.0.tar.gz", hash = "sha256:ac8779a60f96ffc58649565528b158075025723d0529beb0a62972cee32ad993", size = 853247, upload-time = "2026-06-11T00:37:53.703Z" }
 
 [[package]]
 name = "fonttools"
@@ -455,7 +454,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "find-mfs", specifier = ">=0.4.0" },
+    { name = "find-mfs", git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring" },
     { name = "ipython", specifier = ">=9.9.0" },
     { name = "isospecpy", specifier = ">=2.2.3" },
     { name = "matchms", specifier = ">=0.21.1" },
@@ -625,7 +624,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess", marker = "platform_machine != 'AMD64' or sys_platform != 'win32'" },
+    { name = "ptyprocess" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
