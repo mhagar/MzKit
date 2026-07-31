@@ -259,8 +259,8 @@ class FormulaFinderDialog(
             "iso_weight": self.spinIsotopeWeight.value(),
             "mass_weight": self.spinMassErrorWeight.value(),
             "chem_weight": self.spinChemPriorWeight.value(),
-            "chem_strength": self.spinChemStrength.value(),
-            "chem_softness": self.spinChemSoftness.value(),
+            "chem_strength": self.spinChemPriorStrength.value(),
+            "chem_softness": self.spinChemPriorSoftness.value(),
         }
 
         self._check_finder_element_set(
