@@ -1243,9 +1243,37 @@ class EnsembleViewer(
         if annot_uuid is None:
             return
 
+        # Only 'mz_diff' and 'ion' annotations can carry a formula
+        # (GenericAnnotation has no formula field).
+        annot_formula: Optional['FormulaCandidate'] = None
+        if kind == 'mz_diff':
+            match = next(
+                (a for a in self.ensemble.mz_diffs if a.uuid == annot_uuid), None
+            )
+            annot_formula = match.formula if match else None
+        elif kind == 'ion':
+            ion_annot = self.ensemble.ion_annots.get(annot_uuid)
+            annot_formula = ion_annot.formula if ion_annot else None
+
         menu = QtWidgets.QMenu(self)
+        set_min_action = set_max_action = None
+        if annot_formula is not None:
+            set_min_action = menu.addAction("Set as formula minimum")
+            set_max_action = menu.addAction("Set as formula maximum")
+            menu.addSeparator()
         delete_action = menu.addAction("Delete annotation")
         chosen = menu.exec_(QtGui.QCursor.pos())
+
+        if chosen is set_min_action or chosen is set_max_action:
+            formula_finder = self.tool_controllers[ToolType.FINDFORMULA].formula_finder_menu
+            formula_str = str(annot_formula.formula)
+
+            if chosen is set_min_action:
+                formula_finder.lineMinCounts.setText(formula_str)
+            else:
+                formula_finder.lineMaxCounts.setText(formula_str)
+            return
+
         if chosen is not delete_action:
             return
 
