@@ -24,9 +24,21 @@ if sys.platform == 'linux':
 from gui.controllers import MainController
 from core.utils.config import load_config
 from PyQt5.QtWidgets import QApplication
+import qdarkstyle
+import pyqtgraph as pg
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    app.setStyleSheet(
+        qdarkstyle.load_stylesheet(
+            palette=qdarkstyle.DarkPalette,
+            # palette=qdarkstyle.LightPalette,
+        )
+    )
+
+    # pg.setConfigOption('background', 'w')
+    # pg.setConfigOption('foreground', 'k')
 
     config = load_config()
 

@@ -18,6 +18,7 @@ dependencies = [
     "pyqt5>=5.15.11",
     "pyqtgraph>=0.13.7",
     "pyyaml>=6.0.3",
+    "qdarkstyle>=3.2.3",
     "scipy<=1.15.1",
     "scipy-stubs==1.16.2.3",
 ]
