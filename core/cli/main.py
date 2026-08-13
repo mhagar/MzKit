@@ -235,6 +235,7 @@ def cmd_import_mzml(args: argparse.Namespace) -> None:
         input_filepaths=input_filepaths,
         sample_names=sample_names,
         scan_array_params=scan_array_params,
+        acquisition_mode=args.acquisition_mode,
     )
 
     if not samples:
@@ -639,6 +640,14 @@ def build_parser() -> argparse.ArgumentParser:
         help='Regex to extract sample name from filename '
              '(uses first capture group, or full match). '
              'Default: filename stem.',
+    )
+
+    # Acquisition type
+    p_mzml.add_argument(
+        '--acquisition-mode',
+        default='ms1_only',
+        help='Acquisition mode: ms1_only (default), dda, dia',
+        choices=['ms1_only', 'dda', 'dia'],
     )
 
     # Output
