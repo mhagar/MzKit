@@ -320,9 +320,11 @@ def cmd_align(args: argparse.Namespace) -> None:
             )
 
     samples = [s for s in samples if s.injection is not None]
-    if len(samples) < 2:
+    # if len(samples) < 2:
+    if len(samples) < 1:
         raise ValueError(
-            f"Alignment needs at least 2 samples with MS data; got {len(samples)}"
+            f"Alignment needs at least 1 samples with MS data; got {len(samples)}"
+            # f"Alignment needs at least 2 samples with MS data; got {len(samples)}"
         )
 
     params = AlignmentParams(
