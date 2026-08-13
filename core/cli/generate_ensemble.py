@@ -20,6 +20,7 @@ from core.cli.find_cofeatures import (
 from core.cli.auto_extract_ensembles import (
     extract_ensembles,
     dia_config,
+    dda_config,
     WindowStrategy,
 )
 
@@ -278,7 +279,9 @@ def get_ungrouped_ensemble(
 class AutoEnsembleParams(NamedTuple):
     """
     Parameters for automated (DIA/auto) ensemble generation. Mapped onto the
-    unified engine's ExtractionConfig via ``dia_config``.
+    unified engine's ExtractionConfig via ``dia_config`` (or ``dda_config`` when
+    ``injection.acquisition_mode == 'dda'``; DIA-only fields like
+    ``ms2_corr_threshold`` are then unused).
 
     parent_threshold: Minimum peak height to seed a new ensemble.
         Only the tallest signal in an ensemble needs to exceed this.
@@ -467,40 +470,69 @@ def auto_generate_ensembles(
 ) -> list[Ensemble]:
     """
     Automatically discover and extract all ensembles in an Injection's MS1
-    ScanArray. Thin preset over the unified engine (``dia_config``): seed from
-    every MS1 lane tallest-first, recruit coeluting lanes by peak-shape
-    similarity (optionally adduct-aware), and attach MS2 by correlation.
+    ScanArray.
+
+    For DIA (and any non-DDA) injections this is a thin preset over the unified
+    engine (``dia_config``): seed from every MS1 lane tallest-first, recruit
+    coeluting lanes by peak-shape similarity (optionally adduct-aware), and
+    attach MS2 by correlation.
+
+    For DDA injections, MS2 scans are sparse and interleaved across many
+    precursors, so correlating an MS2 lane against a continuous MS1 XIC (the
+    DIA model) does not hold. Instead this delegates to ``dda_config``: seed
+    from MS2-triggering precursor features and attach MS2 as the union of the
+    grouped precursors' actual triggering scans — the same construction the
+    manual DDA single-click path uses, which the Ensemble Viewer's DDA overlay
+    relies on.
 
     :param injection: Injection with assembled ScanArrays
     :param params: AutoEnsembleParams controlling thresholds
     :return: List of generated Ensembles
     """
-    config = dia_config(
-        parent_threshold=params.parent_threshold,
-        cofeature_threshold=params.cofeature_threshold,
-        window_strategy=params.window_strategy,
-        extraction_half_width=params.extraction_half_width,
-        min_window_halfwidth=params.min_window_halfwidth,
-        edge_fraction=params.edge_fraction,
-        min_prominence=params.min_prominence,
-        min_peak_width=params.min_peak_width,
-        peak_method=params.peak_method,
-        baseline_pct=params.baseline_pct,
-        min_turn=params.min_turn,
-        require_smoothing_survival=params.require_smoothing_survival,
-        smoothing_sigma=params.smoothing_sigma,
-        min_smoothing_survival=params.min_smoothing_survival,
-        max_lane_persistence=params.max_lane_persistence,
-        method=params.method,
-        use_rel_intsy=params.use_rel_intsy,
-        ms1_corr_threshold=params.ms1_corr_threshold,
-        adduct_aware=params.adduct_aware,
-        loose_corr_threshold=params.loose_corr_threshold,
-        adduct_ppm_tol=params.adduct_ppm_tol,
-        polarity=params.polarity,
-        ms2_corr_threshold=params.ms2_corr_threshold,
-        rt_range=params.rt_range,
-    )
+    if injection.acquisition_mode == 'dda':
+        config = dda_config(
+            min_intsy=params.cofeature_threshold,
+            parent_threshold=params.parent_threshold,
+            cofeature_threshold=params.cofeature_threshold,
+            edge_fraction=params.edge_fraction,
+            min_prominence=params.min_prominence,
+            min_peak_width=params.min_peak_width,
+            method=params.method,
+            use_rel_intsy=params.use_rel_intsy,
+            ms1_corr_threshold=params.ms1_corr_threshold,
+            adduct_aware=params.adduct_aware,
+            loose_corr_threshold=params.loose_corr_threshold,
+            adduct_ppm_tol=params.adduct_ppm_tol,
+            polarity=params.polarity,
+            rt_range=params.rt_range,
+        )
+    else:
+        config = dia_config(
+            parent_threshold=params.parent_threshold,
+            cofeature_threshold=params.cofeature_threshold,
+            window_strategy=params.window_strategy,
+            extraction_half_width=params.extraction_half_width,
+            min_window_halfwidth=params.min_window_halfwidth,
+            edge_fraction=params.edge_fraction,
+            min_prominence=params.min_prominence,
+            min_peak_width=params.min_peak_width,
+            peak_method=params.peak_method,
+            baseline_pct=params.baseline_pct,
+            min_turn=params.min_turn,
+            require_smoothing_survival=params.require_smoothing_survival,
+            smoothing_sigma=params.smoothing_sigma,
+            min_smoothing_survival=params.min_smoothing_survival,
+            max_lane_persistence=params.max_lane_persistence,
+            method=params.method,
+            use_rel_intsy=params.use_rel_intsy,
+            ms1_corr_threshold=params.ms1_corr_threshold,
+            adduct_aware=params.adduct_aware,
+            loose_corr_threshold=params.loose_corr_threshold,
+            adduct_ppm_tol=params.adduct_ppm_tol,
+            polarity=params.polarity,
+            ms2_corr_threshold=params.ms2_corr_threshold,
+            rt_range=params.rt_range,
+        )
     return extract_ensembles(
         injection, config,
         progress_callback=progress_callback,
