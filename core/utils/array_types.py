@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 
 from typing import NewType
 
+
 SpectrumArray = NewType(
     name='SpectrumArray',
     tp=NDArray[
@@ -18,6 +19,7 @@ SpectrumArray = NewType(
         )
     ]
 )
+
 
 def to_spec_arr(
     mz_arr: NDArray[np.float64],
@@ -33,6 +35,7 @@ def to_spec_arr(
     result['mz'] = mz_arr
     result['intsy'] = intsy_arr
     return SpectrumArray(result)
+
 
 ChromArray = NewType(
     name='ChromArray',
@@ -61,6 +64,7 @@ def to_chrom_arr(
     result['intsy'] = intsy_arr
     return ChromArray(result)
 
+
 EnsembleArray = NewType(
     name='EnsembleArray',
     tp=NDArray[
@@ -73,6 +77,7 @@ EnsembleArray = NewType(
         )
     ]
 )
+
 
 def to_ensemble_arr(
     rt_arr: NDArray[np.float64],
@@ -101,3 +106,17 @@ def to_ensemble_arr(
         ensemble_array[:, idx]['rt'] = rt_arr
 
     return EnsembleArray(ensemble_array)
+
+
+ConsensusSpectrumArray = NewType(
+    name='ConsensusSpectrumArray',
+    tp=NDArray[
+        np.dtype(  # type: ignore
+            [
+                ('mz', 'f8'),
+                ('intsy', 'f8'),
+                ('freq', 'i8'),
+            ]
+        )
+    ]
+)
