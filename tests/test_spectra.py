@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from core.utils.array_types import to_spec_arr
-from core.utils.spectra import merge_spectra
+from core.utils.spectra import merge_spectra, entropy_similarity
 
 
 def test_merge_averages_mz_and_intsy_per_bin():
@@ -139,3 +139,54 @@ def test_invalid_bin_width_raises():
     spectrum = to_spec_arr(np.array([100.0]), np.array([1.0]))
     with pytest.raises(ValueError):
         merge_spectra([spectrum], bin_width=0.0)
+
+
+# ---------------------------------------------------------------------------
+# entropy_similarity
+# ---------------------------------------------------------------------------
+
+def test_identical_spectra_have_similarity_one():
+    spectrum = to_spec_arr(
+        np.array([100.0, 150.0, 200.0]),
+        np.array([1.0, 0.5, 0.2]),
+    )
+    assert entropy_similarity(spectrum, spectrum) == pytest.approx(1.0)
+
+
+def test_disjoint_spectra_have_similarity_zero():
+    a = to_spec_arr(np.array([100.0, 200.0]), np.array([1.0, 1.0]))
+    b = to_spec_arr(np.array([300.0, 400.0]), np.array([1.0, 1.0]))
+    assert entropy_similarity(a, b) == pytest.approx(0.0)
+
+
+def test_similarity_is_symmetric():
+    a = to_spec_arr(np.array([100.0, 150.0, 200.0]), np.array([1.0, 0.6, 0.3]))
+    b = to_spec_arr(np.array([100.0, 150.0, 250.0]), np.array([1.0, 0.4, 0.8]))
+    assert entropy_similarity(a, b) == pytest.approx(entropy_similarity(b, a))
+
+
+def test_partial_overlap_between_zero_and_one():
+    a = to_spec_arr(np.array([100.0, 150.0, 200.0]), np.array([1.0, 0.6, 0.3]))
+    b = to_spec_arr(np.array([100.0, 150.0, 250.0]), np.array([1.0, 0.4, 0.8]))
+    sim = entropy_similarity(a, b)
+    assert 0.0 < sim < 1.0
+
+
+def test_tolerance_controls_peak_matching():
+    # Peaks offset by 0.05 Da: matched under a loose tolerance, not a tight one.
+    a = to_spec_arr(np.array([100.00, 200.00]), np.array([1.0, 1.0]))
+    b = to_spec_arr(np.array([100.05, 200.05]), np.array([1.0, 1.0]))
+
+    loose = entropy_similarity(a, b, mz_tol_da=0.1)
+    tight = entropy_similarity(a, b, mz_tol_da=0.01)
+
+    assert loose == pytest.approx(1.0)
+    assert tight == pytest.approx(0.0)
+
+
+def test_empty_spectrum_returns_zero():
+    empty = to_spec_arr(np.array([]), np.array([]))
+    real = to_spec_arr(np.array([100.0]), np.array([1.0]))
+    assert entropy_similarity(empty, real) == 0.0
+    assert entropy_similarity(real, empty) == 0.0
+    assert entropy_similarity(empty, empty) == 0.0

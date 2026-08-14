@@ -6,6 +6,7 @@ Functions utilities for:
 from .array_types import SpectrumArray, ConsensusSpectrumArray
 
 import numpy as np
+from ms_entropy import calculate_entropy_similarity
 
 from typing import Iterable, Optional
 
@@ -130,9 +131,54 @@ def _empty_consensus() -> ConsensusSpectrumArray:
 def entropy_similarity(
         spectrum_a: SpectrumArray,
         spectrum_b: SpectrumArray,
-):
+        mz_tol_da: float = 0.02,
+        mz_tol_ppm: float = -1.0,
+        clean_spectra: bool = False,
+) -> float:
     """
     Calculate entropy similarity for two spectrum arrays
-     as per Li & Fiehn et al. (2021)
+     as per Li & Fiehn et al. (2021), via the reference
+     MSEntropy implementation.
+
+    Peaks within the given m/z tolerance are matched; the
+    similarity is the entropy-weighted overlap, in [0, 1]
+    (1 == identical, 0 == no shared peaks).
+
+    :param spectrum_a: first SpectrumArray
+    :param spectrum_b: second SpectrumArray
+    :param mz_tol_da: peak-match tolerance in Daltons
+        (used when > 0; the default MSEntropy behaviour)
+    :param mz_tol_ppm: peak-match tolerance in ppm;
+        takes precedence over mz_tol_da when > 0
+    :param clean_spectra: if True, lets MSEntropy
+        normalize/merge peaks first
     """
-    
+    # MSEntropy has nothing to match against if either side is empty.
+    if len(spectrum_a) == 0 or len(spectrum_b) == 0:
+        return 0.0
+
+    return float(
+        calculate_entropy_similarity(
+            _to_peaks(spectrum_a),
+            _to_peaks(spectrum_b),
+            ms2_tolerance_in_da=mz_tol_da,
+            ms2_tolerance_in_ppm=mz_tol_ppm,
+            clean_spectra=clean_spectra,
+        )
+    )
+
+
+def _to_peaks(
+        spectrum: SpectrumArray
+) -> np.ndarray:
+    """
+    Convert a structured SpectrumArray to the (n, 2) [mz, intsy]
+    float32 array MSEntropy expects
+    """
+    peaks = np.empty(
+        shape=(len(spectrum), 2),
+        dtype=np.float32,
+    )
+    peaks[:, 0] = spectrum['mz']
+    peaks[:, 1] = spectrum['intsy']
+    return peaks

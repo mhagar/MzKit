@@ -428,6 +428,25 @@ wheels = [
 ]
 
 [[package]]
+name = "ms-entropy"
+version = "1.5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/ab/734b3183b2c845e1707fd4eaee05ce7836a8e505eba3339200fadb048fde/ms_entropy-1.5.2.tar.gz", hash = "sha256:490ef92af254766ec22a995c324a377c4a651c11ed7dbe958a8fda50c00584c1", size = 349372, upload-time = "2026-07-07T08:50:20.505Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/a4/6b4317df468dab01ad5b8c2470c1a21ed988385c455df39eb99fafdda5c7/ms_entropy-1.5.2-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:cfd961ebd1c045ee35b955c5d77b867fb5893faf90a1f8d200c43e0255d939ee", size = 355588, upload-time = "2026-07-07T08:49:20.219Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/30/e06ee210922ed3cec7b53a201fc3710e948b267248708da674111abb4cd8/ms_entropy-1.5.2-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:05ef621aec5923866bdff774d34b37ec66b30e5e45861ad032abe5022c5c754c", size = 242157, upload-time = "2026-07-07T08:49:21.708Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/e0/dc36bd876f8009e015506d8787815afa5df38c8e8f92b6fc7ec9f78cad27/ms_entropy-1.5.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:f9ca7063f09e0f8afe899b596f5755557f2af5df3a16cb2f26e6548556ef602b", size = 236677, upload-time = "2026-07-07T08:49:23.171Z" },
+    { url = "https://files.pythonhosted.org/packages/12/d8/61fc4349180f649a073a2a3d027068b60614195d5a6d7aaf6bcf7fcf965b/ms_entropy-1.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:38c0e1ed66d66abc292dfe954979dd273a0a0d9fe51618c8ee8bff1d2d005bfc", size = 273641, upload-time = "2026-07-07T08:49:24.964Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/b6/dcee4ba8243292f3d8931125232baf46ae9756b71b64838f3888d2650289/ms_entropy-1.5.2-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:f074f9e519641534c08a01632439e1c42b1d14ea9d2c8f96f880392cf7c70f5f", size = 275324, upload-time = "2026-07-07T08:49:26.574Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/35/e379621be227238a3002bdf116cce55d72e3c2555b35a3da4e369b47381a/ms_entropy-1.5.2-cp313-cp313-win32.whl", hash = "sha256:6c278f13acb973021ae8b4709713f4af0eb16559df2d84fa737a1d950e7cd70d", size = 210443, upload-time = "2026-07-07T08:49:27.951Z" },
+    { url = "https://files.pythonhosted.org/packages/56/87/30ef52b8d1c68d3413db86119f8f49bc1a07459cf1fb8cc6aecc73563b48/ms_entropy-1.5.2-cp313-cp313-win_amd64.whl", hash = "sha256:92b7c1a751d33e5f8c7ab3873b7e1c59331253e02e528f70914f227af0bce31c", size = 223685, upload-time = "2026-07-07T08:49:29.465Z" },
+    { url = "https://files.pythonhosted.org/packages/be/0f/e6911714b91ae48541d15cc0108d87102530d64d5f316844fbe85da6c060/ms_entropy-1.5.2-cp313-cp313-win_arm64.whl", hash = "sha256:8765a57ef375f682165f3f0be29b44774c733266f2074130dbf0a9712b97d1a8", size = 212091, upload-time = "2026-07-07T08:49:30.823Z" },
+]
+
+[[package]]
 name = "mzkit"
 version = "1.0.0"
 source = { editable = "." }
@@ -436,6 +455,7 @@ dependencies = [
     { name = "ipython" },
     { name = "isospecpy" },
     { name = "matchms" },
+    { name = "ms-entropy" },
     { name = "numba" },
     { name = "numpy" },
     { name = "pandas-stubs" },
@@ -459,6 +479,7 @@ requires-dist = [
     { name = "ipython", specifier = ">=9.9.0" },
     { name = "isospecpy", specifier = ">=2.2.3" },
     { name = "matchms", specifier = ">=0.21.1" },
+    { name = "ms-entropy", specifier = ">=1.5.2" },
     { name = "numba", specifier = ">=0.61" },
     { name = "numpy", specifier = "<=2.2" },
     { name = "pandas-stubs", specifier = "==2.3.2.250926" },
