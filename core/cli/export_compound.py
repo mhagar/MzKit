@@ -60,7 +60,7 @@ def _build(
     analyte_index: int,
     samples: dict['SampleUUID', 'Sample'],
     normalize: bool,
-    ms2_mode: 'MS2Mode' = 'consensus',
+    ms2_mode: Optional['MS2Mode'] = None,
 ) -> Optional['EnsembleExport']:
     """
     Build EnsembleExport for `alignment`'s best Ensemble
@@ -86,7 +86,7 @@ def export_compound_dict(
     analyte_index: int,
     samples: dict['SampleUUID', 'Sample'],
     normalize: bool = True,
-    ms2_mode: 'MS2Mode' = 'consensus',
+    ms2_mode: Optional['MS2Mode'] = None,
 ) -> dict:
     """
     Build compound data for a single analyte in an alignment.
@@ -99,6 +99,7 @@ def export_compound_dict(
     :param samples: Dict of samples to search for AlignedAnalytes in
     :param normalize: If True, normalize spectra to 0-100.
     :param ms2_mode: MS2 reduction strategy (see Ensemble.get_ms2_spectra).
+        None (default) uses 'consensus' for DDA, 'tallest' for DIA/MS1
     :return: JSON-ready dict
     """
     analyte: AlignedAnalyte = alignment.analytes[analyte_index]
@@ -155,7 +156,7 @@ def export_compound_mgf(
     analyte_index: int,
     samples: dict['SampleUUID', 'Sample'],
     normalize: bool = True,
-    ms2_mode: 'MS2Mode' = 'consensus',
+    ms2_mode: Optional['MS2Mode'] = None,
 ) -> str:
     """
     Build MGF entries (MS1 + MS2) for a single analyte's best ensemble.
@@ -179,7 +180,7 @@ def export_compound_to_file(
     output_dir: Path,
     write_json: bool = False,
     normalize: bool = True,
-    ms2_mode: 'MS2Mode' = 'consensus',
+    ms2_mode: Optional['MS2Mode'] = None,
 ) -> None:
     """
     Export a single compound to MGF (and optionally JSON) in output_dir.
@@ -216,7 +217,7 @@ def export_all_compounds(
     output_dir: Path,
     write_json: bool = False,
     normalize: bool = True,
-    ms2_mode: 'MS2Mode' = 'consensus',
+    ms2_mode: Optional['MS2Mode'] = None,
 ) -> None:
     """
     Export all compounds: single compounds.mgf + optional per-compound JSON

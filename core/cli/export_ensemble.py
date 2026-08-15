@@ -201,7 +201,7 @@ def build_ensemble_export(
     ensemble: 'Ensemble',
     *,
     rt: Optional[float] = None,
-    ms2_mode: 'MS2Mode' = 'consensus',
+    ms2_mode: Optional['MS2Mode'] = None,
     freq_threshold: float = 0.25,
     normalize: bool = True,
 ) -> EnsembleExport:
@@ -217,7 +217,8 @@ def build_ensemble_export(
 
     :param rt: scan retention time to pull the MS1 spectrum from. If None,
         the ensemble apex (peak_rt) is used.
-    :param ms2_mode: 'tallest' | 'all' | 'consensus'.
+    :param ms2_mode: 'tallest' | 'all' | 'consensus'. None (default) uses
+        consensus for DDA, tallest for DIA/MS1
     :param freq_threshold: min relative frequency to keep a consensus bin
         (Bittremieux et al. use 0.25). Ignored for non-consensus spectra.
     :param normalize: normalize each spectrum to 0-100.

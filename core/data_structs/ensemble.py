@@ -244,9 +244,21 @@ class Ensemble:
     # ------------------------------------------------------------------
     # MS2 spectrum production
     # ------------------------------------------------------------------
+
+    @property
+    def default_ms2_mode(self) -> MS2Mode:
+        """
+        The default export/production mode, depending on
+         this ensemble's acquisition type.
+
+        `consensus` makes more sense for DDA,
+        but DIA/MS1-only should use `tallest`
+        """
+        return 'consensus' if self.is_dda else 'tallest'
+
     def get_ms2_spectra(
         self,
-        mode: MS2Mode = 'consensus',
+        mode: Optional[MS2Mode] = None,
         normalize: bool = False,
         bin_width: float = 0.02,
         precursor_tol: float = 0.5,
@@ -264,7 +276,9 @@ class Ensemble:
                             then merged according to Bittremieux 2022
                             (one consensus per precursor)
                          - DIA: all scans merge into a single consensus.
-                            Note: I suspect 'tallest' is better for DIA
+
+        When `mode` is None (the default), `default_ms2_mode` is used:
+        'consensus' for DDA, 'tallest' for DIA / MS1-only.
 
         Consensus spectra are ConsensusSpectrumArrays that keep
         their per-bin frequency. They can be thresholded at display / print time
@@ -272,11 +286,14 @@ class Ensemble:
 
         Returns an empty list when the ensemble carries no MS2.
 
-        :param mode:
+        :param mode: MS2 strategy, or None to use `default_ms2_mode`.
         :param normalize: normalize each output spectrum to a peak of 1.
         :param bin_width: consensus bin width (m/z). Only used in 'consensus' mode
         :param precursor_tol: When merging DDA, precursor-grouping tolerance (m/z).
         """
+        if mode is None:
+            mode = self.default_ms2_mode
+
         reduced: list[MS2Spectrum] = reduce_ms2_spectra(
             self._iter_ms2_scan_spectra(),
             mode=mode,

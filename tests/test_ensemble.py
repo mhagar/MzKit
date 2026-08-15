@@ -31,6 +31,21 @@ def test_get_meta_is_case_insensitive(ensemble: 'Ensemble'):
     assert ensemble.get_meta('missing') is None
 
 
+def test_default_ms2_mode_is_acquisition_aware(
+        ensemble: 'Ensemble'
+):
+    # This fixture is DIA, so the default should be 'tallest'
+    assert ensemble.default_ms2_mode == 'tallest'
+
+    # mode=None (and the no-arg default) delegate to default_ms2_mode: the
+    # resulting spectra are single-scan (plain, no 'freq' field).
+    default_spectra = ensemble.get_ms2_spectra()
+    none_spectra = ensemble.get_ms2_spectra(mode=None)
+    assert len(default_spectra) == len(none_spectra)
+    for ps in default_spectra:
+        assert 'freq' not in (ps.spectrum.dtype.names or ())
+
+
 @pytest.mark.parametrize('mode', ['tallest', 'all', 'consensus'])
 def test_get_ms2_spectra_modes(ensemble: 'Ensemble', mode):
     spectra = ensemble.get_ms2_spectra(mode=mode)
