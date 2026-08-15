@@ -2,6 +2,7 @@
 Data structue for organizing co-feature ensembles
 """
 from dataclasses import dataclass, field
+import logging
 import uuid
 from typing import Literal, Optional, TYPE_CHECKING
 
@@ -10,8 +11,12 @@ from find_mfs import FormulaCandidate, get_isotope_envelope
 from molmass import Formula
 from numpy.typing import NDArray
 
-from core.utils.array_types import to_spec_arr, to_ensemble_arr
+from core.utils.array_types import (
+    to_spec_arr, to_ensemble_arr,
+    SpectrumArray, ConsensusSpectrumArray
+)
 from core.utils.formula_formatting import format_formula_obj_to_html
+from core.utils.spectra import merge_spectra, normalize_spectrum
 
 if TYPE_CHECKING:
     from core.data_structs import(
@@ -21,7 +26,31 @@ if TYPE_CHECKING:
         EnsembleUUID
     )
 
-    from core.utils.array_types import SpectrumArray, ChromArray, EnsembleArray
+    from core.utils.array_types import ChromArray, EnsembleArray
+
+logger = logging.getLogger(__name__)
+
+# MS2 export/reduction strategies (see Ensemble.get_ms2_spectra).
+MS2Mode = Literal['tallest', 'all', 'consensus']
+
+
+@dataclass
+class MS2Spectrum:
+    """
+    A single MS2 spectrum together with the precursor it fragments.
+
+    Produced by `Ensemble.get_ms2_spectra()`
+
+    For DDA, corresponds to a designated precursor
+        (a single scan, or a per-precursor consensus);
+
+    For DIA / MS1-only, corresponds to
+         the ensemble's resolved (virtual) precursor.
+    """
+    spectrum: SpectrumArray | ConsensusSpectrumArray | np.ndarray
+    precursor_mz: float
+    charge: int
+    rt: float
 
 @dataclass
 class Ensemble:
@@ -131,10 +160,10 @@ class Ensemble:
         normalized: bool = False,
     ) -> NDArray:
         scan_array = self._get_scan_array(ms_level)
-        if not scan_num:
-            if not scan_rt:
+        if scan_num is None:
+            if scan_rt is None:
                 raise ValueError(
-                    "Neither scan_idx nor scan_rt arguments given"
+                    "Neither scan_num nor scan_rt arguments given"
                 )
 
             scan_num = scan_array.rt_to_scan_num(
@@ -155,6 +184,210 @@ class Ensemble:
             spec_arr['intsy'] = spec_arr['intsy'] / spec_arr['intsy'].max()
 
         return spec_arr
+
+    # ------------------------------------------------------------------
+    # Identity / precursor resolution
+    # ------------------------------------------------------------------
+
+    @property
+    def is_dda(self) -> bool:
+        """
+        True if this ensemble's MS2 comes from DDA acquisition
+        """
+        return bool(
+            self.injection is not None
+            and getattr(self.injection, 'acquisition_mode', None) == 'dda'
+        )
+
+    def get_meta(
+            self,
+            key: str,
+    ) -> Optional[str]:
+        """
+        Case-insensitive lookup into user_metadata
+        """
+        for k, v in self.user_metadata.items():
+            if k.lower() == key.lower():
+                return v
+        return None
+
+    @property
+    def resolved_charge(self) -> int:
+        """
+        Precedence:
+        `charge` in user_metadata > DDA precursor charge > (else) 1
+        """
+        raw = self.get_meta('charge')
+        if raw:
+            try:
+                return int(str(raw).strip().rstrip('+-') or '1')
+            except ValueError:
+                logger.warning(
+                    "Could not parse charge %r; defaulting to 1", raw
+                )
+
+        if self.precursor_charge:
+            return int(self.precursor_charge)
+
+        return 1
+
+    @property
+    def resolved_precursor_mz(self) -> float:
+        """
+        Precursor m/z if known, otherwise the ensemble's base_mz
+        """
+        if self.precursor_mz is not None:
+            return float(self.precursor_mz)
+
+        return float(self.base_mz)
+
+    # ------------------------------------------------------------------
+    # MS2 spectrum production
+    # ------------------------------------------------------------------
+    def get_ms2_spectra(
+        self,
+        mode: MS2Mode = 'consensus',
+        normalize: bool = False,
+        bin_width: float = 0.02,
+        precursor_tol: float = 0.5,
+    ) -> list[MS2Spectrum]:
+        """
+        Produce this ensemble's MS2 spectra, depending on given `mode`:
+
+        - 'tallest':   the single most intense MS2 scan
+        - 'all':       every MS2 scan
+                         - DDA: one per matched scan;
+                         - DIA/MS1-only:
+                            co-feature 'pseudoscan' across elution
+        - 'consensus': merged consensus spectrum/spectra
+                         - DDA: scans are first grouped by precursor m/z
+                            then merged according to Bittremieux 2022
+                            (one consensus per precursor)
+                         - DIA: all scans merge into a single consensus.
+                            Note: I suspect 'tallest' is better for DIA
+
+        Consensus spectra are ConsensusSpectrumArrays that keep
+        their per-bin frequency. They can be thresholded at display / print time
+        with core.utils.spectra.threshold_consensus (Bittremieux et al. use 0.25).
+
+        Returns an empty list when the ensemble carries no MS2.
+
+        :param mode:
+        :param normalize: normalize each output spectrum to a peak of 1.
+        :param bin_width: consensus bin width (m/z). Only used in 'consensus' mode
+        :param precursor_tol: When merging DDA, precursor-grouping tolerance (m/z).
+        """
+        reduced: list[MS2Spectrum] = reduce_ms2_spectra(
+            self._iter_ms2_scan_spectra(),
+            mode=mode,
+            group_by_precursor=self.is_dda,
+            bin_width=bin_width,
+            precursor_tol=precursor_tol,
+        )
+
+        if normalize:
+            reduced = [
+                MS2Spectrum(
+                    spectrum=normalize_spectrum(s.spectrum),
+                    precursor_mz=s.precursor_mz,
+                    charge=s.charge,
+                    rt=s.rt,
+                )
+                for s in reduced
+            ]
+
+        return reduced
+
+
+    def _iter_ms2_scan_spectra(self) -> list[MS2Spectrum]:
+        """
+        Gather this ensemble's per-scan MS2 spectra
+        (zero-intensity peaks dropped),
+        each tagged with its precursor m/z, charge and rt.
+
+        DDA: every matched MS2 scan is a full precursor fragmentation,
+        tagged with the instrument-designated precursor.
+
+        DIA / MS1-only:
+        the MS2 is reconstructed from the ensemble's MS2 cofeature lanes
+        at each scan, tagged with the resolved precursor.
+        """
+        if self.injection is None:
+            return []
+
+        ms2_arr: Optional['ScanArray'] = self.injection.scan_array_ms2
+        if ms2_arr is None or not self.ms2_cofeatures:
+            return []
+
+        if self.is_dda:
+            return self._dda_scan_spectra(ms2_arr)
+        return self._dia_scan_spectra(ms2_arr)
+
+
+    def _dda_scan_spectra(
+        self,
+        ms2_arr: 'ScanArray',
+    ) -> list[MS2Spectrum]:
+        # All MS2 cofeatures share the same matched scan_idxs by construction.
+        scan_idxs = np.unique(np.asarray(self.ms2_cofeatures[0].scan_idxs))
+        default_charge = self.resolved_charge
+
+        out: list[MS2Spectrum] = []
+        for raw_idx in scan_idxs:
+            scan_idx = int(raw_idx)
+            spec = ms2_arr.get_spectrum(scan_idx)
+            spec = spec[spec['intsy'] > 0]
+            if spec.size == 0:
+                continue
+
+            if ms2_arr.precursor_mz_arr is not None:
+                precursor_mz = float(ms2_arr.precursor_mz_arr[scan_idx])
+            else:
+                precursor_mz = self.resolved_precursor_mz
+
+            charge = default_charge
+            if ms2_arr.precursor_charge_arr is not None:
+                scan_charge = int(ms2_arr.precursor_charge_arr[scan_idx])
+                if scan_charge:
+                    charge = abs(scan_charge)
+
+            rt = (
+                float(ms2_arr.rt_arr[scan_idx])
+                if ms2_arr.rt_arr is not None
+                else 0.0
+            )
+            out.append(MS2Spectrum(spec, precursor_mz, charge, rt))
+
+        return out
+
+
+    def _dia_scan_spectra(
+        self,
+        ms2_arr: 'ScanArray',
+    ) -> list[MS2Spectrum]:
+        scan_idxs = np.unique(
+            np.concatenate(
+                [np.asarray(cf.scan_idxs) for cf in self.ms2_cofeatures]
+            )
+        )
+        precursor_mz = self.resolved_precursor_mz
+        charge = self.resolved_charge
+
+        out: list[MS2Spectrum] = []
+        for raw_idx in scan_idxs:
+            scan_idx = int(raw_idx)
+            spec = self.get_spectrum(ms_level=2, scan_num=scan_idx)
+            spec = spec[spec['intsy'] > 0]
+            if spec.size == 0:
+                continue
+            rt = (
+                float(ms2_arr.rt_arr[scan_idx])
+                if ms2_arr.rt_arr is not None
+                else 0.0
+            )
+            out.append(MS2Spectrum(spec, precursor_mz, charge, rt))
+
+        return out
 
 
     def _get_mz_lane_idxs(
@@ -462,6 +695,121 @@ class Ensemble:
         self.ion_pair_annots.append(annot)
 
         return annot
+
+
+####    MS2 spectrum reduction    ####
+def reduce_ms2_spectra(
+    scan_specs: list[MS2Spectrum],
+    mode: MS2Mode,
+    *,
+    group_by_precursor: bool,
+    bin_width: float = 0.02,
+    precursor_tol: float = 0.5,
+) -> list[MS2Spectrum]:
+    """
+    Collapse per-scan MS2 spectra according to `mode`
+
+    - 'all':       return the spectra unchanged.
+    - 'tallest':   the single most intense scan (by max intensity)
+    - 'consensus': merge into consensus spectra (each retaining per-bin
+                   frequency for deferred thresholding). When
+                   `group_by_precursor` (DDA), scans are first clustered by
+                   precursor m/z (within `precursor_tol`) and merged per
+                   cluster; otherwise (DIA) all scans merge into a single
+                   consensus.
+    """
+    if not scan_specs:
+        return []
+
+    match mode:
+        case 'all':
+            return list(scan_specs)
+
+        case 'tallest':
+            return [max(scan_specs, key=_max_intsy)]
+
+        case 'consensus':
+            if group_by_precursor:
+                groups: list[list[MS2Spectrum]] = _group_by_precursor(
+                    scan_specs,
+                    precursor_tol,
+                )
+            else:
+                groups: list[list[MS2Spectrum]] = [list(scan_specs)]
+            return [
+                _merge_by_group(group, bin_width=bin_width)
+                for group in groups
+            ]
+
+        case _:
+            raise ValueError(
+                f"Unknown MS2 mode: {mode!r}"
+            )
+
+
+def _max_intsy(spec: MS2Spectrum) -> float:
+    return float(spec.spectrum['intsy'].max())
+
+
+def _group_by_precursor(
+    scan_specs: list[MS2Spectrum],
+    precursor_tol: float,
+) -> list[list[MS2Spectrum]]:
+    """
+    Greedily cluster spectra whose precursor m/z falls within
+    `precursor_tol` of the group's opening precursor. Discrete DDA
+    isolation targets cluster cleanly; the input need not be sorted.
+    """
+    ordered = sorted(scan_specs, key=lambda s: s.precursor_mz)
+    groups: list[list[MS2Spectrum]] = [[ordered[0]]]
+    for spec in ordered[1:]:
+        if spec.precursor_mz - groups[-1][0].precursor_mz <= precursor_tol:
+            groups[-1].append(spec)
+        else:
+            groups.append([spec])
+    return groups
+
+
+def _merge_by_group(
+    specs: list[MS2Spectrum],
+    bin_width: float,
+) -> MS2Spectrum:
+    """
+    Merge a group of MS2 spectra (i.e. list of MS2s) into one consensus
+    MS2Spectrum.
+
+    The merged spectrum is kept as a ConsensusSpectrumArray so its per-bin
+    frequency survives for downstream thresholding at display / print time
+    (see core.utils.spectra.threshold_consensus) — nothing is dropped here.
+    Precursor m/z is the group median, charge the modal charge, rt that of
+    the most intense contributing scan.
+    """
+    consensus: ConsensusSpectrumArray = merge_spectra(
+        (s.spectrum for s in specs),
+        bin_width=bin_width,
+    )
+
+    precursor_mz = float(
+        np.median([s.precursor_mz for s in specs])
+    )
+
+    charges = [
+        s.charge for s in specs if s.charge
+    ]
+    if charges:
+        vals, counts = np.unique(charges, return_counts=True)
+        charge = int(vals[counts.argmax()])
+    else:
+        charge = 1
+
+    tallest: MS2Spectrum = max(specs, key=_max_intsy)
+
+    return MS2Spectrum(
+        spectrum=consensus,
+        precursor_mz=precursor_mz,
+        charge=charge,
+        rt=tallest.rt,
+    )
 
 
 ####    Ensemble Annotations    ####

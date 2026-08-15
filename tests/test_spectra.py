@@ -5,7 +5,11 @@ import numpy as np
 import pytest
 
 from core.utils.array_types import to_spec_arr
-from core.utils.spectra import merge_spectra, entropy_similarity
+from core.utils.spectra import (
+    merge_spectra,
+    entropy_similarity,
+    threshold_consensus,
+)
 
 
 def test_merge_averages_mz_and_intsy_per_bin():
@@ -21,14 +25,15 @@ def test_merge_averages_mz_and_intsy_per_bin():
     assert len(out) == 2
 
     out = np.sort(out, order='mz')
-    # Bin @100: mz averaged (100.2, 100.4), both normalized to 1.0
+    # Bin @100: mz averaged (100.2, 100.4), both normalized to 1.0.
+    # freq is a relative frequency: present in 2/2 spectra -> 1.0.
     assert out[0]['mz'] == pytest.approx(100.3)
     assert out[0]['intsy'] == pytest.approx(1.0)
-    assert out[0]['freq'] == 2
+    assert out[0]['freq'] == pytest.approx(1.0)
     # Bin @200: mz averaged (200.4, 200.6); intsy averaged (0.5, 0.5)
     assert out[1]['mz'] == pytest.approx(200.5)
     assert out[1]['intsy'] == pytest.approx(0.5)
-    assert out[1]['freq'] == 2
+    assert out[1]['freq'] == pytest.approx(1.0)
 
 
 def test_tallest_peak_within_bin_wins():
@@ -55,10 +60,11 @@ def test_freq_reflects_number_of_contributing_spectra():
     out = merge_spectra([a, b, c], bin_width=1.0)
     out = np.sort(out, order='mz')
 
+    # freq is relative: @100 is in all 3 spectra (1.0), @300 in only 1 (1/3).
     assert out[0]['mz'] == pytest.approx((100.0 + 100.5 + 100.2) / 3)
-    assert out[0]['freq'] == 3
+    assert out[0]['freq'] == pytest.approx(1.0)
     assert out[-1]['mz'] == pytest.approx(300.0)
-    assert out[-1]['freq'] == 1
+    assert out[-1]['freq'] == pytest.approx(1 / 3)
 
 
 def test_intensities_are_normalized_per_spectrum():
@@ -139,6 +145,35 @@ def test_invalid_bin_width_raises():
     spectrum = to_spec_arr(np.array([100.0]), np.array([1.0]))
     with pytest.raises(ValueError):
         merge_spectra([spectrum], bin_width=0.0)
+
+
+# ---------------------------------------------------------------------------
+# threshold_consensus
+# ---------------------------------------------------------------------------
+
+def test_threshold_consensus_keeps_frequent_bins():
+    # @100 in all 3 (freq 1.0), @200 in 1 of 3 (freq 1/3).
+    a = to_spec_arr(np.array([100.0, 200.0]), np.array([1.0, 1.0]))
+    b = to_spec_arr(np.array([100.0]), np.array([1.0]))
+    c = to_spec_arr(np.array([100.0]), np.array([1.0]))
+    consensus = merge_spectra([a, b, c], bin_width=1.0)
+
+    # 25% keeps both; 50% drops the 1/3 bin.
+    lenient = threshold_consensus(consensus, min_freq=0.25)
+    strict = threshold_consensus(consensus, min_freq=0.5)
+
+    assert lenient.dtype.names == ('mz', 'intsy')  # flattened for display
+    assert sorted(np.round(lenient['mz']).tolist()) == [100.0, 200.0]
+    assert np.round(strict['mz']).tolist() == [100.0]
+
+
+def test_threshold_consensus_passes_plain_spectrum_through():
+    # A plain (mz, intsy) spectrum has no freq field: returned intact.
+    plain = to_spec_arr(np.array([100.0, 200.0]), np.array([5.0, 3.0]))
+    out = threshold_consensus(plain, min_freq=0.9)
+    assert out.dtype.names == ('mz', 'intsy')
+    assert out['mz'].tolist() == [100.0, 200.0]
+    assert out['intsy'].tolist() == [5.0, 3.0]
 
 
 # ---------------------------------------------------------------------------

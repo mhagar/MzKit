@@ -1,20 +1,68 @@
 """
-Tests for Ensemble class + methods
+Tests for Ensemble class + methods.
+
+The `ensemble` fixture (conftest) is built from gitignored MS data and
+skips when that data is absent, so these are integration checks that run
+only where the local .mzk fixture is present.
 """
 from typing import TYPE_CHECKING
-from pathlib import Path
 
 import numpy as np
+import pytest
+
+from core.cli.export_ensemble import build_ensemble_export
 
 if TYPE_CHECKING:
-    from core.data_structs import Sample, ScanArray
+    from core.data_structs import Ensemble
 
 
-# def test_composite_spectrum_generation(ensemble):
-#     spec_array = ensemble.get_composite_spectrum(
-#         ms_level=1,
-#         fraction=0.8,
-#     )
+def test_resolved_precursor_and_charge_defaults(ensemble: 'Ensemble'):
+    # This fixture is DIA/MS1-only, so precursor falls back to base_mz
+    # and charge to 1 (no user_metadata override).
+    assert ensemble.resolved_precursor_mz == pytest.approx(ensemble.base_mz)
+    assert ensemble.resolved_charge == 1
+    assert ensemble.is_dda is False
+
+
+def test_get_meta_is_case_insensitive(ensemble: 'Ensemble'):
+    ensemble.user_metadata['Adduct'] = '[M+H]+'
+    assert ensemble.get_meta('adduct') == '[M+H]+'
+    assert ensemble.get_meta('ADDUCT') == '[M+H]+'
+    assert ensemble.get_meta('missing') is None
+
+
+@pytest.mark.parametrize('mode', ['tallest', 'all', 'consensus'])
+def test_get_ms2_spectra_modes(ensemble: 'Ensemble', mode):
+    spectra = ensemble.get_ms2_spectra(mode=mode)
+    # DIA consensus/tallest collapse to at most one spectrum.
+    if mode in ('tallest', 'consensus'):
+        assert len(spectra) <= 1
+    for ps in spectra:
+        # Consensus keeps a 'freq' field; tallest/all are plain (mz, intsy).
+        names = ps.spectrum.dtype.names
+        assert 'mz' in names and 'intsy' in names
+        if mode == 'consensus':
+            assert 'freq' in names
+        assert ps.precursor_mz == pytest.approx(ensemble.resolved_precursor_mz)
+
+
+def test_get_ms2_spectra_normalize_peaks_to_one(ensemble: 'Ensemble'):
+    spectra = ensemble.get_ms2_spectra(mode='consensus', normalize=True)
+    for ps in spectra:
+        if ps.spectrum.size:
+            assert ps.spectrum['intsy'].max() == pytest.approx(1.0)
+
+
+def test_build_ensemble_export_roundtrips_formats(ensemble: 'Ensemble'):
+    export = build_ensemble_export(ensemble, ms2_mode='consensus')
+    # MS1 present and normalized to 0-100.
+    assert export.ms1_spectrum.size > 0
+    assert export.ms1_spectrum['intsy'].max() == pytest.approx(100.0)
+    # Formats render without error and carry the expected markers.
+    mgf = export.to_mgf_text()
+    assert 'BEGIN IONS' in mgf and 'PEPMASS=' in mgf
+    assert '>compound' in export.to_sirius_text()
+    assert export.to_json_obj()['ms1_spectrum']['mz']
 
 
 

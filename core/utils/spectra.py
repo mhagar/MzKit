@@ -3,12 +3,14 @@ Functions utilities for:
 - Generating consensus spectra
 - Calculating spectral entropy similarity
 """
-from .array_types import SpectrumArray, ConsensusSpectrumArray
+from __future__ import annotations
+
+from .array_types import SpectrumArray, ConsensusSpectrumArray, to_spec_arr
 
 import numpy as np
 from ms_entropy import calculate_entropy_similarity
 
-from typing import Iterable, Optional
+from typing import Iterable, Generator, Optional
 
 
 def merge_spectra(
@@ -36,10 +38,13 @@ def merge_spectra(
 
     In the original method, peaks are only included
      if present in greater than 25% of child spectra.
-     In this case - the output ConsensusSpectrumArray
-     has a field `freq` which can be used post-hoc to
-     filter out infrequent peaks according to desired
-     threshold.
+
+    Here, the filtering is differred. The output
+     ConsensusSpectrumArray has per-bin `freq`
+     (ranges [0, 1]).
+
+    You can threshold at display / print time
+    (see `threshold_consensus`)
 
     Parameters
     :param: spectra: Iterable containing SpectrumArrays
@@ -72,6 +77,9 @@ def merge_spectra(
     sum_mz = np.zeros(num_bins, dtype='f8')
     sum_intsy = np.zeros(num_bins, dtype='f8')
     counts = np.zeros(num_bins, dtype='i8')
+    # Number of spectra that actually contributed an in-range peak;
+    # the denominator for relative frequency.
+    n_contributing = 0
 
     for spectrum in spectra:
         mz = spectrum['mz']
@@ -83,6 +91,7 @@ def merge_spectra(
         intsy = intsy[in_range]
         if len(mz) == 0:
             continue
+        n_contributing += 1
 
         # 0. Normalize intensities to 0 -> 1
         peak_max = intsy.max()
@@ -106,15 +115,19 @@ def merge_spectra(
         sum_intsy[present] += bin_intsy[present]
         counts[present] += 1
 
-    # 3. Average m/z and intensity per bin; drop empty bins.
+    if n_contributing == 0:
+        return _empty_consensus()
+
+    # 3. Average m/z and intensity per bin; drop empty bins. `freq` is the
+    # relative frequency: fraction of contributing spectra the bin appeared in.
     filled = counts > 0
     result = np.zeros(
         int(filled.sum()),
-        dtype=[('mz', 'f8'), ('intsy', 'f8'), ('freq', 'i8')],
+        dtype=[('mz', 'f8'), ('intsy', 'f8'), ('freq', 'f8')],
     )
     result['mz'] = sum_mz[filled] / counts[filled]
     result['intsy'] = sum_intsy[filled] / counts[filled]
-    result['freq'] = counts[filled]
+    result['freq'] = counts[filled] / n_contributing
 
     return ConsensusSpectrumArray(result)
 
@@ -123,8 +136,28 @@ def _empty_consensus() -> ConsensusSpectrumArray:
     return ConsensusSpectrumArray(
         np.zeros(
             0,
-            dtype=[('mz', 'f8'), ('intsy', 'f8'), ('freq', 'i8')],
+            dtype=[('mz', 'f8'), ('intsy', 'f8'), ('freq', 'f8')],
         )
+    )
+
+
+def threshold_consensus(
+        consensus: ConsensusSpectrumArray,
+        min_freq: float = 0.25,
+) -> SpectrumArray:
+    """
+    Flattens a ConsensusSpectrumArray to a SpectrumArray,
+    keeping only peaks freq >= `min_freq`
+
+    :param min_freq: minimum relative frequency (in [0, 1]) to keep
+    """
+    names = consensus.dtype.names or ()
+    if 'freq' in names:
+        consensus = consensus[consensus['freq'] >= min_freq]
+
+    return to_spec_arr(
+        mz_arr=consensus['mz'].astype('f8'),
+        intsy_arr=consensus['intsy'].astype('f8'),
     )
 
 
@@ -182,3 +215,22 @@ def _to_peaks(
     peaks[:, 0] = spectrum['mz']
     peaks[:, 1] = spectrum['intsy']
     return peaks
+
+
+def normalize_spectrum(
+        spec: SpectrumArray | np.ndarray,
+        max_range: float = 1.0,
+) -> np.ndarray:
+    """
+    Normalize spectrum intensities to a range [0, max_intsy]
+    """
+    if spec.size == 0:
+        return spec
+
+    max_intsy = spec['intsy'].max()
+    if max_intsy <= 0:
+        return spec
+
+    out = spec.copy()
+    out['intsy'] = out['intsy'] / max_intsy * max_range
+    return out

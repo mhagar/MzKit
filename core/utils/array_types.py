@@ -115,7 +115,7 @@ ConsensusSpectrumArray = NewType(
             [
                 ('mz', 'f8'),
                 ('intsy', 'f8'),
-                ('freq', 'i8'),
+                ('freq', 'f8'),
             ]
         )
     ]
