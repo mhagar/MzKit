@@ -35,6 +35,12 @@ build-backend = "hatchling.build"
 # Flat layout: the importable packages live at the repo root.
 packages = ["core", "gui"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Ship the default config template at the wheel root so get_project_root()
+# (which resolves to site-packages in a non-editable install) can find it.
+# TODO: could just move de._co.ini into `oore` and use importlib.resources
+"default_config.ini" = "default_config.ini"
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
