@@ -159,7 +159,7 @@ wheels = [
 [[package]]
 name = "find-mfs"
 version = "0.5.0"
-source = { git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring#26a1477a36edfadd90f86227637a936d035bfa88" }
+source = { git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring#5f2436e6cc6d8729c34aa13f86c4d396c4fa5bb3" }
 dependencies = [
     { name = "isospecpy" },
     { name = "molmass" },

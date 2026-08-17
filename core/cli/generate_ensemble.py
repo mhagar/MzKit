@@ -278,10 +278,18 @@ def get_ungrouped_ensemble(
 
 class AutoEnsembleParams(NamedTuple):
     """
-    Parameters for automated (DIA/auto) ensemble generation. Mapped onto the
-    unified engine's ExtractionConfig via ``dia_config`` (or ``dda_config`` when
-    ``injection.acquisition_mode == 'dda'``; DIA-only fields like
-    ``ms2_corr_threshold`` are then unused).
+    Parameters for automated (DIA/auto) ensemble generation.
+
+    Mapped onto the engine's ExtractionConfig via `dia_config` or `dda_config`
+
+    The shared `is_peak` shape knobs (i.e. `peak_method`, `min_prominence`,
+    `min_peak_width`, `baseline_pct`, `min_turn`) are used in both DIA and DDA paths.
+
+    Some fields are DIA-only and unused under DDA:
+    `ms2_corr_threshold` (DDA does not do cross MS-level-correlation)
+    `max_lane_persistence` (persistent-lane rejection is only implemented for DIA)
+    and the smoothing-survival filter (i.e. `require_smoothing_survival` /
+     `smoothing_sigma` / ``min_smoothing_survival``), which was designed for DIA
 
     parent_threshold: Minimum peak height to seed a new ensemble.
         Only the tallest signal in an ensemble needs to exceed this.
@@ -495,8 +503,11 @@ def auto_generate_ensembles(
             parent_threshold=params.parent_threshold,
             cofeature_threshold=params.cofeature_threshold,
             edge_fraction=params.edge_fraction,
+            peak_method=params.peak_method,
             min_prominence=params.min_prominence,
             min_peak_width=params.min_peak_width,
+            baseline_pct=params.baseline_pct,
+            min_turn=params.min_turn,
             method=params.method,
             use_rel_intsy=params.use_rel_intsy,
             ms1_corr_threshold=params.ms1_corr_threshold,
@@ -505,6 +516,8 @@ def auto_generate_ensembles(
             adduct_ppm_tol=params.adduct_ppm_tol,
             polarity=params.polarity,
             rt_range=params.rt_range,
+            # NB: the smoothing-survival filter is intentionally not
+            # forwarded here, the filter is designed for DIA problems
         )
     else:
         config = dia_config(
