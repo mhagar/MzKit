@@ -7,6 +7,7 @@ from gui.views.ensemble_viewer.tools import (
     ToolType, Mode, ToolStage
 )
 from gui.views.ensemble_viewer.tool_controllers import BaseToolController
+from core.formula import query_from_signals, assign_formula
 
 from PyQt5 import QtCore, QtWidgets
 from find_mfs import FormulaCandidate
@@ -46,6 +47,12 @@ class FindFormulaController(BaseToolController):
     def _connect_signals(self):
         self.formula_finder_menu.sigFormulaAssigned.connect(
             self.handle_formula_assigned
+        )
+        self.formula_finder_menu.sigCompoundSearchRequested.connect(
+            self.handle_compound_search
+        )
+        self.formula_finder_menu.sigCompoundAssigned.connect(
+            self.handle_compound_assigned
         )
 
     def on_activated(self):
@@ -133,6 +140,78 @@ class FindFormulaController(BaseToolController):
             self.selected_ms_level,  # int
             [x[2] for x in self.selected_signals],  # feature coidxs (ints)
         )
+
+        self.handle_clear_selections()
+
+    def handle_compound_search(self, params: dict):
+        """
+        Run the MS2 compound assignment.
+
+        The dialog forwards params + the selected MS1 envelope;
+        here we add the ensemble + MS2 and run find-mfs
+
+        Synchronous for now because EnsembleViewer doesn't have a ProcessController handle;
+         # TODO: move to background task runner
+        """
+        dialog = self.formula_finder_menu
+        ensemble = self.viewer.ensemble
+
+        if ensemble is None:
+            return
+
+        if self.selected_ms_level == 2:
+            dialog.statusbar.showMessage(
+                "Compound assignment needs the MS1 isotopologue group, not MS2."
+            )
+
+            return
+
+        ms1_signals = params.pop("ms1_signals", None)
+        top_n = params.pop("top_n", 50)
+        if not ms1_signals:
+            dialog.statusbar.showMessage("No MS1 signals selected")
+            return
+
+        try:
+            query = query_from_signals(ensemble, ms1_signals, **params)
+        except NotImplementedError:
+            dialog.statusbar.showMessage(
+                "Compound formula assignment is not yet supported for DDA."
+            )
+            return
+
+        dialog.statusbar.showMessage(
+            "Assigning compound formula (MS2)…"
+        )
+        QtWidgets.QApplication.setOverrideCursor(
+            QtCore.Qt.WaitCursor
+        )
+        try:
+            assignment = assign_formula([query], top_n=top_n)[0]
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        dialog.populate_compound_results(assignment)
+
+    def handle_compound_assigned(
+            self,
+            assignment
+    ):
+        """
+        Register the accepted compound assignment in the DataRegistry
+        (the EnsembleViewer's data_source) and sync a display string on the ensemble
+        """
+        registry = self.viewer.data_source
+        registry.register_assignment(assignment)
+
+        ensemble = self.viewer.ensemble
+        chosen = assignment.chosen
+        if ensemble is not None and chosen is not None:
+            ensemble.proposed_formula = chosen.formula_str
+
+        # Show the assignment as the MS1 title strip.
+        if hasattr(self.viewer, "refresh_assignment_display"):
+            self.viewer.refresh_assignment_display()
 
         self.handle_clear_selections()
 

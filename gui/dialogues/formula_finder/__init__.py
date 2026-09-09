@@ -10,25 +10,30 @@ from gui.resources.FormulaFinderWindow import Ui_Form
 from core.utils.config import save_config, load_default_config
 from core.utils.formula_formatting import format_formula_obj_to_html
 from gui.dialogues.formula_finder.tables import HTMLDelegate
+from core.utils.array_types import to_spec_arr
 
+from molmass import Formula
 from numpy.typing import NDArray
 from configparser import ConfigParser
 from typing import Literal, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from find_mfs import FormulaSearchResults, FormulaCandidate
+    from core.data_structs.formula_assignment import FormulaAssignment
 
 # By default, use the pre-shipped COCONUT GMM.
 # TODO: Expose route to user for training their own GMM
-SCORER = FormulaScorer.default()
+SCORER = FormulaScorer()
 
 class FormulaFinderDialog(
     QtWidgets.QWidget,
     Ui_Form,
 ):
     sigFormulaAssigned = QtCore.pyqtSignal(
-        object  # find_mfs.FormulaCandidate
+        object  # find_mfs.FormulaCandidate (ion path)
     )
+    sigCompoundSearchRequested = QtCore.pyqtSignal(dict)
+    sigCompoundAssigned = QtCore.pyqtSignal(object)  # FormulaAssignment
 
     def __init__(
         self,
@@ -57,11 +62,11 @@ class FormulaFinderDialog(
         # State stuff
         self.search_query: list[tuple[float, float]] = []
         self.search_results: Optional[FormulaSearchResults] = None
+        self._results_mode: Optional[Literal["ion", "compound"]] = None  # Whether mf search was for ion or compound
+        self._compound_assignment: Optional["FormulaAssignment"] = None  # Whether a compound mf assignment was made
         self.config = config
+        self._populate_instrument_combo()
         self._load_params_from_config()
-
-        print("config:")
-        print({section: dict(config[section]) for section in config.sections()})
 
     def _connect_signals(self):
         self.btnAddSignal.clicked.connect(self.tableInput.add_row)
@@ -70,13 +75,30 @@ class FormulaFinderDialog(
 
         self.btnClearSignals.clicked.connect(self.tableInput.clear_rows)
 
-        self.btnSearch.clicked.connect(self.on_search_execute)
+        # Two search buttons: ion (synchronous) vs compound/MS2 (via controller).
+        self.btnFindIonMF.clicked.connect(self.on_search_execute)
+        self.btnFindCmpdMF.clicked.connect(self._request_compound_search)
 
         self.btnConfigBox.clicked.connect(self.on_config_btn_pressed)
 
-        self.btnAnnotateSelectedSignals.clicked.connect(self.annotate_selected_signals)
+        # "Assign Selected" btn routes depending on ion search or cmpd search
+        self.btnAssignSelected.clicked.connect(self.on_assign_selected)
+        self.tableResults.doubleClicked.connect(self.on_assign_selected)
 
-        self.tableResults.doubleClicked.connect(self.annotate_selected_signals)
+    def _populate_instrument_combo(self):
+        """
+        Fill the instrument combo with MistNet's canonical types
+        (label -> value);
+        unknown names fall back to 'unknown' inside find-mfs anyway.
+        """
+        for label, value in [
+            ("Unknown", "unknown"),
+            ("Q-ToF", "qtof"),
+            ("Orbitrap", "orbitrap"),
+            ("Ion Trap", "iontrap"),
+            ("FT-ICR", "fticr"),
+        ]:
+            self.comboInstrument.addItem(label, value)
 
     def _setup_statusbar(self):
         self.statusbar = QtWidgets.QStatusBar()
@@ -109,17 +131,18 @@ class FormulaFinderDialog(
         mf_params, score_params = self._retrieve_params_from_ui()
 
         has_envelope = envelope.shape[0] > 1
+        spec = to_spec_arr(envelope[:, 0], envelope[:, 1]) if has_envelope else None
 
         results = self.finder.find_formulae(
             mass=search_mz,
             # Perf-only prefilter; actual isotope scoring happens below via SCORER.score()
-            isotope_prefilter=envelope if has_envelope else None,
+            isotope_prefilter=spec,
             **mf_params,
         )
 
         SCORER.score(
             results,
-            ms1_peaks=envelope if has_envelope else None,
+            ms1_peaks=spec,
             precursor_mz=search_mz,
             mass_sigma_ppm=mf_params['error_ppm'] / 3,
             **score_params,
@@ -138,7 +161,9 @@ class FormulaFinderDialog(
             case "posterior":
                 self.search_results = results.sort_by_posterior()
 
-        self._populate_results_table()
+        self._results_mode = "ion"
+        self._compound_assignment = None
+        self._populate_ion_results()
 
         self.statusbar.showMessage(
             f"Found {len(self.search_results)} formulae for m/z {search_mz}"
@@ -154,43 +179,77 @@ class FormulaFinderDialog(
         """
         self.tableInput.populate_table(data)
 
-    def _populate_results_table(
-        self,
+    # Results table columns (10):
+    #   0 Formula  1 Adduct  2 Error(ppm)  3 Error(Da)  4 RDBE
+    #   5 Mass LL  6 Iso LL  7 Chem Prior  8 MS2 LL     9 Posterior
+
+    def _insert_result_row(
+            self,
+            values: list[str]
     ):
         """
-        Populates the table using a FormulaSearchResults object
-        from `find_mfs`
+        Insert a row at the top
+        (iterating results in reverse leaves the table in results order
+         i.e. row index == results index).
         """
-        self.tableResults.setRowCount(0)  # Delete all rows
+        self.tableResults.insertRow(0)
+        for col_idx, text in enumerate(values):
+            item = QtWidgets.QTableWidgetItem(text)
+            item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.tableResults.setItem(0, col_idx, item)
 
+    def _populate_ion_results(self):
+        """
+        Populate the table from ion-search results (find_mfs candidates).
+        MS2 column is blank — the ion path has no MS2 term.
+        """
+        self.tableResults.setRowCount(0)
         if not self.search_results:
             return
+        for c in self.search_results[::-1]:
+            c: "FormulaCandidate"
+            self._insert_result_row([
+                format_formula_obj_to_html(c.formula),
+                c.adduct or "",
+                _fmt(c.error_ppm, ".2f"),
+                _fmt(c.error_da, ".6f"),
+                _fmt(c.rdbe, ".1f"),
+                _fmt(c.mass_loglik, ".2f"),
+                _fmt(c.iso_loglik, ".2f"),
+                _fmt(c.chem_logprior, ".2f"),
+                "",
+                _fmt(c.log_posterior, ".2f"),
+            ])
 
-        for candidate in self.search_results[::-1]:
-            candidate: "FormulaCandidate"
+    def populate_compound_results(
+            self,
+            assignment: "FormulaAssignment"
+    ):
+        """
+        Public: called by the controller after a compound (MS2) search.
+        """
+        self._compound_assignment = assignment
+        self._results_mode = "compound"
+        self.search_results = None
 
-            self.tableResults.insertRow(0)
-            for col_idx, text in [
-                (0, f"{format_formula_obj_to_html(candidate.formula)}"),
-                (1, f"{candidate.error_ppm:.2f}"),
-                (2, f"{candidate.error_da:.6f}"),
-                (3, f"{candidate.rdbe:.1f}"),
-                (4, f"{candidate.mass_loglik:.2f}"),
-                (5, _get_iso_loglik(candidate)),
-                (6, f"{candidate.chem_logprior:.2f}"),
-                (7, f"{candidate.log_posterior:.2f}"),
-            ]:
-                item = QtWidgets.QTableWidgetItem(
-                    text,
-                )
-
-                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-
-                self.tableResults.setItem(
-                    0,  # Row
-                    col_idx,  # Col
-                    item,
-                )
+        self.tableResults.setRowCount(0)
+        for c in assignment.candidates[::-1]:
+            self._insert_result_row([
+                format_formula_obj_to_html(Formula(c.formula_str)),
+                c.adduct or "",
+                _fmt(c.error_ppm, ".2f"),
+                _fmt(c.error_da, ".6f"),
+                _fmt(c.rdbe, ".1f"),
+                _fmt(c.mass_loglik, ".2f"),
+                _fmt(c.iso_loglik, ".2f"),
+                _fmt(c.chem_logprior, ".2f"),
+                _fmt(c.ms2_loglik, ".2f"),
+                _fmt(c.log_posterior, ".2f"),
+            ])
+        self.statusbar.showMessage(
+            f"Compound (MS2): {len(assignment.candidates)} candidates — "
+            f"select a row and hit Assign Selected"
+        )
 
     def _retrieve_table_input(self):
         """
@@ -327,24 +386,71 @@ class FormulaFinderDialog(
             case QtWidgets.QDialogButtonBox.StandardButton.Reset:
                 self._load_params_from_config()
 
-    def annotate_selected_signals(
-        self,
-    ):
+    def _request_compound_search(self):
         """
-        Called when user selects 'annotate selected signals', or double clicks a
-        row in the results table.
-
-        Emits a 'sigFormulaAssigned' QSignal
+        Ask the controller to run the MS2 compound assignment
         """
-        # Do nothing if no row is selected
-        selected_rows = self.tableResults.selectedItems()
-        if not selected_rows or not self.search_results:
+        self._retrieve_table_input()
+        if not self.search_query:
+            self.statusbar.showMessage(
+                "Select the MS1 isotopologue group first"
+            )
             return
 
-        formula_candidate = self.search_results[selected_rows[0].row()]
+        params = self._retrieve_compound_params()
+        params["ms1_signals"] = list(self.search_query)
+        self.sigCompoundSearchRequested.emit(params)
 
-        self.sigFormulaAssigned.emit(formula_candidate)
+    def _retrieve_compound_params(self) -> dict:
+        """
+        Assemble kwargs for core.formula.query_from_signals + a top_n.
+        """
+        adduct = self.lineAdduct.text().strip() or None
+        elements = (
+            "CHNOPSFClBrI"
+            if "halogen" in self.comboElementSet.currentText().lower()
+            else "CHNOPS"
+        )
+        finder_kwargs = {
+            "min_counts": self.lineMinCounts.text(),
+            "max_counts": self.lineMaxCounts.text(),
+            "filter_rdbe": (self.spinRDBEMin.value(), self.spinRDBEMax.value()),
+            "check_octet": self.checkOctet.isChecked(),
+        }
+        return {
+            "adducts": [adduct] if adduct else None,
+            "elements": elements,
+            "autodetect_cl_br": self.checkBoxAcheckAutodetectHalogens.isChecked(),
+            "error_ppm": self.spinMassErrorPpm.value(),
+            "instrument": self.comboInstrument.currentData() or "unknown",
+            "ms2_weight": self.doubleSpinMs2Weight.value(),
+            "top_n": int(self.spinTopN.value()),
+            "finder_kwargs": finder_kwargs,
+        }
 
+    def on_assign_selected(self):
+        """
+        Commit the highlighted row as
+         either ion annotation or compound assignment,
+        depending on which search produced the current results.
+        """
+        selected = self.tableResults.selectedItems()
+        if not selected:
+            return
+        row = selected[0].row()
+
+        if self._results_mode == "compound":
+            if self._compound_assignment is None:
+                return
+            self._compound_assignment.chosen_idx = row
+            self.sigCompoundAssigned.emit(self._compound_assignment)
+            self.close()
+            return
+
+        # Ion path (unchanged)
+        if not self.search_results:
+            return
+        self.sigFormulaAssigned.emit(self.search_results[row])
         self.close()
 
     def _write_params_to_config(
@@ -422,6 +528,28 @@ class FormulaFinderDialog(
             section="findmfs",
             option="chem_softness",
             value=str(self.spinChemPriorSoftness.value()),
+        )
+
+        # === Compound (MS2) / MistNet ===
+        self.config.set(
+            section="findmfs",
+            option="ms2_weight",
+            value=str(self.doubleSpinMs2Weight.value()),
+        )
+        self.config.set(
+            section="findmfs",
+            option="instrument",
+            value=str(self.comboInstrument.currentData() or "unknown"),
+        )
+        self.config.set(
+            section="findmfs",
+            option="autodetect_cl_br",
+            value=str(self.checkBoxAcheckAutodetectHalogens.isChecked()),
+        )
+        self.config.set(
+            section="findmfs",
+            option="top_n",
+            value=str(int(self.spinTopN.value())),
         )
 
         save_config(self.config)
@@ -504,13 +632,26 @@ class FormulaFinderDialog(
             config.getfloat("findmfs", "chem_softness", fallback=1.0)
         )
 
+        # === Compound (MS2) / MistNet ===
+        self.doubleSpinMs2Weight.setValue(
+            config.getfloat("findmfs", "ms2_weight", fallback=1.0)
+        )
 
-def _get_iso_loglik(candidate: "FormulaCandidate") -> str:
-    """
-    Helper; returns either a FormulaCandidate's isotope log-likelihood,
-    or '' if no isotope scoring was performed
-    """
-    if candidate.iso_loglik is None:
+        instr = config.get("findmfs", "instrument", fallback="unknown")
+        instr_idx = self.comboInstrument.findData(instr)
+        self.comboInstrument.setCurrentIndex(instr_idx if instr_idx >= 0 else 0)
+
+        self.checkBoxAcheckAutodetectHalogens.setChecked(
+            config.getboolean("findmfs", "autodetect_cl_br", fallback=True)
+        )
+
+        self.spinTopN.setValue(
+            config.getint("findmfs", "top_n", fallback=50)
+        )
+
+
+def _fmt(value, spec: str) -> str:
+    """Format a numeric score term for the table, or '' when it is None."""
+    if value is None:
         return ""
-
-    return f"{candidate.iso_loglik:.2f}"
+    return format(value, spec)

@@ -141,11 +141,25 @@
           </layout>
          </item>
          <item>
-          <widget class="QPushButton" name="btnSearch">
-           <property name="text">
-            <string>&amp;Find MF Candidates</string>
+          <layout class="QHBoxLayout" name="horizontalLayout_6">
+           <property name="bottomMargin">
+            <number>0</number>
            </property>
-          </widget>
+           <item>
+            <widget class="QPushButton" name="btnFindIonMF">
+             <property name="text">
+              <string>Find &amp;Ion MF</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnFindCmpdMF">
+             <property name="text">
+              <string>Find &amp;Compound MF (MS2)</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
          </item>
          <item>
           <layout class="QHBoxLayout" name="horizontalLayout_3">
@@ -231,8 +245,11 @@
            <attribute name="horizontalHeaderCascadingSectionResizes">
             <bool>true</bool>
            </attribute>
+           <attribute name="horizontalHeaderMinimumSectionSize">
+            <number>18</number>
+           </attribute>
            <attribute name="horizontalHeaderDefaultSectionSize">
-            <number>120</number>
+            <number>97</number>
            </attribute>
            <attribute name="horizontalHeaderHighlightSections">
             <bool>false</bool>
@@ -246,6 +263,11 @@
            <column>
             <property name="text">
              <string>Formula</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>Adduct</string>
             </property>
            </column>
            <column>
@@ -280,15 +302,20 @@
            </column>
            <column>
             <property name="text">
+             <string>MS2 LogLik</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
              <string>Posterior</string>
             </property>
            </column>
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="btnAnnotateSelectedSignals">
+          <widget class="QPushButton" name="btnAssignSelected">
            <property name="text">
-            <string>Annotate Selected MS Signals</string>
+            <string>Assign Selected</string>
            </property>
           </widget>
          </item>
@@ -640,17 +667,57 @@
               </widget>
              </item>
              <item>
-              <spacer name="horizontalSpacer_3">
-               <property name="orientation">
-                <enum>Qt::Horizontal</enum>
+              <widget class="QGroupBox" name="groupBox_4">
+               <property name="title">
+                <string>MS2 (MistNet)</string>
                </property>
-               <property name="sizeHint" stdset="0">
-                <size>
-                 <width>40</width>
-                 <height>20</height>
-                </size>
-               </property>
-              </spacer>
+               <layout class="QGridLayout" name="gridLayout_4">
+                <item row="2" column="1">
+                 <widget class="QCheckBox" name="checkBoxAcheckAutodetectHalogens">
+                  <property name="text">
+                   <string/>
+                  </property>
+                 </widget>
+                </item>
+                <item row="0" column="0">
+                 <widget class="QLabel" name="label_20">
+                  <property name="text">
+                   <string>Weight</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="0" column="1">
+                 <widget class="QDoubleSpinBox" name="doubleSpinMs2Weight"/>
+                </item>
+                <item row="1" column="0">
+                 <widget class="QLabel" name="label_21">
+                  <property name="text">
+                   <string>Instrument</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="1" column="1">
+                 <widget class="QComboBox" name="comboInstrument"/>
+                </item>
+                <item row="2" column="0">
+                 <widget class="QLabel" name="label_23">
+                  <property name="text">
+                   <string>Auto-detect Halogen</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="3" column="0">
+                 <widget class="QLabel" name="label_24">
+                  <property name="text">
+                   <string>Top N</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="3" column="1">
+                 <widget class="QSpinBox" name="spinTopN"/>
+                </item>
+               </layout>
+              </widget>
              </item>
             </layout>
            </item>
