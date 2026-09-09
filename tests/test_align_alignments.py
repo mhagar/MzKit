@@ -142,7 +142,7 @@ def two_batches():
             "(MS data is gitignored; place it locally to run this test)"
         )
     from core.utils.persistence import load_project
-    samples, _ = load_project(TEST_ALIGNMENT_MZK)
+    samples, _, _ = load_project(TEST_ALIGNMENT_MZK)
     samples = [s for s in samples if s.injection is not None]
     if len(samples) < 4:
         pytest.skip("need >= 4 samples with MS data to split into two batches")

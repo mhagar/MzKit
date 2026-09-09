@@ -70,7 +70,7 @@ def aligned():
             "(MS data is gitignored; place it locally to run this test)"
         )
     from core.utils.persistence import load_project
-    samples, alignments = load_project(TEST_ALIGNMENT_MZK)
+    samples, alignments, _assignments = load_project(TEST_ALIGNMENT_MZK)
     if not alignments:
         from core.data_structs.alignment import AlignmentParams
         import core.cli.align_ensembles as A

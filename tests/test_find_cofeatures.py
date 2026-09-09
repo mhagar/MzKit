@@ -27,7 +27,7 @@ TARGET_MZ: float = 387.1803
 
 def get_data_registry() -> 'DataRegistry':
 
-    samples, _alignments = load_project(
+    samples, _alignments, _assignments = load_project(
         filepath=Path('test_project.mzk')
     )
 

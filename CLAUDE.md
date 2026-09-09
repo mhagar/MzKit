@@ -42,7 +42,7 @@ tests/
 
 - `.mzk` files are ZIP archives containing JSON + pickle.
 - `save_project()` / `load_project()` in `core/utils/persistence.py`.
-- `load_project()` returns `(samples, alignments)` tuple.
+- `load_project()` returns `(samples, alignments, assignments)` tuple.
 - Alignment JSON I/O (standalone, outside .mzk): `save_alignment_json()` / `load_alignment_json()` in `core/cli/main.py`.
 
 ## CLI tools (core/cli/)

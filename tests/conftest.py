@@ -33,7 +33,7 @@ def data_registry() -> DataRegistry:
             f"test data not present: {TEST_SOLN_2_MZK_PATH} "
             "(MS data is gitignored; place it locally to run this test)"
         )
-    samples, alignments = load_project(
+    samples, alignments, assignments = load_project(
         filepath=TEST_SOLN_2_MZK_PATH
     )
 
@@ -41,6 +41,8 @@ def data_registry() -> DataRegistry:
     registry.register_samples(samples)
     for alignment in alignments:
         registry.register_alignment(alignment)
+    for assignment in assignments:
+        registry.register_assignment(assignment)
 
     return registry
 

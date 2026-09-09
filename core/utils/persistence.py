@@ -22,6 +22,10 @@ from core.data_structs.alignment import (
     AlignedAnalyte,
     AlignmentParams,
 )
+from core.data_structs.formula_assignment import (
+    FormulaAssignment,
+    AssignedCandidate,
+)
 
 import logging
 import zipfile
@@ -125,6 +129,18 @@ def save_project(
             for alignment in alignments:
                 serialize_alignment(alignment, zf)
 
+        # Serialize formula assignments
+        assignments = [
+            data_registry.get_assignment_for_source(source_uuid)
+            for source_uuid in data_registry.get_all_assignment_source_uuids()
+        ]
+        if assignments:
+            logger.info(
+                f"Packaging {len(assignments)} formula assignments"
+            )
+            for assignment in assignments:
+                serialize_assignment(assignment, zf)
+
     logger.info(
         f"Project saved: {filepath.absolute()}"
     )
@@ -179,6 +195,28 @@ def deserialize_alignment(
         parameters=AlignmentParams(**data['parameters']),
         analytes=analytes,
     )
+
+
+def serialize_assignment(
+    assignment: 'FormulaAssignment',
+    zf: 'zipfile.ZipFile',
+):
+    # FormulaAssignment is primitive-only (AssignedCandidate included), so asdict
+    # captures every score term losslessly -- unlike the lossy FormulaCandidate
+    # annotation format elsewhere in this module.
+    zf.writestr(
+        f"assignments/{assignment.uuid}.json",
+        data=json.dumps(asdict(assignment), indent=2),
+    )
+
+
+def deserialize_assignment(
+    assignment_path: str,
+    zf: 'zipfile.ZipFile',
+) -> 'FormulaAssignment':
+    data = json.loads(zf.read(assignment_path))
+    candidates = [AssignedCandidate(**c) for c in data.pop('candidates')]
+    return FormulaAssignment(candidates=candidates, **data)
 
 
 def serialize_fingerprint_arrays(
@@ -394,18 +432,19 @@ def load_project(
     filepath: Path,
     progress_callback=None,  # injected by ProcessRunner; unused here
     cancel_event=None,       # injected by ProcessRunner; unused here
-) -> tuple[list[Sample], list['EnsembleAlignment']]:
+) -> tuple[list[Sample], list['EnsembleAlignment'], list['FormulaAssignment']]:
     """
     Given a path to an .mzk file generated using save_project(),
-    reconstitutes Samples and EnsembleAlignments.
+    reconstitutes Samples, EnsembleAlignments and FormulaAssignments.
 
     :param filepath: Path to .mzk file
-    :return: (samples, alignments)
+    :return: (samples, alignments, assignments)
     """
     _sanity_checks(filepath)
 
     samples: list[Sample] = []
     alignments: list[EnsembleAlignment] = []
+    assignments: list[FormulaAssignment] = []
 
     with zipfile.ZipFile(
         filepath,
@@ -462,12 +501,22 @@ def load_project(
             alignment = deserialize_alignment(alignment_path, zf)
             alignments.append(alignment)
 
+        # Load formula assignments
+        assignment_paths = [
+            name for name in zf.namelist()
+            if name.startswith('assignments/')
+            and name.endswith('.json')
+        ]
+        for assignment_path in assignment_paths:
+            assignments.append(deserialize_assignment(assignment_path, zf))
+
     logger.info(
         f"Loaded {len(samples)} samples, "
-        f"{len(alignments)} alignments."
+        f"{len(alignments)} alignments, "
+        f"{len(assignments)} assignments."
     )
 
-    return samples, alignments
+    return samples, alignments, assignments
 
 
 def deserialize_injection(

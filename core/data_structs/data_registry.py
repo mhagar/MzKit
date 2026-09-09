@@ -17,12 +17,17 @@ if TYPE_CHECKING:
         InjectionUUID,
         FingerprintUUID,
         AlignmentUUID,
+        EnsembleUUID,
     )
     from core.data_structs.alignment import EnsembleAlignment
+    from core.data_structs.formula_assignment import FormulaAssignment
 
 class DataRegistry(
     QtCore.QObject,
-    # SampleDataSource,
+    # NOTE: don't inherit SampleDataSource here.
+    # Because it's a typing.Protocol, mixing it w/ QObject
+    # raises a metaclass conflict
+    # Just make sure DataRegistry satisfies SampleDataSource by shape
 ):
     """
     Central data registry. Stores Samples,
@@ -45,11 +50,19 @@ class DataRegistry(
     sigAlignmentRemoved = QtCore.pyqtSignal(
         object  # EnsembleAlignment
     )
+    sigAssignmentAdded = QtCore.pyqtSignal(
+        object  # FormulaAssignment
+    )
+    sigAssignmentRemoved = QtCore.pyqtSignal(
+        object  # FormulaAssignment
+    )
 
     def __init__(self):
         self._samples: dict['SampleUUID', 'Sample'] = {}
         self._sample_name_to_uuid: dict[str, 'SampleUUID'] = {}
         self._alignments: dict['AlignmentUUID', 'EnsembleAlignment'] = {}
+        # Keyed by SOURCE uuid (an EnsembleUUID today); latest assignment wins.
+        self._assignments: dict['EnsembleUUID', 'FormulaAssignment'] = {}
         super().__init__()
 
     def subscribe_to_changes(
@@ -57,7 +70,7 @@ class DataRegistry(
         addition_callback,
         removal_callback,
         update_callback=None,
-        change_type: Literal['Sample', 'Alignment'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment'] = 'Sample',
     ):
         match change_type:
             case 'Sample':
@@ -80,6 +93,15 @@ class DataRegistry(
                 )
 
                 self.sigAlignmentRemoved.connect(
+                    removal_callback
+                )
+
+            case 'Assignment':
+                self.sigAssignmentAdded.connect(
+                    addition_callback
+                )
+
+                self.sigAssignmentRemoved.connect(
                     removal_callback
                 )
 
@@ -253,8 +275,12 @@ class DataRegistry(
         are dropped), so all existing references and signal/slot
         connections held by controllers, models and views remain valid.
 
-        Alignments are removed first, since they reference Samples.
+        Assignments and alignments are removed first, since they reference
+        Samples (via source/ensemble UUIDs).
         """
+        for source_uuid in self.get_all_assignment_source_uuids():
+            self.remove_assignment(source_uuid)
+
         for uuid in self.get_all_alignment_uuids():
             self.remove_alignment(uuid)
 
@@ -323,6 +349,42 @@ class DataRegistry(
 
     def alignment_count(self) -> int:
         return len(self._alignments)
+
+    # --- Formula assignment methods ---
+
+    def register_assignment(
+        self,
+        assignment: 'FormulaAssignment',
+    ):
+        """
+        Registers a FormulaAssignment, keyed by its source UUID. Replaces any
+        existing assignment for the same source (latest wins).
+        """
+        self._assignments[assignment.source_uuid] = assignment
+        self.sigAssignmentAdded.emit(assignment)
+
+    def remove_assignment(
+        self,
+        source_uuid: 'EnsembleUUID',
+    ):
+        if source_uuid in self._assignments:
+            assignment = self._assignments[source_uuid]
+            self.sigAssignmentRemoved.emit(assignment)
+            del self._assignments[source_uuid]
+
+    def get_assignment_for_source(
+        self,
+        source_uuid: 'EnsembleUUID',
+    ) -> Optional['FormulaAssignment']:
+        return self._assignments.get(source_uuid)
+
+    def get_all_assignment_source_uuids(
+        self,
+    ) -> list['EnsembleUUID']:
+        return list(self._assignments.keys())
+
+    def assignment_count(self) -> int:
+        return len(self._assignments)
 
 def _merge_is_valid(
     source: 'Sample',

@@ -794,16 +794,18 @@ class MainController:
 
     def _register_loaded_project(
         self,
-        result: tuple[list['Sample'], list],
+        result: tuple[list['Sample'], list, list],
     ):
         """
         Register the contents of a loaded project into the (current)
         registry. Used by both Open (after clearing) and Merge.
         """
-        samples, alignments = result
+        samples, alignments, assignments = result
         self.data_registry.register_samples(samples)
         for alignment in alignments:
             self.data_registry.register_alignment(alignment)
+        for assignment in assignments:
+            self.data_registry.register_assignment(assignment)
 
     def _handle_generate_ensemble_request(
         self,

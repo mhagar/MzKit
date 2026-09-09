@@ -35,10 +35,55 @@ def test_save_project(
     )
 
 
+def test_formula_assignment_roundtrip(tmp_path):
+    """A FormulaAssignment must survive save/load with every score term intact
+    (unlike the lossy FormulaCandidate annotation format)."""
+    from core.data_structs.formula_assignment import (
+        FormulaAssignment, AssignedCandidate,
+    )
+
+    reg = DataRegistry()
+    assignment = FormulaAssignment(
+        source_uuid=999,
+        candidates=[
+            AssignedCandidate(
+                formula_str="C12H15Cl2NO5S", adduct="H",
+                error_ppm=1.2, error_da=0.0004, rdbe=5.5,
+                mass_loglik=-1.1, iso_loglik=-2.2, chem_logprior=-3.3,
+                ms2_loglik=-0.5, log_posterior=-7.0,
+            ),
+        ],
+        chosen_idx=0,
+        precursor_mz=356.0126, charge=1, adducts=["H"], elements="CHNOPS",
+        autodetect_cl_br=True, ms2_mode="tallest", error_ppm=5.0, ms2_weight=5.0,
+    )
+    reg.register_assignment(assignment)
+
+    path = tmp_path / "roundtrip.mzk"
+    persistence.save_project(filepath=path, data_registry=reg)
+    _, _, assignments = persistence.load_project(filepath=path)
+
+    assert len(assignments) == 1
+    loaded = assignments[0]
+    assert loaded.uuid == assignment.uuid
+    assert loaded.source_uuid == 999
+    assert loaded.chosen_idx == 0
+    assert loaded.autodetect_cl_br is True
+    assert loaded.precursor_mz == 356.0126
+    assert loaded.adducts == ["H"]
+
+    assert len(loaded.candidates) == 1
+    c = loaded.candidates[0]
+    assert c.formula_str == "C12H15Cl2NO5S"
+    assert c.ms2_loglik == -0.5          # score terms round-trip exactly
+    assert c.log_posterior == -7.0
+    assert c.chem_logprior == -3.3
+
+
 def test_load_project(
     data_registry: DataRegistry,
 ):
-    samples, alignments = persistence.load_project(
+    samples, alignments, _assignments = persistence.load_project(
         filepath=Path('test_project.mzk')
     )
 

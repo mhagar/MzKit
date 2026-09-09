@@ -99,7 +99,7 @@ def aligned():
             "(MS data is gitignored; place it locally to run this test)"
         )
     from core.utils.persistence import load_project
-    samples, _ = load_project(TEST_ALIGNMENT_MZK)
+    samples, _, _ = load_project(TEST_ALIGNMENT_MZK)
     params = AlignmentParams(
         rt_tolerance=10.0, mz_tolerance=0.01,
         ms1_similarity_threshold=0.7, ms2_similarity_threshold=0.6,

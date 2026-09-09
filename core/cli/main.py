@@ -49,10 +49,12 @@ def _load_registry(*mzk_paths: Path) -> DataRegistry:
     registry = DataRegistry()
     for path in mzk_paths:
         logger.info(f"Loading {path}")
-        samples, alignments = load_project(path)
+        samples, alignments, assignments = load_project(path)
         registry.register_samples(samples)
         for alignment in alignments:
             registry.register_alignment(alignment)
+        for assignment in assignments:
+            registry.register_assignment(assignment)
     return registry
 
 
@@ -560,7 +562,7 @@ def cmd_export_table(args: argparse.Namespace) -> None:
 
 
 def cmd_export_bpcs(args: argparse.Namespace) -> None:
-    samples, _ = load_project(Path(args.mzk))
+    samples, _, _ = load_project(Path(args.mzk))
 
     export_bpcs_to_file(
         samples=samples,
