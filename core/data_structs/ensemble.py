@@ -76,7 +76,7 @@ class Ensemble:
         default=None, init=False, repr=False,
     )
 
-    # Annotations
+    # Spectrum Annotations
     mz_diffs: list['MzDiffAnnotation'] = field(
         default_factory=list, repr=False
     )
@@ -118,6 +118,29 @@ class Ensemble:
         """
         inj_name: str = self.injection.name
         return f"{inj_name}_{self.peak_rt:.1f}s_{self.base_mz:.5f}mz"
+
+    @property
+    def format_html_label(self) -> str:
+        """
+        Build an identity/proposed_formula label
+        (either may be empty)
+        """
+        parts: list[str] = []
+
+        if self.identity:
+            parts.append(
+                str(self.identity)
+            )
+
+        if self.proposed_formula:
+            try:
+                parts.append(
+                    format_formula_obj_to_html(Formula(self.proposed_formula))
+                )
+            except Exception:
+                parts.append(str(self.proposed_formula))
+
+        return "<br>".join(parts)
 
     def _populate_attrs(self):
         # Find base co-feature

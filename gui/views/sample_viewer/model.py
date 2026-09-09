@@ -1,10 +1,14 @@
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 
 from core.data_structs import SampleUUID, Sample, Injection, Fingerprint
-from core.interfaces.data_sources import SampleDataSource
+
+if TYPE_CHECKING:
+    from core.data_structs import EnsembleUUID
+    from core.data_structs.formula_assignment import FormulaAssignment
+    from gui.views.sample_viewer.data_source import SampleViewerDataSource
 
 
 class SampleViewerItemModel(
@@ -18,7 +22,7 @@ class SampleViewerItemModel(
 
     def __init__(
         self,
-        sample_data_source: 'SampleDataSource',
+        sample_data_source: 'SampleViewerDataSource',
         *args,
         **kwargs,
     ):
@@ -50,6 +54,16 @@ class SampleViewerItemModel(
         uuid: 'SampleUUID',
     ) -> 'Fingerprint':
         return self.getSample(uuid).fingerprint
+
+    def getAssignment(
+        self,
+        source_uuid: 'EnsembleUUID',
+    ) -> Optional['FormulaAssignment']:
+        """
+        The accepted/ranked formula assignment for an ensemble (keyed by the
+        ensemble's uuid), or None if none has been registered.
+        """
+        return self.sample_data_source.get_assignment_for_source(source_uuid)
 
     def addSample(
         self,

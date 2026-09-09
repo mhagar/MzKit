@@ -14,7 +14,10 @@ from core.cli.export_ensemble import (
     safe_filename,
 )
 from core.utils.config import load_config
-from core.utils.formula_formatting import format_formula_obj_to_html
+from core.utils.formula_formatting import (
+    format_formula_obj_to_html,
+    format_assignment_label_html,
+)
 from gui.resources.EnsembleViewerWindow import Ui_Form
 from gui.views.ensemble_viewer.tools import (
     ToolType, ToolStage, Mode,
@@ -38,7 +41,7 @@ if TYPE_CHECKING:
         BaseToolController,
     )
     from configparser import ConfigParser
-    from core.interfaces.data_sources import SampleDataSource
+    from gui.views.ensemble_viewer.data_source import EnsembleViewerDataSource
     from find_mfs import FormulaCandidate
 
 
@@ -51,7 +54,7 @@ class EnsembleViewer(
 
     def __init__(
         self,
-        data_source: 'SampleDataSource',
+        data_source: 'EnsembleViewerDataSource',
         config: Optional['ConfigParser'] = None
     ):
         super().__init__()
@@ -425,6 +428,25 @@ class EnsembleViewer(
         self.initialize_plots()
         self._redraw_annotations_for_current_scan()
         self.initialize_property_table()
+        self.refresh_assignment_display()
+
+    def refresh_assignment_display(self):
+        """
+        Displays this ensemble's compound formula assignment as a title strip on
+        the MS1 plot (or clears it)
+
+        Ion-level assignments have their own on-plot envelope whereas
+         this strip is the whole-compound label
+         """
+        title = self._assignment_label_html() if self.ensemble else None
+        self.ms1_plot.getPlotItem().setTitle(title)
+
+    def _assignment_label_html(self) -> Optional[str]:
+        # Shared with the sample-viewer overlays (single label source of truth).
+        assignment = self.data_source.get_assignment_for_source(
+            self.ensemble.uuid
+        )
+        return format_assignment_label_html(self.ensemble, assignment)
 
     def reset_for_new_project(self):
         """
@@ -440,6 +462,8 @@ class EnsembleViewer(
         # Clear the properties table.
         self.tableViewProperties.setModel(None)
         self.properties_model = None
+
+        self.refresh_assignment_display()
 
     def _hide_misc_plots(self):
         self.checkShowMiscPlots.setChecked(False)

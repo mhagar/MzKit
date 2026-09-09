@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from gui.views.sample_viewer.model import SampleViewerItemModel
     from core.data_structs import (
         SampleUUID,
+        EnsembleUUID,
         Fingerprint,
         Injection,
         FeaturePointer,
@@ -607,6 +608,16 @@ class SampleStackView(
     ):
         self._show_ensembles = show_ensembles
         self.refresh_all_plots()
+
+    def refresh_ensemble_label(
+        self,
+        ensemble_uuid: 'EnsembleUUID',
+    ) -> None:
+        """
+        Refresh a single ensemble overlay's label (e.g. after a formula
+        assignment changed). Delegates to the EnsembleUIManager.
+        """
+        self.ensemble_ui_mgr.refresh_ensemble_label(ensemble_uuid)
 
     def link_colorbar_to_fprint_plots(
         self,

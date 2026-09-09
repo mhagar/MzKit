@@ -209,6 +209,7 @@ class SampleWidget(
         chrom: np.ndarray,
         uuid: 'EnsembleUUID',
         color: Optional[str] = None,
+        html_label: str = '',
     ):
         """
         Wrapper around ChromPlotWidget.addPeak
@@ -217,6 +218,7 @@ class SampleWidget(
             chrom=chrom,
             uuid=uuid,
             color=color,
+            html_label=html_label,
         )
 
     def removePeak(
@@ -227,6 +229,16 @@ class SampleWidget(
         Wrapper around ChromPlotWidget.removePeak
         """
         self.chromPlotWidget.removePeak(uuid)
+
+    def setPeakLabel(
+        self,
+        uuid: 'EnsembleUUID',
+        html_label: Optional[str] = None,
+    ):
+        """
+        Wrapper around ChromPlotWidget.setPeakLabel
+        """
+        self.chromPlotWidget.setPeakLabel(uuid, html_label)
 
     def clearPeaks(
         self,

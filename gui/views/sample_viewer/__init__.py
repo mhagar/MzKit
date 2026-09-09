@@ -25,7 +25,8 @@ if TYPE_CHECKING:
         ScanArray,
         EnsembleUUID, Ensemble,
     )
-    from core.interfaces.data_sources import SampleDataSource
+    from gui.views.sample_viewer.data_source import SampleViewerDataSource
+    from core.data_structs.formula_assignment import FormulaAssignment
     from configparser import ConfigParser
 
 class SampleViewer(
@@ -53,7 +54,7 @@ class SampleViewer(
 
     def __init__(
         self,
-        data_source: 'SampleDataSource',
+        data_source: 'SampleViewerDataSource',
     ):
         super().__init__()
         self.setupUi(self)
@@ -66,6 +67,16 @@ class SampleViewer(
             removal_callback=lambda x: None,
             update_callback=self.update_sample,
             change_type='Sample',
+        )
+
+        # Subscribe to mf assignments being made in data registry, so an
+        # ensemble's peak overlay label reflects its assignment as soon as
+        # one is accepted (or cleared).
+        self.data_source.subscribe_to_changes(
+            addition_callback=self._on_assignment_changed,
+            removal_callback=self._on_assignment_changed,
+            update_callback=lambda x: None,   # Unused for assignments
+            change_type='Assignment',
         )
 
         # Model for keeping track of which samples are loaded in viewer
@@ -542,6 +553,19 @@ class SampleViewer(
         """
         self.viewSampleStack.refresh_plot(
             sample.uuid
+        )
+
+    def _on_assignment_changed(
+        self,
+        assignment: 'FormulaAssignment',
+    ):
+        """
+        Called whenever a FormulaAssignment is added or removed. Refreshes the
+        affected ensemble's peak overlay label so it reflects the (new) chosen
+        formula, without redrawing the whole plot stack.
+        """
+        self.viewSampleStack.refresh_ensemble_label(
+            assignment.source_uuid
         )
 
     # ***CHROMATOGRAM SCANNING***

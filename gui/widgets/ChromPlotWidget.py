@@ -125,7 +125,8 @@ class ChromPlotWidget(pg.PlotWidget):
         self,
         chrom: np.ndarray,
         uuid: 'EnsembleUUID',
-        color: Optional[ str | QtGui.QColor  ] = None
+        color: Optional[ str | QtGui.QColor  ] = None,
+        html_label: str = '',
     ):
         """
         Adds a *selectable* ChromGraphicItem and maintains a record of
@@ -133,10 +134,11 @@ class ChromPlotWidget(pg.PlotWidget):
         :param chrom: ChromArray
         :param uuid: unique ID used to identify this peak
         :param color: If none given, generates a random colour
+        :param html_label: html string to render above peak (optional)
         :return:
         """
         self.pi.addPeak(
-            chrom, uuid, color
+            chrom, uuid, color, html_label
         )
 
     def removePeak(
@@ -153,6 +155,17 @@ class ChromPlotWidget(pg.PlotWidget):
         Wrapper around ChromPlotItem.clearPeaks()
         """
         self.pi.clearPeaks()
+
+    def setPeakLabel(
+        self,
+        uuid: 'EnsembleUUID',
+        html_label: Optional[str] = None,
+    ):
+        """
+        Wrapper around ChromPlotItem.addPeakLabel(): (re)sets the label on an
+        existing peak overlay, replacing any current label for that uuid.
+        """
+        self.pi.addPeakLabel(uuid, html_label)
 
     def addWindowSelector(
         self,
@@ -311,6 +324,9 @@ class ChromPlotItem(pg.PlotItem):
         self._hovered_peak_uuid: Optional['EnsembleUUID'] = None
         self._selected_peak_uuid: Optional['EnsembleUUID'] = None
 
+        # Ensemble peak labels
+        self._peak_labels = {}
+
     def _connect_scene_signals(self):
         """
         Connect to pyqtgraph's scene signals for reliable hover detection.
@@ -406,7 +422,8 @@ class ChromPlotItem(pg.PlotItem):
         self,
         chrom: np.ndarray,
         uuid: 'EnsembleUUID',
-        color: Optional[str | QtGui.QColor] = None
+        color: Optional[str | QtGui.QColor] = None,
+        html_label: str = '',
     ):
         """
         Adds a more permanent peak overlay to the plot. This can be selected/hovered on
@@ -431,6 +448,13 @@ class ChromPlotItem(pg.PlotItem):
             self.peak_overlays[uuid]
         )
 
+        # Label the peak with the ensemble's identity / assigned formula
+        if html_label:
+            self.addPeakLabel(
+                uuid=uuid,
+                html_label=html_label,
+            )
+
     def removePeak(
         self,
         uuid: 'EnsembleUUID'
@@ -453,6 +477,51 @@ class ChromPlotItem(pg.PlotItem):
             if self._selected_peak_uuid == uuid:
                 self._selected_peak_uuid = None
 
+    def addPeakLabel(
+        self,
+        uuid: 'EnsembleUUID',
+        html_label: Optional[str] = None,
+    ):
+        """
+        (Re)set an html text label anchored just above an ensemble's apex.
+
+        Any existing label for `uuid` is removed first, so this doubles as an
+        update (e.g. after a formula assignment). An empty/None `html_label`
+        just clears the label. Cleared together with the peaks.
+        """
+        peak_overlay = self.peak_overlays.get(uuid)
+        if not peak_overlay:
+            return
+
+        # Replace any existing label so refreshes don't orphan TextItems.
+        self.removePeakLabel(uuid)
+
+        if not html_label:
+            return
+
+        apex_idx: int = peak_overlay.intsy_arr.argmax()  # noqa
+        rt: float = peak_overlay.rt_arr[apex_idx]
+        intsy: float = peak_overlay.intsy_arr[apex_idx]
+
+        label = pg.TextItem(
+            html=html_label,
+            anchor=(0.5, 1.0)
+        )
+        label.setPos(rt, intsy)
+        self._peak_labels[uuid] = label
+        self.addItem(label)
+
+    def removePeakLabel(
+        self,
+        uuid: 'EnsembleUUID',
+    ):
+        """
+        Remove the text label for a single peak overlay, if present.
+        """
+        label = self._peak_labels.pop(uuid, None)
+        if label is not None:
+            self.removeItem(label)
+
     def clearPeaks(
         self,
     ):
@@ -465,6 +534,11 @@ class ChromPlotItem(pg.PlotItem):
             )
 
         self.peak_overlays.clear()
+
+        for label in getattr(self, "_peak_labels", {}).values():
+            self.removeItem(label)
+
+        self._peak_labels.clear()
 
         # Reset interaction state since all peaks are gone
         self._hovered_peak_uuid = None

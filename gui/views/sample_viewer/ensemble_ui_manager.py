@@ -1,6 +1,7 @@
 from PyQt5 import QtCore, QtGui
 import pyqtgraph as pg
 
+from core.utils.formula_formatting import format_assignment_label_html
 
 from typing import Optional, Literal, TYPE_CHECKING
 
@@ -9,10 +10,13 @@ if TYPE_CHECKING:
     from gui.widgets.SampleWidget import SampleWidget
     from gui.views.sample_viewer.model import SampleViewerItemModel
     from core.data_structs import (
+        Ensemble,
+        EnsembleUUID,
         SampleUUID,
         FeaturePointer,
         ScanArray,
     )
+    from core.data_structs.formula_assignment import FormulaAssignment
 
 class EnsembleUIManager(QtCore.QObject):
     """
@@ -79,11 +83,37 @@ class EnsembleUIManager(QtCore.QObject):
             # Get base cofeature chrom.
             chrom_arr = ensemble.get_base_chromatogram(ms_level)
 
+            assignment = self._model.getAssignment(ensemble_uuid)
+
             widget.addPeak(
                 chrom=chrom_arr,
                 uuid=ensemble_uuid,
-                color=_generate_ensemble_color(ensemble_uuid)
+                color=_generate_ensemble_color(ensemble_uuid),
+                html_label=_ensemble_label_html(ensemble, assignment),
             )
+
+    def refresh_ensemble_label(
+        self,
+        ensemble_uuid: 'EnsembleUUID',
+    ) -> None:
+        """
+        Rebuild the on-plot label for a single ensemble overlay — e.g. after a
+        FormulaAssignment is added or removed. Resolves which loaded sample
+        owns the ensemble, then updates just that peak's label (no full
+        redraw). No-op if the ensemble isn't currently drawn.
+        """
+        for sample_uuid, widget in self._widget_mgr.get_all_widgets().items():
+            injection = self._model.getInjection(sample_uuid)
+            if not injection or ensemble_uuid not in injection.ensembles:
+                continue
+
+            ensemble = injection.ensembles[ensemble_uuid]
+            assignment = self._model.getAssignment(ensemble_uuid)
+            widget.setPeakLabel(
+                uuid=ensemble_uuid,
+                html_label=_ensemble_label_html(ensemble, assignment),
+            )
+            return
 
     def clear_ensembles_for_sample(
         self,
@@ -159,6 +189,31 @@ class EnsembleUIManager(QtCore.QObject):
         """
         sample_widget = self._widget_mgr.get_widget(uuid)
         return sample_widget.getWindowSelectorBounds()
+
+
+def _ensemble_label_html(
+    ensemble: 'Ensemble',
+    assignment: Optional['FormulaAssignment'],
+) -> str:
+    """
+    Overlay label for an ensemble: its identity (compound name) on the first
+    line, and its formula on the second (from the FormulaAssignment if one
+    exists, otherwise the free-text proposed_formula). Either line may be
+    absent; returns '' if the ensemble has neither.
+
+    The formula line is built by the shared `format_assignment_label_html`,
+    so this overlay and the EnsembleViewer's title strip stay in agreement.
+    """
+    parts: list[str] = []
+
+    if ensemble.identity:
+        parts.append(str(ensemble.identity))
+
+    formula_html = format_assignment_label_html(ensemble, assignment)
+    if formula_html:
+        parts.append(formula_html)
+
+    return "<br>".join(parts)
 
 
 def _generate_ensemble_color(
