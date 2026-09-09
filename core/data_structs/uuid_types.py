@@ -27,3 +27,7 @@ AlignmentUUID = NewType(
     'AlignmentUUID',
     int,
 )
+AssignmentUUID = NewType(
+    'AssignmentUUID',
+    int,
+)

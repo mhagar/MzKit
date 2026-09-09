@@ -1,0 +1,72 @@
+"""
+FormulaAssignment: a molecular-formula assignment for a single MS source
+(currently an Ensemble), produced by core/formula/assign_formula.py.
+
+Standalone entity keyed by source UUID (NOT embedded on the already-mega
+Ensemble), so the same machinery can serve non-Ensemble MS data and
+AlignedAnalytes can reconcile per-sample assignments without owning them.
+
+`AssignedCandidate` is deliberately primitive-only (no find-mfs types), so the
+whole ranked result — including every score term — round-trips losslessly
+through the .mzk format.
+"""
+from __future__ import annotations
+
+import time
+import uuid as uuid_module
+from dataclasses import dataclass, field
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.data_structs.uuid_types import AssignmentUUID, EnsembleUUID
+
+
+@dataclass
+class AssignedCandidate:
+    """One ranked (formula, adduct) candidate with its full score breakdown."""
+    formula_str: str
+    adduct: Optional[str]
+    error_ppm: float
+    error_da: float
+    rdbe: float
+    mass_loglik: Optional[float]
+    iso_loglik: Optional[float]
+    chem_logprior: Optional[float]
+    ms2_loglik: Optional[float]
+    log_posterior: float
+
+
+@dataclass
+class FormulaAssignment:
+    """Ranked formula candidates for one MS source, plus the query provenance
+    needed to interpret and reproduce the result."""
+    source_uuid: 'EnsembleUUID'
+    candidates: list[AssignedCandidate]
+
+    uuid: 'AssignmentUUID' = field(default_factory=lambda: uuid_module.uuid4().int)
+    source_kind: str = 'ensemble'
+    chosen_idx: Optional[int] = None
+
+    # --- Provenance (how this assignment was produced) ---
+    precursor_mz: Optional[float] = None
+    charge: Optional[int] = None
+    adducts: Optional[list[str]] = None
+    elements: Optional[str] = None
+    autodetect_cl_br: bool = False
+    ms2_mode: Optional[str] = None
+    error_ppm: Optional[float] = None
+    instrument: str = 'unknown'
+    ms2_weight: float = 1.0
+    created_at: float = field(default_factory=time.time)
+
+    @property
+    def top(self) -> Optional[AssignedCandidate]:
+        """The best-ranked candidate, or None if the search was empty."""
+        return self.candidates[0] if self.candidates else None
+
+    @property
+    def chosen(self) -> Optional[AssignedCandidate]:
+        """The user-accepted candidate, or None if none accepted yet."""
+        if self.chosen_idx is None or self.chosen_idx >= len(self.candidates):
+            return None
+        return self.candidates[self.chosen_idx]
