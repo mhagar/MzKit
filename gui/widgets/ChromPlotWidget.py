@@ -251,6 +251,18 @@ class ChromPlotWidget(pg.PlotWidget):
     ):
         self.pi.setSelectionIndicator(xpos)
 
+    def setSelectionIndicatorActive(
+        self,
+        active: bool,
+    ):
+        """
+        Style the scan selector indicate if it's the live scan cursor
+         or just 'parked' while in Composite mode
+        active:red
+        inactive: greyed + dashed
+        """
+        self.pi.setSelectionIndicatorActive(active)
+
     def setSelectionIndicatorVisible(
         self,
         visible: bool,
@@ -796,6 +808,20 @@ class ChromPlotItem(pg.PlotItem):
         visible: bool,
     ):
         self.selection_indicator.setVisible(visible)
+
+    def setSelectionIndicatorActive(
+        self,
+        active: bool,
+    ):
+        """
+        Solid red when the selector is the live scan cursor (Scan mode);
+        greyed + dashed when it's just parked context (Composite mode).
+        """
+        if active:
+            pen = pg.mkPen('r')
+        else:
+            pen = pg.mkPen('grey', style=QtCore.Qt.DashLine)
+        self.selection_indicator.setPen(pen)
 
 
     def mousePressEvent(self, ev):
