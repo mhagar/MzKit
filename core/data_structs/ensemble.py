@@ -727,9 +727,13 @@ class Ensemble:
         ms_level: Literal[1, 2],
         text: str,
         scan_num: Optional[int] = None,
+        source: str = 'user',
     ) -> 'GenericAnnotation':
         """
-        Create and add a free-form user annotation anchored to a peak.
+        Create and add a free-form annotation anchored to a peak.
+
+        `source` tags the origin ('user', or e.g. 'auto_adduct'); see
+        `remove_generic_annots_by_source`.
         """
         cofeatures = self._get_cofeatures(ms_level)
         if not (0 <= cofeature_idx < len(cofeatures)):
@@ -743,10 +747,26 @@ class Ensemble:
             ms_level=ms_level,
             text=text,
             scan_num=scan_num,
+            source=source,
         )
 
         self.generic_annots[annot.uuid] = annot
         return annot
+
+    def remove_generic_annots_by_source(
+        self,
+        source: str,
+    ) -> None:
+        """
+        Drop every generic annotation with the given `source` tag, leaving all
+        others intact. Used to clear a prior automated pass's labels (e.g.
+        'auto_adduct') before re-attaching, so re-runs don't stack duplicates.
+        """
+        self.generic_annots = {
+            uuid_: annot
+            for uuid_, annot in self.generic_annots.items()
+            if annot.source != source
+        }
 
     def add_ion_pair_annot(
         self,
@@ -930,12 +950,16 @@ class GenericAnnotation:
     """
     Free-form user annotation anchored to a single cofeature peak.
     `scan_num`: see `MzDiffAnnotation.scan_num`.
+    `source`: who created it -- 'user' for manual annotations, or a tag like
+    'auto_adduct' for programmatically-attached labels, so an automated pass can
+    clear+replace only its own labels without touching the user's.
     """
     cofeature_idx: int
     ms_level: Literal[1, 2]
     text: str
     uuid: int = field(default_factory=lambda: uuid.uuid4().int)
     scan_num: Optional[int] = None
+    source: str = 'user'
 
 
 @dataclass
