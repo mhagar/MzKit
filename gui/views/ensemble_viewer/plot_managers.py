@@ -19,6 +19,7 @@ from numpy.typing import NDArray
 from typing import TYPE_CHECKING, Literal, Optional
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
+    from core.data_structs.composite_spectrum import CompositeSpectrum
     from gui.widgets.MSPlotWidget import MSPlotWidget
     from gui.widgets.ChromPlotWidget import ChromPlotWidget
 
@@ -443,6 +444,13 @@ class SpectrumPlotManager(QtCore.QObject):
         self.selected_rt: float = 0.0
         self._normalize_spectra: bool = False
 
+        # The *raw* (unnormalized) arrays currently on each plot, whether from
+        # a scan (populate_spectrum_plot) or the composite (populate_composite).
+        # Cached so click/hover lookups don't have to re-derive from a scan_rt
+        # (which doesn't exist in composite mode).
+        self._current_ms1: Optional[NDArray] = None
+        self._current_ms2: Optional[NDArray] = None
+
         # Connect internal signal forwarding
         self.ms1_plot.sigMSSignalClicked.connect(
             self._on_ms1_clicked
@@ -473,6 +481,8 @@ class SpectrumPlotManager(QtCore.QObject):
         """
         self.ensemble = None
         self.selected_rt = 0.0
+        self._current_ms1 = None
+        self._current_ms2 = None
         self.clear_signal_markers()
 
         empty = to_spec_arr(
@@ -499,7 +509,7 @@ class SpectrumPlotManager(QtCore.QObject):
     ):
         """
         Given a retention time, plots the ensemble spectrum
-        for both MS1 and MS2
+        for both MS1 and MS2 (Scan mode).
         """
         self.selected_rt = scan_rt
 
@@ -512,18 +522,58 @@ class SpectrumPlotManager(QtCore.QObject):
                 ms_level=ms_level,
                 scan_rt=scan_rt,
             )
+            self._render_spectrum(plot, ms_level, spectrum)
 
-            intsy = spectrum['intsy']
-            bpc = float(intsy.max()) if intsy.size else 0.0
+    def populate_composite(
+        self,
+        composite: 'CompositeSpectrum',
+    ):
+        """
+        Plot the ensemble's composite (representative) MS1 + MS2, with no scan
+        to specify (Composite mode). MS2 may be absent -> empty plot.
 
-            if self._normalize_spectra and bpc > 0:
-                spectrum = spectrum.copy()
-                spectrum['intsy'] = spectrum['intsy'] / bpc
+        selected_rt is parked at the ensemble apex so scan-based consumers
+        (export, chrom indicator) have a sensible reference.
+        """
+        self.selected_rt = self.ensemble.peak_rt
 
-            plot.setSpectrumArray(spectrum)
-            plot.update_bpc_label(
-                f"BPC: {bpc:.2e}" if bpc > 0 else ""
-            )
+        empty = to_spec_arr(
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+        )
+        self._render_spectrum(self.ms1_plot, 1, composite.ms1)
+        self._render_spectrum(
+            self.ms2_plot, 2,
+            composite.ms2 if composite.ms2 is not None else empty,
+        )
+
+    def _render_spectrum(
+        self,
+        plot: 'MSPlotWidget',
+        ms_level: Literal[1, 2],
+        spectrum: NDArray,
+    ):
+        """
+        Cache the raw spectrum for spec_idx lookups, then draw it (normalized
+        for display if enabled). Shared by the scan and composite paths.
+        """
+        if ms_level == 1:
+            self._current_ms1 = spectrum
+        else:
+            self._current_ms2 = spectrum
+
+        intsy = spectrum['intsy']
+        bpc = float(intsy.max()) if intsy.size else 0.0
+
+        display = spectrum
+        if self._normalize_spectra and bpc > 0:
+            display = spectrum.copy()
+            display['intsy'] = display['intsy'] / bpc
+
+        plot.setSpectrumArray(display)
+        plot.update_bpc_label(
+            f"BPC: {bpc:.2e}" if bpc > 0 else ""
+        )
 
     def add_signal_marker(
         self,
@@ -609,14 +659,14 @@ class SpectrumPlotManager(QtCore.QObject):
         ms_level: Literal[1, 2],
     ) -> float:
         """
-        Patching poor signal design that's baked in to SampleViewer lmao
+        Intensity of a clicked/hovered signal, read off whatever is currently
+        displayed (scan or composite) rather than re-derived from a scan_rt --
+        composite mode has no scan_rt, and this also avoids a redundant lookup.
         """
-        spectrum: NDArray[float] = self.ensemble.get_spectrum(
-            ms_level=ms_level,
-            scan_rt=self.selected_rt
-        )
-        intsy: float = spectrum['intsy'][spec_idx]  # type: ignore
-        return intsy
+        spectrum = self._current_ms1 if ms_level == 1 else self._current_ms2
+        if spectrum is None or spec_idx >= spectrum.shape[0]:
+            return 0.0
+        return float(spectrum['intsy'][spec_idx])  # type: ignore
 
     def _on_ms1_hovered(
         self,

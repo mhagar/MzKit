@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from core.cli.export_ensemble import build_ensemble_export
+from core.data_structs.composite_spectrum import CompositeSpectrum
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
@@ -78,6 +79,39 @@ def test_build_ensemble_export_roundtrips_formats(ensemble: 'Ensemble'):
     assert 'BEGIN IONS' in mgf and 'PEPMASS=' in mgf
     assert '>compound' in export.to_sirius_text()
     assert export.to_json_obj()['ms1_spectrum']['mz']
+
+
+def test_composite_spectrum_dia(ensemble: 'Ensemble'):
+    # DIA fixture: MS1 is the apex scan restricted to the ensemble's lanes.
+    composite = ensemble.composite_spectrum
+    assert isinstance(composite, CompositeSpectrum)
+
+    assert composite.precursor_mz == pytest.approx(ensemble.resolved_precursor_mz)
+    assert composite.charge == ensemble.resolved_charge
+
+    # MS1 equals the apex-scan spectrum, and carries real signal.
+    apex_ms1 = ensemble.get_spectrum(ms_level=1, scan_num=ensemble.base_scan_num)
+    assert composite.ms1.shape == apex_ms1.shape
+    np.testing.assert_array_equal(composite.ms1['mz'], apex_ms1['mz'])
+    assert composite.ms1['intsy'].max() > 0
+
+    # MS2 is either absent or a plain (mz, intsy) spectrum.
+    if composite.ms2 is not None:
+        assert {'mz', 'intsy'} <= set(composite.ms2.dtype.names)
+
+
+def test_composite_spectrum_is_memoized(ensemble: 'Ensemble'):
+    # Repeated access returns the identical cached object.
+    assert ensemble.composite_spectrum is ensemble.composite_spectrum
+
+
+def test_composite_spectrum_dda_not_implemented(ensemble: 'Ensemble', monkeypatch):
+    # Composite is DIA-only for now; DDA must fail loudly rather than return a
+    # half-defined spectrum.
+    monkeypatch.setattr(ensemble.injection, 'acquisition_mode', 'dda')
+    assert ensemble.is_dda is True
+    with pytest.raises(NotImplementedError):
+        _ = ensemble.composite_spectrum
 
 
 

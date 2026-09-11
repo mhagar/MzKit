@@ -15,6 +15,7 @@ from core.utils.array_types import (
     to_spec_arr, to_ensemble_arr,
     SpectrumArray, ConsensusSpectrumArray
 )
+from core.data_structs.composite_spectrum import CompositeSpectrum
 from core.utils.formula_formatting import format_formula_obj_to_html
 from core.utils.spectra import merge_spectra, normalize_spectrum
 
@@ -73,6 +74,10 @@ class Ensemble:
         default=None, init=False, repr=False,
     )
     _ms2_cofeature_mz_lane_idxs: np.ndarray[int, ...] = field(
+        default=None, init=False, repr=False,
+    )
+    # Representative (MS1, MS2) pair
+    _composite: Optional['CompositeSpectrum'] = field(
         default=None, init=False, repr=False,
     )
 
@@ -143,30 +148,43 @@ class Ensemble:
         return "<br>".join(parts)
 
     def _populate_attrs(self):
-        # Find base co-feature
+        # Find the ensemble's MS1 apex and get the scan at that position
         ms1_scan_array: 'ScanArray' = self.injection.get_scan_array(ms_level=1)
-        ftr_ptr_intsys: np.ndarray = np.array(
-            [
-                x.get_max_intsy(
-                    scan_array=ms1_scan_array,
-                ) for x in self.ms1_cofeatures
-            ]
-        )
 
-        self.base_ms1_cofeature_idx: int = np.argmax(ftr_ptr_intsys) # type: ignore
+        best_cofeature_idx = 0
+        best_scan_num = 0
+        best_intsy = -np.inf
+        best_rt = 0.0
+
+        for idx, cofeature in enumerate(self.ms1_cofeatures):
+            scan_idxs = cofeature.scan_idxs
+            if scan_idxs.size == 0:
+                continue
+
+            s0 = int(scan_idxs[0])
+            s1 = int(scan_idxs[-1])
+            intsys = ms1_scan_array.intsy_arr[
+                cofeature.mz_lane_idx, s0:s1 + 1
+            ].toarray().flatten()
+            if intsys.size == 0:
+                continue
+
+            i = int(intsys.argmax())
+            if intsys[i] > best_intsy:
+                best_intsy = float(intsys[i])
+                best_cofeature_idx = idx
+                best_scan_num = s0 + i
+                best_rt = float(ms1_scan_array.rt_arr[s0 + i])
+
+        self.base_ms1_cofeature_idx = best_cofeature_idx
+        self.base_scan_num = best_scan_num
+        self.base_intsy = best_intsy if best_intsy != -np.inf else 0.0
+        self.peak_rt = best_rt
+
         base_ftr_ptr = self.ms1_cofeatures[self.base_ms1_cofeature_idx]
-
-        self.base_scan_num = base_ftr_ptr.get_max_intsy_scan_num(
-            scan_array=self.injection.scan_array_ms1
-        )
-
         self.base_mz = base_ftr_ptr.get_mz_values(
             self.injection.scan_array_ms1
         ).mean()
-
-        bpc = base_ftr_ptr.get_chrom_array(ms1_scan_array)
-        self.base_intsy = np.max(bpc['intsy'])
-        self.peak_rt = bpc['rt'][np.argmax(bpc['intsy'])]
 
     def set_injection(
         self,
@@ -263,6 +281,39 @@ class Ensemble:
             return float(self.precursor_mz)
 
         return float(self.base_mz)
+
+    # ------------------------------------------------------------------
+    # Composite spectrum
+    # ------------------------------------------------------------------
+
+    @property
+    def composite_spectrum(self) -> CompositeSpectrum:
+        """
+        The ensemble's representative (MS1, MS2) pair
+        i.e. for use with find-mfs or showing by default in EnsembleViewer
+
+        DIA / MS1-only only for now: just uses the apex scan.
+        DDA raises NotImplementedError until I implement precursor stitching
+
+        Computed lazily
+        """
+        if self.is_dda:
+            raise NotImplementedError(
+                "composite_spectrum is DIA-only for now (DDA stitching pending)"
+            )
+
+        if self._composite is None:
+            ms2_spectra = self.get_ms2_spectra()
+            self._composite = CompositeSpectrum(
+                ms1=self.get_spectrum(
+                    ms_level=1, scan_num=self.base_scan_num
+                ),
+                ms2=ms2_spectra[0].spectrum if ms2_spectra else None,
+                precursor_mz=self.resolved_precursor_mz,
+                charge=self.resolved_charge,
+            )
+
+        return self._composite
 
     # ------------------------------------------------------------------
     # MS2 spectrum production

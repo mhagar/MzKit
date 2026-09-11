@@ -68,6 +68,9 @@ class EnsembleViewer(
         self.ensemble: Optional['Ensemble'] = None
         self.properties_model: Optional['EnsemblePropertiesModel'] = None
 
+        # Whether the spectrum panel is showing the Composite spectrum
+        self._showing_composite: bool = False
+
         # Transient plot-id → annotation-uuid maps. These are populated
         # by the _draw_* methods and cleared at the top of every
         # _redraw_annotations_for_current_scan call, because the plot
@@ -365,6 +368,18 @@ class EnsembleViewer(
     ):
         self._update_tool_buttons()
 
+        if not self.ensemble:
+            return
+
+        # Re-render the spectrum panels for the new mode, then redraw the
+        # annotations that belong on whatever is now displayed.
+        scan_rt = (
+            self.spectrum_manager.selected_rt
+            or self._snap_rt_to_ensemble(self.ensemble.peak_rt)
+        )
+        self._populate_spectra_for_mode(scan_rt=scan_rt)
+        self._redraw_annotations_for_current_scan()
+
     def on_tool_reset(self):
         """
         Called when tool is reset/cancelled
@@ -481,19 +496,19 @@ class EnsembleViewer(
 
         self._update_transform_settings()
 
-        # For DDA, snap the initial spectrum RT onto a matched MS2 scan
-        # so we never open onto a scan that doesn't belong to this
-        # ensemble. For non-DDA, the apex RT passes through unchanged.
-        initial_rt = self._snap_rt_to_ensemble(self._ensemble_apex_rt())
+        # For DDA, snap the initial RT onto a matched MS2 scan so we never
+        # open onto a scan that doesn't belong to this ensemble. For non-DDA
+        # the (corrected) apex RT passes through unchanged.
+        initial_rt = self._snap_rt_to_ensemble(self.ensemble.peak_rt)
 
-        # Populate plots using managers
-        self.spectrum_manager.populate_spectrum_plot(
-            scan_rt=initial_rt
-        )
+        # Chromatogram + DDA overlays are RT context, the same in either mode.
         self.dda_overlay_mgr.update(scan_rt=initial_rt)
         self.chrom_manager.populate_chromatogram_plot(
             peak_rt=initial_rt
         )
+
+        # Spectrum panels: composite by default, scan-by-scan otherwise.
+        self._populate_spectra_for_mode(scan_rt=initial_rt)
 
         # Open on a meaningful selection: overlay the MS1/MS2 base-peak
         # XICs and populate the correlation plot, as if the user had
@@ -505,37 +520,34 @@ class EnsembleViewer(
             self.onChromatogramSelectorMoved
         )
 
-    def _ensemble_apex_rt(self) -> float:
+    def _populate_spectra_for_mode(self, scan_rt: float):
         """
-        Retention time of the tallest MS1 point in the ensemble.
+        Render the MS1/MS2 spectrum panels according to the active mode.
 
-        `Ensemble.peak_rt` is derived from `FeaturePointer.get_chrom_array`,
-        whose underlying slice (`scan_start:scan_end`) is end-exclusive and
-        so drops each cofeature's final scan. When a cofeature apexes on
-        that last scan, `peak_rt` lands a scan early — or on the wrong
-        cofeature, since the base-cofeature pick suffers the same
-        truncation. Here we recompute over the *inclusive* scan span of
-        every MS1 cofeature so the initial selection sits on the true apex.
+        Composite mode shows the ensemble's representative (composite) spectrum
+        -- but only where one is defined (DIA / MS1-only). For DDA, composite
+        mode falls back to the scan-based view (snap-to-matched-MS2 + badges)
+        until precursor-confirmed stitching lands, so DDA workflows keep
+        working. `_showing_composite` is True only when a *true* composite is
+        on screen, which is what makes composite-mode annotations scan-agnostic.
         """
-        ensemble = self.ensemble
-        scan_array = ensemble.injection.scan_array_ms1
+        show_composite = (
+            self.tool_manager.active_mode == Mode.COMPOSITE
+            and not self.ensemble.is_dda
+        )
 
-        best_rt = ensemble.peak_rt
-        best_intsy = -np.inf
-        for cofeature in ensemble.ms1_cofeatures:
-            s0 = int(cofeature.scan_idxs[0])
-            s1 = int(cofeature.scan_idxs[-1])
-            intsys = scan_array.intsy_arr[
-                cofeature.mz_lane_idx, s0:s1 + 1
-            ].toarray().flatten()
-            if intsys.size == 0:
-                continue
-            i = int(intsys.argmax())
-            if intsys[i] > best_intsy:
-                best_intsy = float(intsys[i])
-                best_rt = float(scan_array.rt_arr[s0 + i])
+        if show_composite:
+            self.spectrum_manager.populate_composite(
+                self.ensemble.composite_spectrum
+            )
+        else:
+            self.spectrum_manager.populate_spectrum_plot(scan_rt=scan_rt)
 
-        return float(best_rt)
+        self._showing_composite = show_composite
+
+        # Grey/dash the scan cursor while it's just parked context in
+        # composite mode; solid red when it's the live scan selector.
+        self.chromPlotWidget.setSelectionIndicatorActive(not show_composite)
 
     def _tallest_ms2_cofeature_idx(self) -> Optional[int]:
         """
@@ -667,7 +679,16 @@ class EnsembleViewer(
     ):
         """
         Called when user moves the chromatogram selector
+
+        Drops out of Composite mode (i.e. treated as a request
+        to enter scan mode)
         """
+        # Triggering the action (rather than tool_manager.request_mode)
+        # keeps the toggle buttons in sync; on_tool_mode_changed
+        # then repaints the panels scan-based
+        if self.tool_manager.active_mode == Mode.COMPOSITE:
+            self.actionScan.trigger()
+
         new_xpos = slide_selector.getXPos()
 
         # For DDA, snap the cursor to the nearest RT that actually belongs
@@ -678,6 +699,7 @@ class EnsembleViewer(
         if new_xpos != self.chrom_manager.selected_rt:
 
             self.spectrum_manager.populate_spectrum_plot(scan_rt=new_xpos)
+            self._showing_composite = False
             self.dda_overlay_mgr.update(scan_rt=new_xpos)
             self.chrom_manager.selected_rt = new_xpos
             self._redraw_annotations_for_current_scan()
@@ -722,6 +744,7 @@ class EnsembleViewer(
         with QtCore.QSignalBlocker(indicator):
             indicator.setPos(rt)
         self.spectrum_manager.populate_spectrum_plot(scan_rt=rt)
+        self._showing_composite = False
         self.dda_overlay_mgr.update(scan_rt=rt)
         self.chrom_manager.selected_rt = rt
         self._redraw_annotations_for_current_scan()
@@ -734,7 +757,8 @@ class EnsembleViewer(
         if not self.ensemble:
             return
         rt = self.chrom_manager.selected_rt or self.ensemble.peak_rt
-        self.spectrum_manager.populate_spectrum_plot(scan_rt=rt)
+        # Re-render honoring the active mode (composite vs scan).
+        self._populate_spectra_for_mode(scan_rt=rt)
         self.dda_overlay_mgr.update(scan_rt=rt)
         self._redraw_annotations_for_current_scan()
 
@@ -1042,8 +1066,15 @@ class EnsembleViewer(
         Scan index (column in the ms_level ScanArray) for the currently
         displayed spectrum. Used as the anchor when committing an
         annotation, and when filtering which annotations to re-draw.
+
+        Returns None when a true composite is on screen: the composite isn't a
+        single scan, so annotations made against it are scan-agnostic. (DDA
+        composite mode currently falls back to a real scan, so it still returns
+        that scan and its annotations stay anchored.)
         """
         if not self.ensemble or not self.ensemble.injection:
+            return None
+        if self._showing_composite:
             return None
         scan_array = self.ensemble.injection.get_scan_array(ms_level)
         if scan_array is None:
