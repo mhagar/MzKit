@@ -61,6 +61,9 @@ class Ui_Form(object):
         self.toolExportSpec = QtWidgets.QToolButton(Form)
         self.toolExportSpec.setObjectName("toolExportSpec")
         self.horizontalLayout.addWidget(self.toolExportSpec)
+        self.toolAutoFindMf = QtWidgets.QToolButton(Form)
+        self.toolAutoFindMf.setObjectName("toolAutoFindMf")
+        self.horizontalLayout.addWidget(self.toolAutoFindMf)
         self.verticalLayout.addLayout(self.horizontalLayout)
         self.ms1_plot = MSPlotWidget(Form)
         self.ms1_plot.setObjectName("ms1_plot")
@@ -165,6 +168,8 @@ class Ui_Form(object):
         self.actionAddAnnot = QtWidgets.QAction(Form)
         self.actionAddAnnot.setCheckable(True)
         self.actionAddAnnot.setObjectName("actionAddAnnot")
+        self.actionAutoFindMf = QtWidgets.QAction(Form)
+        self.actionAutoFindMf.setObjectName("actionAutoFindMf")
 
         self.retranslateUi(Form)
         self.tabWidget.setCurrentIndex(0)
@@ -182,6 +187,7 @@ class Ui_Form(object):
         self.toolClearScanAnnots.setText(_translate("Form", "Clr Scan"))
         self.toolClearAllAnnots.setText(_translate("Form", "Clr All"))
         self.toolExportSpec.setText(_translate("Form", "EXPORT"))
+        self.toolAutoFindMf.setText(_translate("Form", "AUTO FIND-MF"))
         self.checkNormalizeSpectra.setText(_translate("Form", "Normalize Intensities"))
         self.checkShowMiscPlots.setText(_translate("Form", "Show misc. plots"))
         self.checkNormalize.setText(_translate("Form", "Normalize"))
@@ -210,6 +216,8 @@ class Ui_Form(object):
         self.actionClearAllAnnots.setShortcut(_translate("Form", "Ctrl+Shift+Backspace"))
         self.actionAddAnnot.setText(_translate("Form", "Annot"))
         self.actionAddAnnot.setShortcut(_translate("Form", "Shift+A"))
+        self.actionAutoFindMf.setText(_translate("Form", "AutoFindMf"))
+        self.actionAutoFindMf.setShortcut(_translate("Form", "Ctrl+Shift+F"))
 from gui.widgets.ChromPlotWidget import ChromPlotWidget
 from gui.widgets.MSPlotWidget import MSPlotWidget
 from pyqtgraph import PlotWidget

@@ -70,6 +70,7 @@ class MainController:
         self._connect_sample_controller_signals()
         self._connect_sample_viewer_signals()
         self._connect_alignment_viewer_signals()
+        self._connect_ensemble_viewer_signals()
 
         # Initialize controllers (must be done at end)
         self.sample_controller.initialize_sample_model()
@@ -276,6 +277,21 @@ class MainController:
         )
         alignment_viewer.sigAddSamplesRequested.connect(
             self._handle_add_samples_request
+        )
+
+    def _connect_ensemble_viewer_signals(self) -> None:
+        """
+        Wire the Ensemble Viewer's action signals. Safe to call at init:
+        initialize_all_windows() creates the viewer up front.
+        """
+        ensemble_viewer = self.subwindow_manager.get_window(
+            'ensemble_viewer'
+        )
+        if not ensemble_viewer:
+            return
+
+        ensemble_viewer.sigAutoFindMfRequested.connect(
+            self._handle_auto_find_mf_request
         )
 
     def _handle_add_samples_request(
@@ -851,6 +867,43 @@ class MainController:
             },
             on_completion_func=self.sample_controller.on_ensemble_generation,
         )
+
+    def _handle_auto_find_mf_request(
+        self,
+        ensemble: 'data_structs.Ensemble',
+    ):
+        """
+        Auto-annotate a single ensemble via find-mfs, in the background. The
+        result (FormulaAssignment + in-place adduct labels) comes back to
+        _on_auto_find_mf_complete on the GUI thread.
+        """
+        if ensemble is None:
+            return
+
+        from core.cli.auto_find_mfs import annotation_params_from_config
+
+        self.process_controller.start_process(
+            module_path="core.cli.auto_find_mfs",
+            function_name="annotate_ensembles_dia",
+            parameters={
+                "ensembles": [ensemble],
+                **annotation_params_from_config(self.config),
+            },
+            on_completion_func=self._on_auto_find_mf_complete,
+        )
+
+    def _on_auto_find_mf_complete(
+        self,
+        assignments: list,
+    ):
+        """
+        Register each assignment. sigAssignmentAdded then drives the Ensemble
+        Viewer's title-strip + adduct-label refresh and the Sample Viewer's
+        overlay label. (Adduct annotations + proposed_formula were already
+        attached to the ensemble in the worker.)
+        """
+        for assignment in assignments or []:
+            self.data_registry.register_assignment(assignment)
 
     def _handle_align_ensembles_request(
         self,

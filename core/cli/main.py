@@ -475,6 +475,56 @@ def cmd_auto_extract(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
+    from core.utils.config import load_config
+    from core.cli.auto_find_mfs import (
+        annotate_ensembles_dia,
+        annotation_params_from_config,
+    )
+
+    mzk_path = Path(args.mzk)
+    registry = _load_registry(mzk_path)
+
+    params = annotation_params_from_config(load_config())
+    if args.error_ppm is not None:
+        params['error_ppm'] = args.error_ppm
+    if args.top_n is not None:
+        params['top_n'] = args.top_n
+    if args.no_adduct_labels:
+        params['attach_adduct_labels'] = False
+
+    samples = registry.get_all_samples()
+    if args.sample_name:
+        samples = [s for s in samples if s.name in set(args.sample_name)]
+        if not samples:
+            raise ValueError(
+                f"No samples matched --sample-name {args.sample_name}"
+            )
+
+    # Gather every ensemble across the selected samples
+    # (DDA ensembles are skipped inside annotate_ensembles_dia).
+    ensembles = []
+    for sample in samples:
+        injection = sample.injection
+        if injection is None:
+            continue
+        ensembles.extend(injection.ensembles.values())
+
+    if not ensembles:
+        logger.warning("No ensembles to annotate")
+        return
+
+    assignments = annotate_ensembles_dia(ensembles, **params)
+    for assignment in assignments:
+        registry.register_assignment(assignment)
+
+    output = _resolve_output(args, mzk_path)
+    save_project(output, registry)
+    logger.info(
+        f"Annotated {len(assignments)} ensemble(s); saved to {output}"
+    )
+
+
 def _auto_extract_overrides(args: argparse.Namespace) -> dict:
     """
     Collect the AutoEnsembleParams overrides for flags the user actually passed
@@ -865,6 +915,39 @@ def build_parser() -> argparse.ArgumentParser:
     p_auto.add_argument('--rt-end-min', type=float, default=None,
                         help='RT window end in minutes (needs --rt-start-min)')
     p_auto.set_defaults(func=cmd_auto_extract)
+
+    # --- auto-find-mfs ---
+    p_find_mf = subparsers.add_parser(
+        'auto-find-mfs',
+        help="Auto-assign molecular formulae to each sample's DIA ensembles",
+    )
+    p_find_mf.add_argument(
+        'mzk',
+        help='.mzk file containing sample data (with ensembles)',
+    )
+    p_find_mf.add_argument(
+        '--output-mzk',
+        default=None,
+        help='Output .mzk file (default: modify input in place)',
+    )
+    p_find_mf.add_argument(
+        '--sample-name',
+        nargs='+', default=None,
+        help='Only annotate these sample(s) by name (default: all)',
+    )
+    p_find_mf.add_argument(
+        '--error-ppm', type=float, default=None,
+        help='Precursor mass tolerance in ppm (default: [findmfs] config)',
+    )
+    p_find_mf.add_argument(
+        '--top-n', type=int, default=None,
+        help='Ranked candidates to keep per ensemble (default: config)',
+    )
+    p_find_mf.add_argument(
+        '--no-adduct-labels', action='store_true', default=False,
+        help='Do not attach adduct labels to MS1 signals',
+    )
+    p_find_mf.set_defaults(func=cmd_auto_find_mfs)
 
     # --- align ---
     p_align = subparsers.add_parser(

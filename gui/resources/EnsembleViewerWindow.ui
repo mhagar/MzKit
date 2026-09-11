@@ -128,6 +128,13 @@
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QToolButton" name="toolAutoFindMf">
+         <property name="text">
+          <string>AUTO FIND-MF</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
      <item>
@@ -370,6 +377,14 @@
    </property>
    <property name="shortcut">
     <string>Shift+A</string>
+   </property>
+  </action>
+  <action name="actionAutoFindMf">
+   <property name="text">
+    <string>AutoFindMf</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+F</string>
    </property>
   </action>
  </widget>

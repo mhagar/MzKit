@@ -43,6 +43,43 @@ def _get_scorer(
     return scorer
 
 
+def results_to_assigned_candidates(
+    hits,
+    ms2_weight: float,
+    top_n: int,
+) -> list[AssignedCandidate]:
+    """
+    Convert a find-mfs FormulaSearchResults into MzKit's primitive-only
+    AssignedCandidate list (top-N, ranked order preserved).
+
+    Shared by both find-mfs entry points: `_assign_one` (annotate_precursor)
+    and `core.cli.auto_find_mfs` (annotate_analyte_dia) hand us the same
+    FormulaSearchResults type.
+
+    `log_posterior`/`ms2_loglik` are the SET-level arrays
+    (aligned to the sorted candidate order), not the per-candidate
+     `ms2_logit` attribute.
+    """
+    posterior = hits.log_posterior(ms2_weight=ms2_weight)
+    ms2_loglik = hits.ms2_loglik()
+
+    return [
+        AssignedCandidate(
+            formula_str=c.formula.formula,
+            adduct=c.adduct,
+            error_ppm=c.error_ppm,
+            error_da=c.error_da,
+            rdbe=c.rdbe,
+            mass_loglik=c.mass_loglik,
+            iso_loglik=c.iso_loglik,
+            chem_logprior=c.chem_logprior,
+            ms2_loglik=float(ms2_loglik[j]),
+            log_posterior=float(posterior[j]),
+        )
+        for j, c in enumerate(hits.candidates[: int(top_n)])
+    ]
+
+
 def assign_formula(
     queries: list[FormulaQuery],
     top_n: int = _DEFAULT_TOP_N,
@@ -109,26 +146,9 @@ def _assign_one(
 
     hits = annotate_precursor(query.precursor_mz, **kwargs)
 
-    # Full posterior (incl. the set-normalized MS2 term) and the MS2 term itself,
-    # both aligned to the sorted candidate order.
-    posterior = hits.log_posterior(ms2_weight=query.ms2_weight)
-    ms2_loglik = hits.ms2_loglik()
-
-    candidates = [
-        AssignedCandidate(
-            formula_str=c.formula.formula,
-            adduct=c.adduct,
-            error_ppm=c.error_ppm,
-            error_da=c.error_da,
-            rdbe=c.rdbe,
-            mass_loglik=c.mass_loglik,
-            iso_loglik=c.iso_loglik,
-            chem_logprior=c.chem_logprior,
-            ms2_loglik=float(ms2_loglik[j]),
-            log_posterior=float(posterior[j]),
-        )
-        for j, c in enumerate(hits.candidates[: int(top_n)])
-    ]
+    candidates = results_to_assigned_candidates(
+        hits, ms2_weight=query.ms2_weight, top_n=top_n
+    )
 
     return FormulaAssignment(
         source_uuid=query.source_uuid,

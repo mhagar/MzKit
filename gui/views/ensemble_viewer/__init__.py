@@ -51,6 +51,9 @@ class EnsembleViewer(
 ):
     sigSelectionMade = QtCore.pyqtSignal()
     sigConfigurationMade = QtCore.pyqtSignal()
+    # Auto-annotate (find-mfs) requested for the current ensemble. The
+    # MainController runs it through ProcessController and registers the result.
+    sigAutoFindMfRequested = QtCore.pyqtSignal(object)  # Ensemble
 
     def __init__(
         self,
@@ -116,6 +119,15 @@ class EnsembleViewer(
         self._setup_tool_listeners()
         self._connect_signals()
         self._hide_misc_plots()
+
+        # React to formula assignments (from the manual tool, the auto button,
+        # or a headless batch) landing for whatever ensemble is on screen, so
+        # the title strip + adduct labels refresh without a bespoke callback.
+        self.data_source.subscribe_to_changes(
+            addition_callback=self._on_assignment_changed,
+            removal_callback=self._on_assignment_changed,
+            change_type='Assignment',
+        )
 
     def _connect_signals(self):
         # Connect spectrum manager signals
@@ -257,6 +269,12 @@ class EnsembleViewer(
         )
         self.actionExportSpec.triggered.connect(
             self.export_current_ensemble
+        )
+
+        # Auto find-MF (find-mfs annotate_analyte_dia). One-shot action.
+        self.toolAutoFindMf.setDefaultAction(self.actionAutoFindMf)
+        self.actionAutoFindMf.triggered.connect(
+            self._on_auto_find_mf_triggered
         )
 
         # Clear-annotation triggers (not modes — just one-shot actions).
@@ -445,6 +463,11 @@ class EnsembleViewer(
         self.initialize_property_table()
         self.refresh_assignment_display()
 
+        # Auto find-MF is DIA-only (composite_spectrum raises for DDA), so
+        # disable the button on DDA ensembles.
+        self.toolAutoFindMf.setEnabled(not ensemble.is_dda)
+        self.actionAutoFindMf.setEnabled(not ensemble.is_dda)
+
     def refresh_assignment_display(self):
         """
         Displays this ensemble's compound formula assignment as a title strip on
@@ -462,6 +485,30 @@ class EnsembleViewer(
             self.ensemble.uuid
         )
         return format_assignment_label_html(self.ensemble, assignment)
+
+    def _on_auto_find_mf_triggered(self):
+        """
+        Ask the MainController to auto-annotate the current ensemble via
+        find-mfs (runs through ProcessController). DIA-only; the button is
+        already disabled for DDA, but guard anyway.
+        """
+        if not self.ensemble or self.ensemble.is_dda:
+            return
+        self.sigAutoFindMfRequested.emit(self.ensemble)
+
+    def _on_assignment_changed(self, assignment):
+        """
+        A FormulaAssignment was added/removed. If it's for the ensemble on
+        screen, refresh the formula title strip and redraw annotations (the
+        auto pass may have attached adduct labels to the ensemble).
+        """
+        if (
+            not self.ensemble
+            or getattr(assignment, 'source_uuid', None) != self.ensemble.uuid
+        ):
+            return
+        self.refresh_assignment_display()
+        self._redraw_annotations_for_current_scan()
 
     def reset_for_new_project(self):
         """
