@@ -198,6 +198,13 @@ class MSPlotWidget(pg.PlotWidget):
     sigMSSignalClicked = QtCore.pyqtSignal(tuple) # tuple[spec_idx, mz_float]
     sigMSpectrumLeaved = QtCore.pyqtSignal()
 
+    # Mirror mode version of sigMSSignalHovered
+    # Mirrored spec_idx would be ambiguous across the two halves.
+    #   tuple[half ('top' | 'bottom'), spec_idx, mz, intsy]
+    # spec_idx indexes the SpectrumArray passed for that half, and
+    # intsy is its real (un-normalised, positive) intensity.
+    sigMirrorSignalHovered = QtCore.pyqtSignal(tuple)
+
     # Used by tool manager
     sigSelectionMade = QtCore.pyqtSignal()
     sigConfigurationMade = QtCore.pyqtSignal(dict)
@@ -573,7 +580,42 @@ class MSPlotWidget(pg.PlotWidget):
         self,
         spectrum_array: SpectrumArray,
     ):
+        self.pi.clear_mirror()
         self.pi.setSpectrumArray(spectrum_array)
+
+    # Mirror mode API
+    def set_mirror_spectra(
+        self,
+        top: SpectrumArray,
+        bottom: SpectrumArray,
+        top_label: str = "",
+        bottom_label: str = "",
+        matched: Optional[list[tuple[int, int]]] = None,
+    ) -> None:
+        """
+        Draws `top` as normal and `bottom` flipped below zero. Each
+        spectrum is normalised to its own maximum, so the y-axis runs
+        -100...100%.
+
+        :param top_label: Text drawn in the top-left corner of the plot
+        :param bottom_label: Text drawn in the bottom-left corner
+        :param matched: (top_idx, bottom_idx) pairs of matched peaks
+            (e.g. from matchms CosineGreedy). If given, matched peaks are
+            drawn in the normal colour and unmatched peaks dimmed.
+            If None, all peaks are drawn in the normal colour.
+        """
+        self.pi.set_mirror_spectra(
+            top, bottom, top_label, bottom_label, matched,
+        )
+
+    def clear_mirror(self) -> None:
+        """
+        Leaves mirror mode, returning to (empty) single-spectrum mode.
+        """
+        self.pi.clear_mirror()
+
+    def is_mirror(self) -> bool:
+        return self.pi.mirror is not None
 
 
     def MSSignalHovered(
@@ -603,7 +645,12 @@ class MSPlotWidget(pg.PlotWidget):
 
         if spectrum_idx is not None:
             self.hovered_ms_signal = (spectrum_idx, mz)
-            self.sigMSSignalHovered.emit(self.hovered_ms_signal)
+            if self.pi.mirror is not None:
+                self.sigMirrorSignalHovered.emit(
+                    self.pi.mirror_peak_info(spectrum_idx)
+                )
+            else:
+                self.sigMSSignalHovered.emit(self.hovered_ms_signal)
 
         else:
             self.hovered_ms_signal = None
@@ -641,7 +688,7 @@ class MSPlotWidget(pg.PlotWidget):
     ):
         super().mousePressEvent(QMouseEvent)
 
-        if self.hovered_ms_signal:
+        if self.hovered_ms_signal and self.pi.mirror is None:
             self.MSSignalClicked()
 
 
@@ -680,6 +727,24 @@ class MSPlotItem(pg.PlotItem):
             self.spectrum_plot,
         )
 
+        # Mirror mode: unmatched (dimmed) peaks, and the zero line
+        self.mirror_dim_plot: pg.PlotDataItem = pg.PlotDataItem(
+            connect='pairs',
+        )
+        self.mirror_dim_plot.setVisible(False)
+        self.addItem(
+            self.mirror_dim_plot,
+        )
+        self.zero_line: pg.InfiniteLine = pg.InfiniteLine(
+            pos=0,
+            angle=0,
+            pen=pg.mkPen(pg.getConfigOption('foreground')),
+        )
+        self.zero_line.setVisible(False)
+        self.addItem(
+            self.zero_line,
+        )
+
         # Mass bin indicator PlotDataItem
         self.mass_bin_markers: pg.PlotDataItem = pg.PlotDataItem(
             symbol='x',
@@ -710,12 +775,30 @@ class MSPlotItem(pg.PlotItem):
             self.vert_cursor
         )
 
+        # Mirror mode corner labels, in ViewBox (pixel) coordinates
+        self.mirror_labels: dict[str, QtWidgets.QGraphicsTextItem] = {}
+        for corner in ('top', 'bottom'):
+            label = QtWidgets.QGraphicsTextItem(self.vb)
+            label.setDefaultTextColor(
+                pg.mkColor(pg.getConfigOption('foreground'))
+            )
+            label.setZValue(1000)
+            label.setVisible(False)
+            self.mirror_labels[corner] = label
+        self.vb.sigResized.connect(self._reposition_mirror_labels)
+
         # State tracking
         self.spectrum: oms.MSSpectrum = oms.MSSpectrum()
         self.spectrum_array: dict = {
             'mz': np.array([]),
             'intsy': np.array([]),
         }
+
+        # Mirror mode state. None when in single-spectrum mode. In mirror
+        # mode, `spectrum_array` holds both spectra concatenated (top
+        # first, bottom after), normalised to %, with bottom intensities
+        # negated. See set_mirror_spectra().
+        self.mirror: Optional[dict] = None
 
 
 
@@ -731,13 +814,138 @@ class MSPlotItem(pg.PlotItem):
         self.plot_widget.sigSpectrumArrayChanged.emit()
 
 
+    def set_mirror_spectra(
+        self,
+        top: SpectrumArray,
+        bottom: SpectrumArray,
+        top_label: str = "",
+        bottom_label: str = "",
+        matched: Optional[list[tuple[int, int]]] = None,
+    ) -> None:
+        n_top = len(top)
+
+        combined = np.zeros(
+            n_top + len(bottom),
+            dtype=[('mz', 'f8'), ('intsy', 'f8')],
+        )
+        combined['mz'][:n_top] = top['mz']
+        combined['mz'][n_top:] = bottom['mz']
+        combined['intsy'][:n_top] = _normalise_intsy(top['intsy'])
+        combined['intsy'][n_top:] = -_normalise_intsy(bottom['intsy'])
+
+        matched_mask = None
+        if matched is not None:
+            matched_mask = np.zeros(len(combined), dtype=bool)
+            for top_idx, bottom_idx in matched:
+                matched_mask[top_idx] = True
+                matched_mask[n_top + bottom_idx] = True
+
+        self.set_mirror_state({
+            'top': top,
+            'bottom': bottom,
+            'n_top': n_top,
+            'matched_mask': matched_mask,
+        })
+        self.mirror_labels['top'].setPlainText(top_label)
+        self.mirror_labels['bottom'].setPlainText(bottom_label)
+        self._reposition_mirror_labels()
+
+        self.setSpectrumArray(SpectrumArray(combined))
+        self.scaleViewboxToSpectrumArray()
+
+    def clear_mirror(self) -> None:
+        if self.mirror is None:
+            return
+        # Read before the yMin=0 limit returns and shifts the view up
+        y_max = max(self.vb.viewRange()[1][1], 1.0)
+        self.set_mirror_state(None)
+        self.setSpectrumArray(SpectrumArray(
+            np.zeros(0, dtype=[('mz', 'f8'), ('intsy', 'f8')])
+        ))
+        # Drop the negative half of the view
+        self.vb.setYRange(0, y_max)
+
+    def set_mirror_state(
+        self,
+        mirror: Optional[dict],
+    ) -> None:
+        """
+        Switches the plot's graphics and view behaviour between mirror
+        and single-spectrum mode. Doesn't touch `spectrum_array`.
+        """
+        self.mirror = mirror
+        active = mirror is not None
+
+        self.zero_line.setVisible(active)
+        self.mirror_dim_plot.setVisible(active)
+        for label in self.mirror_labels.values():
+            label.setVisible(active)
+
+        if active:
+            # Dimmed variant of whatever pen the caller set
+            dim_pen = pg.mkPen(self.spectrum_plot.opts['pen'])
+            dim_color = dim_pen.color()
+            dim_color.setAlpha(60)
+            dim_pen.setColor(dim_color)
+            self.mirror_dim_plot.setPen(dim_pen)
+
+        self.vb.set_symmetric_y(active)
+        self.getAxis('left').set_mirror(active)
+
+    def mirror_peak_info(
+        self,
+        idx: int,
+    ) -> tuple[str, int, float, float]:
+        """
+        Maps an index into the combined mirror `spectrum_array` back to
+        (half, spec_idx, mz, intsy), where spec_idx indexes that half's
+        original SpectrumArray and intsy is its real intensity.
+        """
+        n_top = self.mirror['n_top']
+        if idx < n_top:
+            half, spec_idx, arr = 'top', idx, self.mirror['top']
+        else:
+            half, spec_idx, arr = 'bottom', idx - n_top, self.mirror['bottom']
+        return (
+            half,
+            int(spec_idx),
+            float(arr['mz'][spec_idx]),
+            float(arr['intsy'][spec_idx]),
+        )
+
+    def _reposition_mirror_labels(self) -> None:
+        margin = 4
+        rect = self.vb.rect()
+        self.mirror_labels['top'].setPos(margin, margin)
+        bottom = self.mirror_labels['bottom']
+        bottom.setPos(
+            margin,
+            rect.height() - bottom.boundingRect().height() - margin,
+        )
+
     def updateSpectrumPlot(
         self,
     ) -> None:
+        matched_mask = (
+            self.mirror['matched_mask'] if self.mirror is not None else None
+        )
+        if matched_mask is None:
+            normal = self.spectrum_array
+            self.mirror_dim_plot.setData(x=[], y=[])
+        else:
+            normal = self.spectrum_array[matched_mask]
+            dimmed = self.spectrum_array[~matched_mask]
+            self.mirror_dim_plot.setData(
+                *zero_pad_arrays(
+                    mz_arr=dimmed['mz'],
+                    intsy_arr=dimmed['intsy'],
+                )
+            )
+
         self.spectrum_plot.setData(
             *zero_pad_arrays(
-                mz_arr=self.spectrum_array['mz'],
-                intsy_arr=self.spectrum_array['intsy'],
+                mz_arr=normal['mz'],
+                intsy_arr=normal['intsy'],
             )
         )
         self.add_mass_labels()
@@ -773,6 +981,13 @@ class MSPlotItem(pg.PlotItem):
             ),
         )
 
+        if self.mirror is not None:
+            # Both halves are normalised to 100%; less headroom is
+            # needed than for a single spectrum
+            y_max = np.nanmax(np.abs(self.spectrum_array['intsy'])) * 1.30
+            self.vb.setYRange(min=-y_max, max=y_max)
+            return
+
         self.vb.setYRange(
             min=0,
             max=(
@@ -789,13 +1004,15 @@ class MSPlotItem(pg.PlotItem):
         # Build new annotations
         labels: list[pg.TextItem] = []
 
-        # Get the tallest 100 peaks
+        # Get the tallest 100 peaks (200 in mirror mode, which shows two
+        # spectra; there, bottom-half intensities are negative)
+        n_labels = 100 if self.mirror is None else 200
         sort_key = np.argsort(
-            self.spectrum_array['intsy']
+            np.abs(self.spectrum_array['intsy'])
         )
 
-        tallest_mz = self.spectrum_array['mz'][sort_key][-100:]
-        tallest_intsy = self.spectrum_array['intsy'][sort_key][-100:]
+        tallest_mz = self.spectrum_array['mz'][sort_key][-n_labels:]
+        tallest_intsy = self.spectrum_array['intsy'][sort_key][-n_labels:]
 
         # Add m/z labels
         for mz, intsy in zip(tallest_mz, tallest_intsy):
@@ -817,7 +1034,7 @@ class MSPlotItem(pg.PlotItem):
         )
         self.label_manager.set_labels(
             labels,
-            priority_key=lambda x: x.pos().y()  # Sort by intensity
+            priority_key=lambda x: abs(x.pos().y())  # Sort by intensity
         )
 
 
@@ -915,6 +1132,26 @@ class MSViewBox(
         # Neither m/z nor intensity is ever negative — clamp the view so it
         # can never descend below zero on either axis.
         self.setLimits(xMin=0.0, yMin=0.0)
+        # Mirror mode: y-range is kept symmetric about zero
+        self.symmetric_y = False
+
+    def set_symmetric_y(self, symmetric: bool):
+        self.symmetric_y = symmetric
+        # Mirrored spectra extend below zero
+        self.setLimits(yMin=None if symmetric else 0.0)
+
+    def setRange(self, rect=None, xRange=None, yRange=None, *args, **kwargs):
+        # Every zoom/pan path (scaleBy, translateBy, rect-zoom, setYRange)
+        # goes through here, so enforcing symmetry here covers them all
+        if self.symmetric_y:
+            if rect is not None:
+                xRange = (rect.left(), rect.right())
+                yRange = (rect.top(), rect.bottom())
+                rect = None
+            if yRange is not None:
+                y_max = max(abs(yRange[0]), abs(yRange[1]))
+                yRange = (-y_max, y_max)
+        super().setRange(rect, xRange, yRange, *args, **kwargs)
 
     def mouseDoubleClickEvent(self, ev):
         # Delegate to the PlotItem's data-driven auto-scale rather than
@@ -1113,7 +1350,7 @@ class MSLabelManager(QtCore.QObject):
         # Guard against empty/peakless spectra (e.g. a blank scan, or a
         # cleared plot): .max() has no identity on a zero-size array.
         self.absolute_intsy_threshold = (
-                data['intsy'].max() * self.intsy_threshold
+                np.abs(data['intsy']).max() * self.intsy_threshold
                 if data['intsy'].size
                 else 0.0
         )
@@ -1365,11 +1602,17 @@ class MSLabelManager(QtCore.QObject):
 
         mz_values, intsys = self.peak_data['mz'], self.peak_data['intsy']
 
-        # Find peaks that intersect with mz signals
+        # Find peaks that intersect with mz signals. Labels below zero
+        # belong to (negative) mirror-mode peaks, which grow downwards.
+        # (Rects are in view coords, so top() is the lower y value.)
+        if label_bounds.top() >= 0:
+            reaches_label = intsys >= label_bounds.top()
+        else:
+            reaches_label = intsys <= label_bounds.bottom()
         mask = (
             (mz_values >= label_bounds.left())
             & (mz_values <= label_bounds.right())
-            & (intsys >= label_bounds.top())
+            & reaches_label
         )
         return np.any(mask)
 
@@ -1409,8 +1652,13 @@ class MSLabelManager(QtCore.QObject):
             label: pg.TextItem
             current_bounds = self.get_label_bounds(label)
 
-            # Check if peak is taller than threshold
-            if current_bounds.y() < self.absolute_intsy_threshold:
+            # Check if peak is taller than threshold (distance of the
+            # label's peak-side edge from zero, for mirror-mode labels)
+            peak_edge = (
+                current_bounds.top() if current_bounds.top() >= 0
+                else -current_bounds.bottom()
+            )
+            if peak_edge < self.absolute_intsy_threshold:
                 label.setVisible(False)
                 hidden_count += 1
                 continue
@@ -1434,6 +1682,21 @@ class MSLabelManager(QtCore.QObject):
                 visible_bounds.append(current_bounds)
 
         return hidden_count
+
+
+def _normalise_intsy(
+        intsy: np.ndarray,
+) -> np.ndarray:
+    """
+    Scales intensities to % of their maximum (all zeros if empty/flat)
+    """
+    intsy = np.asarray(intsy, dtype=np.float64)
+    if intsy.size == 0:
+        return intsy
+    max_intsy = np.nanmax(intsy)
+    if not max_intsy > 0:
+        return np.zeros_like(intsy)
+    return intsy / max_intsy * 100.0
 
 
 def generate_labeltext(
@@ -1464,7 +1727,11 @@ def create_textitem(
     If `on_click` is provided, returns a `ClickableTextItem` that calls
     the callback (with the Qt button as int) on mouse press.
     """
-    anchor = (0.5, level + 0.05)
+    if pos[1] >= 0:
+        anchor = (0.5, level + 0.05)
+    else:
+        # Mirror-mode (negative) peak: hang the label below it
+        anchor = (0.5, -0.05)
     if on_click is not None:
         textitem = ClickableTextItem(html=text, anchor=anchor, on_click=on_click)
     else:
