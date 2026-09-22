@@ -62,6 +62,9 @@ class SampleWidget(
         int,  # MouseButton
     )
 
+    # Cross-bar seed tool: (SampleUUID, rt_start, rt_end, intensity)
+    sigSeedBarDrawn = QtCore.pyqtSignal(object, float, float, float)
+
 
     def __init__(
         self,
@@ -105,6 +108,10 @@ class SampleWidget(
         )
         self.chromPlotWidget.sigEnsemblePeakClicked.connect(
             self.on_ensemble_peak_clicked
+        )
+
+        self.chromPlotWidget.sigSeedBarDrawn.connect(
+            self.on_seed_bar_drawn
         )
 
         # TODO: Expose to user
@@ -203,6 +210,21 @@ class SampleWidget(
 
     def clearWindowSelector(self):
         self.chromPlotWidget.clearWindowSelector()
+
+    def set_seed_drag_enabled(self, enabled: bool):
+        self.chromPlotWidget.set_seed_drag_enabled(enabled)
+
+    def clear_seed_preview(self):
+        self.chromPlotWidget.clear_seed_preview()
+
+    def on_seed_bar_drawn(
+        self,
+        rt_start: float,
+        rt_end: float,
+        intensity: float,
+    ):
+        """Re-emit the cross-bar with this widget's sample UUID."""
+        self.sigSeedBarDrawn.emit(self.UUID, rt_start, rt_end, intensity)
 
     def addPeak(
         self,

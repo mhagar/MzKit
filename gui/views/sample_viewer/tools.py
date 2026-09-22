@@ -15,6 +15,7 @@ class ToolType(Enum):
     GETSPECTRUM = auto()
     GETCOMPOUND = auto()
     GETXIC = auto()
+    GETSEED = auto()  # cross-bar: drag an RT window + seed intensity on a chrom
 
 
 class ExtractionMode(Enum):

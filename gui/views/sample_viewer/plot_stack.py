@@ -55,6 +55,9 @@ class SampleStackView(
         int,     # MouseButton
     )
 
+    # Cross-bar seed tool: (SampleUUID, rt_start, rt_end, intensity)
+    sigSeedBarDrawn = QtCore.pyqtSignal(object, float, float, float)
+
 
     def __init__(
         self,
@@ -253,6 +256,14 @@ class SampleStackView(
         )
         sample_widget.sigEnsemblePeakClicked.connect(
             self.on_ensemble_peak_clicked
+        )
+
+        sample_widget.sigSeedBarDrawn.connect(
+            self.sigSeedBarDrawn.emit
+        )
+        # Newly created widgets inherit the current tool's seed-drag state.
+        sample_widget.set_seed_drag_enabled(
+            self._tool_type == ToolType.GETSEED
         )
 
     def on_chromatogram_hover(
@@ -574,11 +585,21 @@ class SampleStackView(
         """
         self._tool_type = new_tool
 
+        # Toggle the cross-bar drag gesture on every chromatogram to match.
+        seed_active = new_tool == ToolType.GETSEED
+        for _, sample_widget in self.sample_wdgt_mgr.get_all_widgets().items():
+            sample_widget.set_seed_drag_enabled(seed_active)
+
         match new_tool:
             case ToolType.NONE:
                 # Reset spectrum selectors (hide)
                 for _, sample_widget in self.sample_wdgt_mgr.get_all_widgets().items():
                     sample_widget.setSliderSelectorVisible(False)
+
+    def clear_seed_previews(self) -> None:
+        """Remove any drawn cross-bar previews from every chromatogram."""
+        for _, sample_widget in self.sample_wdgt_mgr.get_all_widgets().items():
+            sample_widget.clear_seed_preview()
 
     def on_tool_stage_changed(self, stage: ToolStage) -> None:
         pass

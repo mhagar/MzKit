@@ -114,6 +114,16 @@
            </widget>
           </item>
           <item>
+           <widget class="QToolButton" name="toolGetSeed">
+            <property name="text">
+             <string>AutoCmpd</string>
+            </property>
+            <property name="autoRaise">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QToolButton" name="toolGetCmpdMenu">
             <property name="text">
              <string>...</string>
@@ -451,6 +461,14 @@
    </property>
    <property name="shortcut">
     <string>Shift+C</string>
+   </property>
+  </action>
+  <action name="actionGetSeed">
+   <property name="text">
+    <string>GetSeed</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+C</string>
    </property>
   </action>
  </widget>

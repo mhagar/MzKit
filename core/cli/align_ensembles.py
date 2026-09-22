@@ -37,9 +37,55 @@ from core.data_structs.alignment import (
 )
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
     from core.data_structs import Sample, SampleUUID, EnsembleUUID
     from core.data_structs.feature_pointer import FeaturePointer
     from core.data_structs.scan_array import ScanArray
+
+
+# Config section holding the persisted alignment defaults. Single source of
+# truth for both the CLI (`mzkit align`) and the GUI alignment dialog.
+ALIGNMENT_SECTION = "alignment"
+
+
+def alignment_params_from_config(config: 'ConfigParser') -> AlignmentParams:
+    """
+    Build an AlignmentParams from the ``[alignment]`` config section, falling
+    back to AlignmentParams' own defaults for any missing key.
+    """
+    s = ALIGNMENT_SECTION
+    d = AlignmentParams()
+    return AlignmentParams(
+        rt_tolerance=config.getfloat(
+            s, "rt_tolerance", fallback=d.rt_tolerance),
+        mz_tolerance=config.getfloat(
+            s, "mz_tolerance", fallback=d.mz_tolerance),
+        ms1_similarity_threshold=config.getfloat(
+            s, "ms1_similarity_threshold",
+            fallback=d.ms1_similarity_threshold),
+        ms2_similarity_threshold=config.getfloat(
+            s, "ms2_similarity_threshold",
+            fallback=d.ms2_similarity_threshold),
+        ms1_weight=config.getfloat(s, "ms1_weight", fallback=d.ms1_weight),
+        ms2_weight=config.getfloat(s, "ms2_weight", fallback=d.ms2_weight),
+    )
+
+
+def alignment_params_to_config(
+    config: 'ConfigParser',
+    params: AlignmentParams,
+) -> None:
+    """
+    Write an AlignmentParams back into the ``[alignment]`` config section (in
+    memory; caller persists via ``save_config``). Inverse of
+    ``alignment_params_from_config``.
+    """
+    s = ALIGNMENT_SECTION
+    if not config.has_section(s):
+        config.add_section(s)
+
+    for key, value in params._asdict().items():
+        config.set(s, key, str(value))
 
 
 @dataclass
@@ -325,20 +371,32 @@ def _score_pairs(
             if sample_idxs[i] == sample_idxs[j]:
                 continue
 
-            ms1_sim = float(cosine.pair(ms1[i], ms1[j])['score'])
-            if ms1_sim < ms1_thr:
-                continue
+            score = 0.0
+            total_weight = 0.0
 
-            score = ms1_sim * w1
-            total_weight = w1
-
-            spec2_i, spec2_j = ms2[i], ms2[j]
-            if spec2_i is not None and spec2_j is not None:
-                ms2_sim = float(cosine.pair(spec2_i, spec2_j)['score'])
-                if ms2_sim < ms2_thr:
+            # MS1 only gates/contributes when it carries weight; w1 == 0
+            # disables MS1 comparison entirely (its threshold included).
+            if w1 > 0.0:
+                ms1_sim = float(cosine.pair(ms1[i], ms1[j])['score'])
+                if ms1_sim < ms1_thr:
                     continue
-                score += ms2_sim * w2
-                total_weight += w2
+                score += ms1_sim * w1
+                total_weight += w1
+
+            # Likewise MS2: w2 == 0 disables MS2 comparison entirely, so a
+            # poor (or DDA-ambiguous) MS2 match can't veto a strong MS1 one.
+            if w2 > 0.0:
+                spec2_i, spec2_j = ms2[i], ms2[j]
+                if spec2_i is not None and spec2_j is not None:
+                    ms2_sim = float(cosine.pair(spec2_i, spec2_j)['score'])
+                    if ms2_sim < ms2_thr:
+                        continue
+                    score += ms2_sim * w2
+                    total_weight += w2
+
+            # Both weights zero (or no usable spectra) => nothing to score on.
+            if total_weight == 0.0:
+                continue
 
             edges_i.append(i)
             edges_j.append(j)

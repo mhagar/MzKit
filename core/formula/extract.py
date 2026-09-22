@@ -89,6 +89,7 @@ def query_from_signals(
     instrument: str = 'unknown',
     ms2_weight: float = 1.0,
     ms2_mode: str = 'tallest',
+    ms2_spec: Optional['SpectrumArray'] = None,
     finder_kwargs: Optional[dict] = None,
 ) -> FormulaQuery:
     """
@@ -98,14 +99,20 @@ def query_from_signals(
      `precursor_mz` is its monoisotopic (lowest-m/z) peak and
      `ms1_peaks` is the selection itself.
 
-    MS2 comes from the ensemble.
+    MS2 normally comes from the ensemble (`get_ms2_spectra(mode=ms2_mode)`).
+    Callers may instead pass an explicit `ms2_spec` — the TEMPORARY DDA path
+    does this to feed find-mfs whatever MS2 spectrum the viewer has on screen,
+    since DDA MS2 production isn't wired up yet.
 
     :param ms1_signals: selected MS1 peaks — a SpectrumArray or a list of
         (mz, intensity) pairs.
-    :raises NotImplementedError: for DDA ensembles (not yet supported).
+    :param ms2_spec: explicit MS2 spectrum override. When given, it is used
+        directly and the DDA guard is skipped.
+    :raises NotImplementedError: for DDA ensembles when no `ms2_spec` override
+        is supplied (ensemble MS2 production is DIA-only for now).
     :raises ValueError: if no MS1 signals are given.
     """
-    if ensemble.is_dda:
+    if ensemble.is_dda and ms2_spec is None:
         raise NotImplementedError(
             "Compound formula assignment is not yet implemented for DDA "
             "ensembles; DIA / MS1-only only for now."
@@ -117,8 +124,9 @@ def query_from_signals(
 
     precursor_mz = float(ms1_spec['mz'].min())
 
-    ms2_list = ensemble.get_ms2_spectra(mode=ms2_mode)
-    ms2_spec = ms2_list[0].spectrum if ms2_list else None
+    if ms2_spec is None:
+        ms2_list = ensemble.get_ms2_spectra(mode=ms2_mode)
+        ms2_spec = ms2_list[0].spectrum if ms2_list else None
 
     return FormulaQuery(
         precursor_mz=precursor_mz,

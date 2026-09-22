@@ -333,6 +333,12 @@ class AutoEnsembleParams(NamedTuple):
         seed<->candidate delta-m/z matches a known adduct/isotope/loss.
     loose_corr_threshold, adduct_ppm_tol, polarity: adduct-loosening params.
     method: Peak-shape scoring metric ('cosine' | 'pearson').
+    dda_require_ms2: DDA-only. When True, only MS1 features that were isolated for
+        MS2 are grouped (precursor seeding + precursor recruitment). When False
+        (default), DDA data is grouped DIA-style — seed from every MS1 lane and
+        recruit coeluting lanes by peak shape, so unfragmented coeluting ions are
+        captured too — while still attaching the real triggered MS2 of whichever
+        members were fragmented. Ignored for DIA/ms1_only injections.
     """
     parent_threshold: float
     cofeature_threshold: float
@@ -359,6 +365,9 @@ class AutoEnsembleParams(NamedTuple):
     rt_range: tuple[float, float] | None = None
     # Peak-shape scoring metric for co-feature grouping ('cosine' | 'pearson').
     method: 'CofeatureMetric' = DEFAULT_COFEATURE_METRIC
+    # DDA-only: require MS2 to ensemble a feature (see class docstring). Default
+    # False -> group DDA data DIA-style, keeping real triggered MS2 where present.
+    dda_require_ms2: bool = False
 
 
 # Config section holding the persisted auto-generation defaults. Single source of
@@ -417,6 +426,7 @@ def auto_params_from_config(config: 'ConfigParser') -> AutoEnsembleParams:
         polarity=config.getint(s, "polarity", fallback=1),
         rt_range=rt_range,
         method=config.get(s, "method", fallback=DEFAULT_COFEATURE_METRIC),
+        dda_require_ms2=config.getboolean(s, "dda_require_ms2", fallback=False),
     )
 
 
@@ -464,6 +474,7 @@ def auto_params_to_config(
     setv("loose_corr_threshold", params.loose_corr_threshold)
     setv("adduct_ppm_tol", params.adduct_ppm_tol)
     setv("polarity", params.polarity)
+    setv("dda_require_ms2", params.dda_require_ms2)
     setv("rt_restrict", params.rt_range is not None)
     if params.rt_range is not None:
         setv("rt_start_min", params.rt_range[0] / 60.0)
@@ -485,19 +496,25 @@ def auto_generate_ensembles(
     coeluting lanes by peak-shape similarity (optionally adduct-aware), and
     attach MS2 by correlation.
 
-    For DDA injections, MS2 scans are sparse and interleaved across many
-    precursors, so correlating an MS2 lane against a continuous MS1 XIC (the
-    DIA model) does not hold. Instead this delegates to ``dda_config``: seed
-    from MS2-triggering precursor features and attach MS2 as the union of the
-    grouped precursors' actual triggering scans — the same construction the
-    manual DDA single-click path uses, which the Ensemble Viewer's DDA overlay
-    relies on.
+    For DDA injections the behaviour is gated by ``params.dda_require_ms2``:
+
+    - True: delegates to ``dda_config`` — seed from MS2-triggering precursor
+      features and attach MS2 as the union of the grouped precursors' actual
+      triggering scans (the same construction the manual DDA single-click path
+      uses, which the Ensemble Viewer's DDA overlay relies on). Only isolated
+      precursors are ever grouped.
+    - False (default): group DIA-style (``dia_config``) so coeluting MS1 features
+      that were never fragmented are captured too, but override MS2 attachment to
+      ``"precursor_by_lane"`` — union the real triggered MS2 of whichever grouped
+      lanes were fragmented (correlating a sparse triggered-MS2 lane against a
+      continuous MS1 XIC, the DIA model, does not hold for DDA).
 
     :param injection: Injection with assembled ScanArrays
     :param params: AutoEnsembleParams controlling thresholds
     :return: List of generated Ensembles
     """
-    if injection.acquisition_mode == 'dda':
+    is_dda = injection.acquisition_mode == 'dda'
+    if is_dda and params.dda_require_ms2:
         config = dda_config(
             min_intsy=params.cofeature_threshold,
             parent_threshold=params.parent_threshold,
@@ -520,6 +537,13 @@ def auto_generate_ensembles(
             # forwarded here, the filter is designed for DIA problems
         )
     else:
+        # DIA preset for real DIA/ms1_only AND for DDA when dda_require_ms2 is False.
+        # In the latter case the only change is MS2 attachment: instead of
+        # correlating (meaningless over sparse triggered MS2), union the real
+        # triggered scans of whichever grouped lanes were fragmented.
+        ms2_override = (
+            {"ms2_strategy": "precursor_by_lane"} if is_dda else {}
+        )
         config = dia_config(
             parent_threshold=params.parent_threshold,
             cofeature_threshold=params.cofeature_threshold,
@@ -545,6 +569,7 @@ def auto_generate_ensembles(
             polarity=params.polarity,
             ms2_corr_threshold=params.ms2_corr_threshold,
             rt_range=params.rt_range,
+            **ms2_override,
         )
     return extract_ensembles(
         injection, config,

@@ -65,10 +65,18 @@ SeedStrategy = Literal["all_lanes", "precursor"]
 WindowStrategy = Literal["fixed", "peak_bounds"]
 
 # How MS2 cofeatures are attached to an emitted ensemble.
-#   "none"        -> MS1-only
-#   "correlation" -> correlate MS2 lanes against the seed XIC (DIA)
-#   "precursor"   -> union of the grouped precursor features' MS2 scans (DDA)
-MS2Strategy = Literal["none", "correlation", "precursor"]
+#   "none"              -> MS1-only
+#   "correlation"       -> correlate MS2 lanes against the seed XIC (DIA)
+#   "precursor"         -> union of the grouped precursor features' MS2 scans;
+#                          seeds ARE precursors, so the seed/candidate objects carry
+#                          the MS2 scan idxs directly (DDA, precursor seeding)
+#   "precursor_by_lane" -> union of the triggered MS2 of any precursor feature whose
+#                          lane is in the emitted ensemble and whose apex falls in the
+#                          seed peak. Decoupled from the seed strategy (looked up via a
+#                          prebuilt lane->precursor index), so it works under all-lanes
+#                          seeding: DIA-style MS1 grouping over DDA data, keeping the
+#                          real triggered MS2 for whichever members were fragmented.
+MS2Strategy = Literal["none", "correlation", "precursor", "precursor_by_lane"]
 
 
 @dataclass
@@ -289,6 +297,16 @@ def extract_ensembles(
     provider = _make_seed_provider(injection, config)
     n_scans = ms1.intsy_arr.shape[1]
 
+    # For "precursor_by_lane" MS2 attachment the seed provider (all-lanes) knows
+    # nothing about precursors, so build the lane->precursor index once here. Empty
+    # (never raises) when the injection lacks MS2/precursor metadata, so this mode
+    # still emits MS1-only ensembles on such data.
+    precursor_index = (
+        _build_precursor_index(injection, config)
+        if config.ms2_strategy == "precursor_by_lane"
+        else {}
+    )
+
     ensembles: list[Ensemble] = []
     while True:
         if cancel_event is not None and cancel_event.is_set():
@@ -359,7 +377,10 @@ def extract_ensembles(
             ms1, seed, candidates, matched_positions, display_idxs
         )
         ms2_cofeatures, ms2_scan_count = _attach_ms2(
-            injection, config, seed, candidates, matched_positions, display_idxs
+            injection, config, seed, candidates, matched_positions, display_idxs,
+            ms1_cofeatures=ms1_cofeatures,
+            seg_start=seg_start, seg_end=seg_end,
+            precursor_index=precursor_index,
         )
 
         # DDA emit gate: a lone precursor fragmented once is a true singleton.
@@ -528,12 +549,19 @@ def _attach_ms2(
     candidates: CandidateSet,
     matched_positions: np.ndarray,
     window_idxs: np.ndarray,
+    ms1_cofeatures: Optional[list['FeaturePointer']] = None,
+    seg_start: Optional[int] = None,
+    seg_end: Optional[int] = None,
+    precursor_index: Optional[dict[int, list[tuple[int, np.ndarray]]]] = None,
 ) -> tuple[list['FeaturePointer'], int]:
     """
     Build MS2 cofeatures for an emitted ensemble.
 
     Returns (cofeatures, ms2_scan_count). The count is only meaningful for the
     "precursor" strategy (used for the DDA emit gate); other strategies return 0.
+
+    ``ms1_cofeatures`` / ``seg_start`` / ``seg_end`` / ``precursor_index`` are only
+    consulted by the "precursor_by_lane" strategy (ignored otherwise).
     """
     ms2 = injection.scan_array_ms2
     if config.ms2_strategy == "none" or ms2 is None:
@@ -568,6 +596,26 @@ def _attach_ms2(
         ms2_union = np.unique(np.concatenate(scan_lists))
         if ms2_union.size < config.min_ms2_scans:
             return [], int(ms2_union.size)
+        return _make_ms2_cofeatures(ms2, ms2_union), int(ms2_union.size)
+
+    if config.ms2_strategy == "precursor_by_lane":
+        # Lane-indexed variant of "precursor": the ensemble was grouped by MS1 peak
+        # shape (all-lanes seeding), so map its member lanes back to any precursor
+        # feature that fired on them within this peak, and union the real triggered
+        # MS2 scans. No emit gate — an ensemble with no fragmented member is a valid
+        # MS1-only group (the whole point of this mode).
+        if precursor_index is None or ms1_cofeatures is None:
+            return [], 0
+        lanes = {ftr.mz_lane_idx for ftr in ms1_cofeatures}
+        scan_lists = [
+            idxs
+            for lane in lanes
+            for (apex, idxs) in precursor_index.get(lane, [])
+            if seg_start <= apex < seg_end and idxs.size
+        ]
+        if not scan_lists:
+            return [], 0
+        ms2_union = np.unique(np.concatenate(scan_lists))
         return _make_ms2_cofeatures(ms2, ms2_union), int(ms2_union.size)
 
     return [], 0
@@ -1022,6 +1070,28 @@ class PrecursorFeature:
     mz: float
     apex_intsy: float
     ms2_scan_idxs: np.ndarray = field(repr=False)
+
+
+def _build_precursor_index(
+    injection: 'Injection',
+    config: ExtractionConfig,
+) -> dict[int, list[tuple[int, np.ndarray]]]:
+    """
+    Map each MS1 lane to the precursor features that fired on it, as
+    ``lane -> [(apex_scan, ms2_scan_idxs), ...]``, for lane-based MS2 attachment
+    ("precursor_by_lane").
+
+    Returns an empty dict — never raises — when the injection carries no MS2 with
+    precursor information, so DIA-style grouping over such data still yields
+    MS1-only ensembles.
+    """
+    ms2 = injection.scan_array_ms2
+    if ms2 is None or ms2.precursor_mz_arr is None:
+        return {}
+    index: dict[int, list[tuple[int, np.ndarray]]] = defaultdict(list)
+    for pf in _build_precursor_features(injection, config):
+        index[pf.mz_lane_idx].append((pf.apex_scan, pf.ms2_scan_idxs))
+    return index
 
 
 def _build_precursor_features(

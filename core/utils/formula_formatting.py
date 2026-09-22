@@ -101,10 +101,10 @@ def format_assignment_label_html(
         )
         parts = [f"<b>{formula_html}</b>"]
         if chosen.adduct:
-            parts.append(chosen.adduct)
+            parts.append(f"({chosen.adduct})")
         if chosen.error_ppm is not None:
-            parts.append(f"{chosen.error_ppm:.1f} ppm")
-        return "  &middot;  ".join(parts)
+            parts.append(f"<br>{chosen.error_ppm:.1f}δ")
+        return "".join(parts)
 
     # Fallback: free-text proposed formula (may not parse as a Formula).
     proposed = ensemble.proposed_formula

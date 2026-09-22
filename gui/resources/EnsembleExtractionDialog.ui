@@ -1,0 +1,664 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Dialog</class>
+ <widget class="QDialog" name="Dialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>901</width>
+    <height>842</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Dialog</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QScrollArea" name="scrollArea">
+     <property name="widgetResizable">
+      <bool>true</bool>
+     </property>
+     <widget class="QWidget" name="scrollAreaWidgetContents">
+      <property name="geometry">
+       <rect>
+        <x>0</x>
+        <y>0</y>
+        <width>943</width>
+        <height>746</height>
+       </rect>
+      </property>
+      <layout class="QVBoxLayout" name="verticalLayout_2">
+       <item>
+        <widget class="QTabWidget" name="tabWidget">
+         <property name="currentIndex">
+          <number>0</number>
+         </property>
+         <widget class="QWidget" name="tab">
+          <attribute name="title">
+           <string>Ensemble Extraction</string>
+          </attribute>
+          <layout class="QVBoxLayout" name="verticalLayout_6">
+           <item>
+            <widget class="QGroupBox" name="groupSamples">
+             <property name="title">
+              <string>Samples</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_3">
+              <item>
+               <widget class="QListWidget" name="listSamples"/>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupScoring">
+             <property name="title">
+              <string>Scoring</string>
+             </property>
+             <layout class="QGridLayout" name="gridLayout">
+              <item row="0" column="0">
+               <widget class="QLabel" name="label">
+                <property name="text">
+                 <string>Grouping method:</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="3">
+               <widget class="QDoubleSpinBox" name="spinnerMinIntsy">
+                <property name="decimals">
+                 <number>1</number>
+                </property>
+                <property name="minimum">
+                 <double>0.000000000000000</double>
+                </property>
+                <property name="maximum">
+                 <double>10000000.000000000000000</double>
+                </property>
+                <property name="singleStep">
+                 <double>10000.000000000000000</double>
+                </property>
+                <property name="stepType">
+                 <enum>QAbstractSpinBox::DefaultStepType</enum>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QComboBox" name="comboMethod">
+                <item>
+                 <property name="text">
+                  <string>Cosine</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>Pearson</string>
+                 </property>
+                </item>
+               </widget>
+              </item>
+              <item row="0" column="2">
+               <widget class="QLabel" name="label_3">
+                <property name="text">
+                 <string>Min. Intensity:</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="4">
+               <widget class="QCheckBox" name="checkRelativeIntensity">
+                <property name="text">
+                 <string>Relative</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="5">
+               <spacer name="horizontalSpacer">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>40</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="label_2">
+                <property name="text">
+                 <string>MS1 Threshold:</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="2">
+               <widget class="QLabel" name="label_4">
+                <property name="text">
+                 <string>MS2 Threshold (DIA):</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="QDoubleSpinBox" name="spinnerMS1Threshold">
+                <property name="decimals">
+                 <number>3</number>
+                </property>
+                <property name="minimum">
+                 <double>0.010000000000000</double>
+                </property>
+                <property name="maximum">
+                 <double>0.999000000000000</double>
+                </property>
+                <property name="singleStep">
+                 <double>0.100000000000000</double>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="3">
+               <widget class="QDoubleSpinBox" name="spinnerMS2Threshold">
+                <property name="decimals">
+                 <number>3</number>
+                </property>
+                <property name="minimum">
+                 <double>0.010000000000000</double>
+                </property>
+                <property name="maximum">
+                 <double>0.999000000000000</double>
+                </property>
+                <property name="singleStep">
+                 <double>0.100000000000000</double>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupAuto">
+             <property name="title">
+              <string>Auto Ensemble Extraction</string>
+             </property>
+             <layout class="QHBoxLayout" name="horizontalLayout">
+              <item>
+               <widget class="QGroupBox" name="groupSeedSelection">
+                <property name="title">
+                 <string>Ensemble finding</string>
+                </property>
+                <layout class="QVBoxLayout" name="verticalLayout_5">
+                 <item>
+                  <widget class="QGroupBox" name="groupBox_4">
+                   <property name="title">
+                    <string>Seed selection</string>
+                   </property>
+                   <layout class="QGridLayout" name="gridLayout_2">
+                    <item row="0" column="1">
+                     <widget class="QDoubleSpinBox" name="spinnerParentThreshold">
+                      <property name="decimals">
+                       <number>1</number>
+                      </property>
+                      <property name="minimum">
+                       <double>0.100000000000000</double>
+                      </property>
+                      <property name="maximum">
+                       <double>10000000.000000000000000</double>
+                      </property>
+                      <property name="singleStep">
+                       <double>10000.000000000000000</double>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="0">
+                     <widget class="QLabel" name="label_6">
+                      <property name="text">
+                       <string>Extraction Window:</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="0">
+                     <widget class="QLabel" name="label_5">
+                      <property name="text">
+                       <string>Min. Seed Intensity:</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="1">
+                     <widget class="QComboBox" name="comboWindow">
+                      <item>
+                       <property name="text">
+                        <string>peak_bounds</string>
+                       </property>
+                      </item>
+                      <item>
+                       <property name="text">
+                        <string>fixed</string>
+                       </property>
+                      </item>
+                     </widget>
+                    </item>
+                    <item row="2" column="0">
+                     <widget class="QLabel" name="label_8">
+                      <property name="text">
+                       <string>Fixed: Half width</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="2" column="1">
+                     <widget class="QSpinBox" name="spinnerHalfWidth">
+                      <property name="suffix">
+                       <string> scans</string>
+                      </property>
+                      <property name="minimum">
+                       <number>1</number>
+                      </property>
+                      <property name="maximum">
+                       <number>1000</number>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QGroupBox" name="groupAdductAware">
+                   <property name="title">
+                    <string>Adduct-aware grouping threshold</string>
+                   </property>
+                   <property name="checkable">
+                    <bool>true</bool>
+                   </property>
+                   <layout class="QGridLayout" name="gridLayout_6">
+                    <item row="0" column="1">
+                     <widget class="QDoubleSpinBox" name="spinnerLooseThreshold">
+                      <property name="decimals">
+                       <number>3</number>
+                      </property>
+                      <property name="minimum">
+                       <double>0.010000000000000</double>
+                      </property>
+                      <property name="maximum">
+                       <double>0.999000000000000</double>
+                      </property>
+                      <property name="singleStep">
+                       <double>0.100000000000000</double>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="0">
+                     <widget class="QLabel" name="label_16">
+                      <property name="text">
+                       <string>Loose threshold:</string>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QGroupBox" name="groupRTWindow">
+                   <property name="title">
+                    <string>R.T. Window</string>
+                   </property>
+                   <property name="checkable">
+                    <bool>true</bool>
+                   </property>
+                   <layout class="QGridLayout" name="gridLayout_7">
+                    <item row="0" column="1">
+                     <widget class="QDoubleSpinBox" name="spinnerRTEnd">
+                      <property name="suffix">
+                       <string> min</string>
+                      </property>
+                      <property name="maximum">
+                       <double>999.000000000000000</double>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="0">
+                     <widget class="QDoubleSpinBox" name="spinnerRTStart">
+                      <property name="suffix">
+                       <string> min</string>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QCheckBox" name="checkRequireMs2">
+                   <property name="text">
+                    <string>Only ensemble MS1 features with MS2 scans (DDA)</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="verticalSpacer">
+                   <property name="orientation">
+                    <enum>Qt::Vertical</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>20</width>
+                     <height>40</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QGroupBox" name="groupPeakValidation">
+                <property name="title">
+                 <string>Peak Validation</string>
+                </property>
+                <layout class="QGridLayout" name="gridLayout_3">
+                 <item row="3" column="1">
+                  <widget class="QSpinBox" name="spinBaselinePct">
+                   <property name="minimum">
+                    <number>1</number>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="1">
+                  <widget class="QComboBox" name="comboPeakMethod">
+                   <item>
+                    <property name="text">
+                     <string>prominence</string>
+                    </property>
+                   </item>
+                   <item>
+                    <property name="text">
+                     <string>flank</string>
+                    </property>
+                   </item>
+                  </widget>
+                 </item>
+                 <item row="2" column="1">
+                  <widget class="QDoubleSpinBox" name="spinnerMinProminence">
+                   <property name="decimals">
+                    <number>3</number>
+                   </property>
+                   <property name="minimum">
+                    <double>0.010000000000000</double>
+                   </property>
+                   <property name="maximum">
+                    <double>0.999000000000000</double>
+                   </property>
+                   <property name="singleStep">
+                    <double>0.100000000000000</double>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="0" column="0">
+                  <widget class="QLabel" name="label_10">
+                   <property name="text">
+                    <string>Min. peak width:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="2" column="0">
+                  <widget class="QLabel" name="label_9">
+                   <property name="text">
+                    <string>Min. prominence:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="3" column="0">
+                  <widget class="QLabel" name="label_11">
+                   <property name="text">
+                    <string>Baseline percentile:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="0">
+                  <widget class="QLabel" name="label_7">
+                   <property name="text">
+                    <string>Peak finding method:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="4" column="1">
+                  <widget class="QDoubleSpinBox" name="spinnerEdgeFraction">
+                   <property name="decimals">
+                    <number>3</number>
+                   </property>
+                   <property name="minimum">
+                    <double>0.010000000000000</double>
+                   </property>
+                   <property name="maximum">
+                    <double>0.999000000000000</double>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="0" column="1">
+                  <widget class="QSpinBox" name="spinMinPeakWidth">
+                   <property name="suffix">
+                    <string> scans</string>
+                   </property>
+                   <property name="minimum">
+                    <number>3</number>
+                   </property>
+                   <property name="maximum">
+                    <number>1000</number>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="4" column="0">
+                  <widget class="QLabel" name="label_12">
+                   <property name="text">
+                    <string>Edge fraction:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="5" column="0">
+                  <spacer name="verticalSpacer_2">
+                   <property name="orientation">
+                    <enum>Qt::Vertical</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>20</width>
+                     <height>40</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QGroupBox" name="groupBackground">
+                <property name="title">
+                 <string>Background suppression</string>
+                </property>
+                <layout class="QVBoxLayout" name="verticalLayout_4">
+                 <item>
+                  <widget class="QGroupBox" name="groupSmoothing">
+                   <property name="title">
+                    <string>Smoothing survival check</string>
+                   </property>
+                   <property name="checkable">
+                    <bool>true</bool>
+                   </property>
+                   <property name="checked">
+                    <bool>true</bool>
+                   </property>
+                   <layout class="QGridLayout" name="gridLayout_4">
+                    <item row="1" column="1">
+                     <widget class="QDoubleSpinBox" name="spinnerMinSmoothingSurvival">
+                      <property name="decimals">
+                       <number>3</number>
+                      </property>
+                      <property name="minimum">
+                       <double>0.010000000000000</double>
+                      </property>
+                      <property name="maximum">
+                       <double>0.999000000000000</double>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="0">
+                     <widget class="QLabel" name="label_13">
+                      <property name="text">
+                       <string>Smoothing sigma:</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="0">
+                     <widget class="QLabel" name="label_14">
+                      <property name="text">
+                       <string>Min. smoothing survival:</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="1">
+                     <widget class="QDoubleSpinBox" name="spinnerSmoothingSigma">
+                      <property name="suffix">
+                       <string> scans</string>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QGroupBox" name="groupPersistence">
+                   <property name="title">
+                    <string>Persistence check</string>
+                   </property>
+                   <property name="checkable">
+                    <bool>true</bool>
+                   </property>
+                   <layout class="QGridLayout" name="gridLayout_5">
+                    <item row="0" column="0">
+                     <widget class="QLabel" name="label_15">
+                      <property name="text">
+                       <string>Max lane persistence:</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="1">
+                     <widget class="QDoubleSpinBox" name="spinnerMaxLanePersistence">
+                      <property name="decimals">
+                       <number>3</number>
+                      </property>
+                      <property name="minimum">
+                       <double>0.010000000000000</double>
+                      </property>
+                      <property name="maximum">
+                       <double>0.999000000000000</double>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="verticalSpacer_3">
+                   <property name="orientation">
+                    <enum>Qt::Vertical</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>20</width>
+                     <height>40</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="tab_2">
+          <attribute name="title">
+           <string>Auto find-mfs</string>
+          </attribute>
+          <layout class="QVBoxLayout" name="verticalLayout_7">
+           <item>
+            <widget class="QCheckBox" name="checkRunFindMfs">
+             <property name="text">
+              <string>Run find-mfs on new ensembles</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="FindMfsParamWidget" name="findMfsParams" native="true"/>
+           </item>
+          </layout>
+         </widget>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="btnConfigBox">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Reset|QDialogButtonBox::RestoreDefaults|QDialogButtonBox::Save</set>
+     </property>
+     <property name="centerButtons">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="btnDialogBox">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>FindMfsParamWidget</class>
+   <extends>QWidget</extends>
+   <header>gui.widgets.find_mfs_param_widget</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>btnDialogBox</sender>
+   <signal>accepted()</signal>
+   <receiver>Dialog</receiver>
+   <slot>accept()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>740</x>
+     <y>805</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>688</x>
+     <y>814</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnDialogBox</sender>
+   <signal>rejected()</signal>
+   <receiver>Dialog</receiver>
+   <slot>reject()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>855</x>
+     <y>799</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>828</x>
+     <y>813</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>

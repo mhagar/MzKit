@@ -495,6 +495,16 @@ class SpectrumPlotManager(QtCore.QObject):
             plot.setSpectrumArray(empty)
             plot.update_bpc_label("")
 
+    @property
+    def current_ms1(self) -> Optional[NDArray]:
+        """The raw MS1 spectrum currently on screen (scan or composite)."""
+        return self._current_ms1
+
+    @property
+    def current_ms2(self) -> Optional[NDArray]:
+        """The raw MS2 spectrum currently on screen (scan or composite)."""
+        return self._current_ms2
+
     def set_normalize_spectra(self, enabled: bool):
         """
         Toggle per-spectrum intensity normalization (peaks rescaled so

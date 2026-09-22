@@ -1,39 +1,58 @@
 import numpy as np
 from PyQt5 import QtCore
 
-from core.cli.generate_ensemble import EnsembleExtractionParams
-from gui.views.sample_viewer.menus import EnsembleExtractionSettingsMenu
+from core.cli.generate_ensemble import (
+    EnsembleExtractionParams,
+    auto_params_from_config,
+)
 
-from typing import TYPE_CHECKING, Union, Optional, Literal
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
     from core.data_structs import (
-        Sample,
         SampleUUID,
-        Injection,
-        FeaturePointer,
-        ScanArray,
-    )
-    from core.utils.array_types import (
-        SpectrumArray
     )
     from core.interfaces.data_sources import SampleDataSource
+
+
+def _manual_params_from_config(config: Optional['ConfigParser']) -> dict:
+    """
+    Default *manual* single-ensemble extraction params, sourced from the shared
+    ``[auto_ensemble]`` scoring settings so config stays the single source of
+    truth. Falls back to sane constants when no config is available.
+    """
+    if config is None:
+        return {
+            'ms1_corr_threshold': 0.9,
+            'ms2_corr_threshold': 0.8,
+            'min_intsy': 1000.0,
+            'use_rel_intsy': True,
+            'method': 'cosine',
+        }
+    p = auto_params_from_config(config)
+    return {
+        'ms1_corr_threshold': p.ms1_corr_threshold,
+        'ms2_corr_threshold': p.ms2_corr_threshold,
+        'min_intsy': p.cofeature_threshold,
+        'use_rel_intsy': p.use_rel_intsy,
+        'method': p.method,
+    }
+
 
 class EnsembleExtractionManager(
     QtCore.QObject,
 ):
     """
-    Coordinates ensemble extraction
-    """
-    sigEnsembleExtractionGraphicsRequested = QtCore.pyqtSignal(
-        object,  # sample_uuid
-        tuple,   # (rt_start, rt_end)
-        object,  # chrom_array to display
-    )
+    Coordinates manual (Cmpd-tool) ensemble extraction.
 
+    Holds the current manual-extraction params (set by the shared
+    EnsembleExtractionDialog in SINGLE mode) and, optionally, find-mfs params to
+    chain after the ensemble is created.
+    """
     sigEnsembleExtractionRequested = QtCore.pyqtSignal(
-        object
+        object,  # EnsembleExtractionParams
+        object,  # find-mfs params dict, or None
     )
 
     def __init__(
@@ -43,7 +62,20 @@ class EnsembleExtractionManager(
     ):
         super().__init__()
         self.data_source = data_source
-        self.settings_menu = EnsembleExtractionSettingsMenu(config=config)
+        self.config = config
+
+        # Updated whenever the user OKs the settings dialog in SINGLE mode.
+        self.manual_params: dict = _manual_params_from_config(config)
+        self.pending_findmfs: Optional[dict] = None
+
+    def set_manual_params(
+        self,
+        params: dict,
+        findmfs: Optional[dict] = None,
+    ) -> None:
+        """Store the params the next manual extraction should use."""
+        self.manual_params = params
+        self.pending_findmfs = findmfs
 
     def request_using_current_params(
         self,
@@ -55,7 +87,7 @@ class EnsembleExtractionManager(
             sample_uuid=sample_uuid,
             rt_bounds=rt_bounds,
             mass_lane_idx=mass_lane_idx,
-            **self.settings_menu.get_params(),
+            **self.manual_params,
         )
 
     def request_ensemble_generation(
@@ -103,18 +135,6 @@ class EnsembleExtractionManager(
         )
 
         self.sigEnsembleExtractionRequested.emit(
-            ensemble_extraction_params
+            ensemble_extraction_params,
+            self.pending_findmfs,
         )
-
-    def showExtractionMenu(
-        self,
-        pos: QtCore.QPoint,
-        height: int,
-    ):
-        self.settings_menu.move(
-            # pos.x() + 50,
-            pos.x() + self.settings_menu.size().width(),
-            pos.y() + height,
-        )
-
-        self.settings_menu.show()

@@ -7,7 +7,6 @@ from PyQt5 import QtWidgets, QtCore
 from find_mfs import FormulaFinder, FormulaScorer
 
 from gui.resources.FormulaFinderWindow import Ui_Form
-from core.utils.config import save_config, load_default_config
 from core.utils.formula_formatting import format_formula_obj_to_html
 from gui.dialogues.formula_finder.tables import HTMLDelegate
 from core.utils.array_types import to_spec_arr
@@ -65,8 +64,10 @@ class FormulaFinderDialog(
         self._results_mode: Optional[Literal["ion", "compound"]] = None  # Whether mf search was for ion or compound
         self._compound_assignment: Optional["FormulaAssignment"] = None  # Whether a compound mf assignment was made
         self.config = config
-        self._populate_instrument_combo()
-        self._load_params_from_config()
+        # The find-mfs parameter sheet (element/counts/RDBE/octet + scoring
+        # groups) and all [findmfs] persistence live in the promoted widget,
+        # shared with EnsembleExtractionDialog.
+        self.findMfsParams.set_config(config)
 
     def _connect_signals(self):
         self.btnAddSignal.clicked.connect(self.tableInput.add_row)
@@ -79,26 +80,9 @@ class FormulaFinderDialog(
         self.btnFindIonMF.clicked.connect(self.on_search_execute)
         self.btnFindCmpdMF.clicked.connect(self._request_compound_search)
 
-        self.btnConfigBox.clicked.connect(self.on_config_btn_pressed)
-
         # "Assign Selected" btn routes depending on ion search or cmpd search
         self.btnAssignSelected.clicked.connect(self.on_assign_selected)
         self.tableResults.doubleClicked.connect(self.on_assign_selected)
-
-    def _populate_instrument_combo(self):
-        """
-        Fill the instrument combo with MistNet's canonical types
-        (label -> value);
-        unknown names fall back to 'unknown' inside find-mfs anyway.
-        """
-        for label, value in [
-            ("Unknown", "unknown"),
-            ("Q-ToF", "qtof"),
-            ("Orbitrap", "orbitrap"),
-            ("Ion Trap", "iontrap"),
-            ("FT-ICR", "fticr"),
-        ]:
-            self.comboInstrument.addItem(label, value)
 
     def _setup_statusbar(self):
         self.statusbar = QtWidgets.QStatusBar()
@@ -295,35 +279,18 @@ class FormulaFinderDialog(
 
     def _retrieve_params_from_ui(self) -> tuple[dict, dict]:
         """
-        Retrieves parameters from UI
+        Retrieves parameters from UI. The scoring/constraint controls live in the
+        shared find-mfs param widget; the adduct is FormulaFinder-local.
         """
         mf_params = {
             "adduct": self.lineAdduct.text() or None,
-            "charge": self.spinCharge.value(),
-            "error_ppm": self.spinMassErrorPpm.value(),
-            "error_da": self.spinMassErrorDa.value(),
-            "min_counts": self.lineMinCounts.text(),
-            "max_counts": self.lineMaxCounts.text(),
-            "filter_rdbe": (
-                self.spinRDBEMin.value(),
-                self.spinRDBEMax.value(),
-            ),
-            "check_octet": self.checkOctet.isChecked(),
+            **self.findMfsParams.get_mf_params(),
         }
 
-        score_params = {
-            "iso_ppm": self.spinIsotopeErrorPpm.value(),
-            "iso_mz_match_da": self.spinIsotopeMatchTolDa.value(),
-            "iso_min_rel": self.spinIsotopeMinRelIntsy.value(),
-            "iso_weight": self.spinIsotopeWeight.value(),
-            "mass_weight": self.spinMassErrorWeight.value(),
-            "chem_weight": self.spinChemPriorWeight.value(),
-            "chem_strength": self.spinChemPriorStrength.value(),
-            "chem_softness": self.spinChemPriorSoftness.value(),
-        }
+        score_params = self.findMfsParams.get_score_params()
 
         self._check_finder_element_set(
-            self.comboElementSet.currentText()
+            self.findMfsParams.get_element_set_text()
         )
 
         return mf_params, score_params
@@ -367,25 +334,6 @@ class FormulaFinderDialog(
 
             self.finder = FormulaFinder(element_set)
 
-    def on_config_btn_pressed(
-            self,
-            button: QtWidgets.QAbstractButton,
-    ):
-        # Get which standard button was clicked
-        standard_button = self.btnConfigBox.standardButton(button)
-
-        match standard_button:
-            case QtWidgets.QDialogButtonBox.StandardButton.Save:
-                self._write_params_to_config()
-
-            case QtWidgets.QDialogButtonBox.StandardButton.RestoreDefaults:
-                # Populate the UI from the shipped default template,
-                # ignoring any saved user overrides.
-                self._load_params_from_config(load_default_config())
-
-            case QtWidgets.QDialogButtonBox.StandardButton.Reset:
-                self._load_params_from_config()
-
     def _request_compound_search(self):
         """
         Ask the controller to run the MS2 compound assignment
@@ -403,30 +351,14 @@ class FormulaFinderDialog(
 
     def _retrieve_compound_params(self) -> dict:
         """
-        Assemble kwargs for core.formula.query_from_signals + a top_n.
+        Assemble kwargs for core.formula.query_from_signals + a top_n. The
+        scoring/constraint controls come from the shared param widget; the
+        adduct is FormulaFinder-local.
         """
         adduct = self.lineAdduct.text().strip() or None
-        elements = (
-            "CHNOPSFClBrI"
-            if "halogen" in self.comboElementSet.currentText().lower()
-            else "CHNOPS"
-        )
-        finder_kwargs = {
-            "min_counts": self.lineMinCounts.text(),
-            "max_counts": self.lineMaxCounts.text(),
-            "filter_rdbe": (self.spinRDBEMin.value(), self.spinRDBEMax.value()),
-            "check_octet": self.checkOctet.isChecked(),
-        }
-        return {
-            "adducts": [adduct] if adduct else None,
-            "elements": elements,
-            "autodetect_cl_br": self.checkBoxAcheckAutodetectHalogens.isChecked(),
-            "error_ppm": self.spinMassErrorPpm.value(),
-            "instrument": self.comboInstrument.currentData() or "unknown",
-            "ms2_weight": self.doubleSpinMs2Weight.value(),
-            "top_n": int(self.spinTopN.value()),
-            "finder_kwargs": finder_kwargs,
-        }
+        params = self.findMfsParams.get_compound_params()
+        params["adducts"] = [adduct] if adduct else None
+        return params
 
     def on_assign_selected(self):
         """
@@ -452,202 +384,6 @@ class FormulaFinderDialog(
             return
         self.sigFormulaAssigned.emit(self.search_results[row])
         self.close()
-
-    def _write_params_to_config(
-        self,
-    ):
-        if not self.config:
-            return
-
-        self.config.set(
-            section="findmfs", option="charge", value=str(self.spinCharge.value())
-        )
-        self.config.set(
-            section="findmfs", option="error_ppm", value=str(self.spinMassErrorPpm.value())
-        )
-        self.config.set(
-            section="findmfs", option="error_da", value=str(self.spinMassErrorDa.value())
-        )
-        self.config.set(
-            section="findmfs", option="mass_weight", value=str(self.spinMassErrorWeight.value())
-        )
-        self.config.set(
-            section="findmfs", option="min_counts", value=str(self.lineMinCounts.text())
-        )
-        self.config.set(
-            section="findmfs", option="max_counts", value=str(self.lineMaxCounts.text())
-        )
-        self.config.set(
-            section="findmfs", option="min_rdbe", value=str(self.spinRDBEMin.value())
-        )
-        self.config.set(
-            section="findmfs", option="max_rdbe", value=str(self.spinRDBEMax.value())
-        )
-        self.config.set(
-            section="findmfs",
-            option="check_octet",
-            value=str(self.checkOctet.isChecked()),
-        )
-
-        # === Isotope Envelope Scoring ===
-        self.config.set(
-            section="findmfs",
-            option="iso_ppm",
-            value=str(self.spinIsotopeErrorPpm.value()),
-        )
-        self.config.set(
-            section="findmfs",
-            option="iso_mz_match_da",
-            value=str(self.spinIsotopeMatchTolDa.value()),
-        )
-        self.config.set(
-            section="findmfs",
-            option="iso_min_rel",
-            value=str(self.spinIsotopeMinRelIntsy.value()),
-        )
-        self.config.set(
-            section="findmfs",
-            option="iso_weight",
-            value=str(self.spinIsotopeWeight.value()),
-        )
-
-        # === Chemical Prior ===
-        self.config.set(
-            section="findmfs",
-            option="chem_weight",
-            value=str(self.spinChemPriorWeight.value()),
-        )
-
-        self.config.set(
-            section="findmfs",
-            option="chem_strength",
-            value=str(self.spinChemPriorStrength.value()),
-        )
-
-        self.config.set(
-            section="findmfs",
-            option="chem_softness",
-            value=str(self.spinChemPriorSoftness.value()),
-        )
-
-        # === Compound (MS2) / MistNet ===
-        self.config.set(
-            section="findmfs",
-            option="ms2_weight",
-            value=str(self.doubleSpinMs2Weight.value()),
-        )
-        self.config.set(
-            section="findmfs",
-            option="instrument",
-            value=str(self.comboInstrument.currentData() or "unknown"),
-        )
-        self.config.set(
-            section="findmfs",
-            option="autodetect_cl_br",
-            value=str(self.checkBoxAcheckAutodetectHalogens.isChecked()),
-        )
-        self.config.set(
-            section="findmfs",
-            option="top_n",
-            value=str(int(self.spinTopN.value())),
-        )
-
-        save_config(self.config)
-
-    def _load_params_from_config(
-        self,
-        config: Optional["ConfigParser"] = None,
-    ):
-        """
-        Populates the UI from a ConfigParser. Defaults to the dialog's own
-        config (user settings); pass a different config (e.g. the default
-        template) to restore those values instead.
-
-        Skips if no config is available.
-        """
-        config = config if config is not None else self.config
-
-        if not config:
-            return
-
-        self.spinCharge.setValue(config.getint("findmfs", "charge", fallback=0))
-
-        self.spinMassErrorPpm.setValue(
-            config.getfloat("findmfs", "error_ppm", fallback=5.0)
-        )
-
-        self.spinMassErrorDa.setValue(
-            config.getfloat("findmfs", "error_da", fallback=0.01)
-        )
-
-        self.spinMassErrorWeight.setValue(
-            config.getfloat("findmfs", "mass_weight", fallback=1.0)
-        )
-
-        self.lineMinCounts.setText(
-            config.get("findmfs", "min_counts", fallback="")
-        )
-
-        self.lineMaxCounts.setText(
-            config.get("findmfs", "max_counts", fallback="")
-        )
-
-        self.spinRDBEMin.setValue(
-            config.getfloat("findmfs", "min_rdbe", fallback=0.0)
-        )
-
-        self.spinRDBEMax.setValue(
-            config.getfloat("findmfs", "max_rdbe", fallback=0.0)
-        )
-
-        self.checkOctet.setChecked(
-            config.getboolean("findmfs", "check_octet", fallback=True)
-        )
-
-        self.spinIsotopeErrorPpm.setValue(
-            config.getfloat("findmfs", "iso_ppm", fallback=5.0)
-        )
-
-        self.spinIsotopeMatchTolDa.setValue(
-            config.getfloat("findmfs", "iso_mz_match_da", fallback=0.02)
-        )
-
-        self.spinIsotopeMinRelIntsy.setValue(
-            config.getfloat("findmfs", "iso_min_rel", fallback=0.02)
-        )
-
-        self.spinIsotopeWeight.setValue(
-            config.getfloat("findmfs", "iso_weight", fallback=1.0)
-        )
-
-        self.spinChemPriorWeight.setValue(
-            config.getfloat("findmfs", "chem_weight", fallback=1.0)
-        )
-
-        self.spinChemPriorStrength.setValue(
-            config.getfloat("findmfs", "chem_strength", fallback=1.0)
-        )
-
-        self.spinChemPriorSoftness.setValue(
-            config.getfloat("findmfs", "chem_softness", fallback=1.0)
-        )
-
-        # === Compound (MS2) / MistNet ===
-        self.doubleSpinMs2Weight.setValue(
-            config.getfloat("findmfs", "ms2_weight", fallback=1.0)
-        )
-
-        instr = config.get("findmfs", "instrument", fallback="unknown")
-        instr_idx = self.comboInstrument.findData(instr)
-        self.comboInstrument.setCurrentIndex(instr_idx if instr_idx >= 0 else 0)
-
-        self.checkBoxAcheckAutodetectHalogens.setChecked(
-            config.getboolean("findmfs", "autodetect_cl_br", fallback=True)
-        )
-
-        self.spinTopN.setValue(
-            config.getint("findmfs", "top_n", fallback=50)
-        )
 
 
 def _fmt(value, spec: str) -> str:

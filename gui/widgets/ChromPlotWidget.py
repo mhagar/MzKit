@@ -26,6 +26,9 @@ class ChromPlotWidget(pg.PlotWidget):
     sigEnsemblePeakLeaved = QtCore.pyqtSignal()
     sigEnsemblePeakClicked = QtCore.pyqtSignal(object, int)  # EnsembleUUID, button
 
+    # Cross-bar seed tool: emitted on drag-release with (rt_start, rt_end, intsy)
+    sigSeedBarDrawn = QtCore.pyqtSignal(float, float, float)
+
     def __init__(self, *args, **kwargs):
         super(ChromPlotWidget, self).__init__(
             *args,
@@ -57,6 +60,10 @@ class ChromPlotWidget(pg.PlotWidget):
         # Set up region window selector
         self.window_selector: Optional[pg.LinearRegionItem] = None
         self.window_selector_chrom: Optional[ChromGraphicItem] = None
+
+        # Cross-bar seed tool state
+        self._seed_drag_enabled: bool = False
+        self._seed_preview: Optional[pg.PlotCurveItem] = None
 
     def showAxes(
         self,
@@ -208,6 +215,53 @@ class ChromPlotWidget(pg.PlotWidget):
 
         self.window_selector = None
         self.window_selector_chrom = None
+
+    # -- Cross-bar seed tool -------------------------------------------------
+    def set_seed_drag_enabled(self, enabled: bool):
+        """
+        Enable/disable the cross-bar drag gesture. When enabled, a left-drag on
+        the plot draws a |---| bar (RT window + seed intensity) instead of
+        panning. Disabling clears any drawn bar.
+        """
+        self._seed_drag_enabled = enabled
+        if not enabled:
+            self.clear_seed_preview()
+
+    def update_seed_preview(
+        self,
+        rt_start: float,
+        rt_end: float,
+        intensity: float,
+    ):
+        """
+        Draw/update the cross-bar: a horizontal segment at `intensity` from
+        rt_start to rt_end, with small vertical end-caps (|---|).
+        """
+        if self._seed_preview is None:
+            self._seed_preview = pg.PlotCurveItem(
+                pen=pg.mkPen('yellow', width=2),
+                connect='finite',
+            )
+            self.addItem(self._seed_preview)
+
+        # End-cap height: a few pixels, converted to data units.
+        cap = self.pi.vb.viewPixelSize()[1] * 6
+        xs = np.array([
+            rt_start, rt_end, np.nan,          # horizontal bar
+            rt_start, rt_start, np.nan,        # left cap
+            rt_end, rt_end,                    # right cap
+        ])
+        ys = np.array([
+            intensity, intensity, np.nan,
+            intensity - cap, intensity + cap, np.nan,
+            intensity - cap, intensity + cap,
+        ])
+        self._seed_preview.setData(xs, ys, connect='finite')
+
+    def clear_seed_preview(self):
+        if self._seed_preview is not None:
+            self.removeItem(self._seed_preview)
+            self._seed_preview = None
 
     def clearHighlights(self):
         """
@@ -879,6 +933,25 @@ class ChromViewBox(pg.ViewBox):
             self.autoRange()
 
     def mouseDragEvent(self, ev, axis=None):
+        # Cross-bar seed tool: intercept left-drag to draw a |---| bar
+        # (RT window + seed intensity) instead of panning.
+        plot_item = getattr(self, '_plot_item', None)
+        plot_widget = getattr(plot_item, 'plot_widget', None)
+        if (
+            plot_widget is not None
+            and getattr(plot_widget, '_seed_drag_enabled', False)
+            and ev.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
+            ev.accept()
+            p0 = self.mapSceneToView(ev.buttonDownScenePos())
+            p1 = self.mapSceneToView(ev.scenePos())
+            rt_start, rt_end = sorted((p0.x(), p1.x()))
+            intensity = p0.y()  # bar height fixed at the press point
+            plot_widget.update_seed_preview(rt_start, rt_end, intensity)
+            if ev.isFinish() and rt_end > rt_start:
+                plot_widget.sigSeedBarDrawn.emit(rt_start, rt_end, intensity)
+            return
+
         # if axis is specified, event will only affect that axis.
         ev.accept()  # we accept all buttons
 

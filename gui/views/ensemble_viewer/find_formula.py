@@ -11,6 +11,7 @@ from core.formula import query_from_signals, assign_formula
 
 from PyQt5 import QtCore, QtWidgets
 from find_mfs import FormulaCandidate
+from molmass import Formula
 
 from typing import Literal, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -172,6 +173,17 @@ class FindFormulaController(BaseToolController):
             dialog.statusbar.showMessage("No MS1 signals selected")
             return
 
+        # TEMPORARY DDA path: ensemble MS2 production isn't wired up yet, so
+        # hand find-mfs whatever MS2 spectrum the viewer currently shows
+        # (mirrors the one-button AutoFindMF DDA stopgap). Retire once DDA
+        # MS2 stitching lands and query_from_signals covers DDA natively.
+        if ensemble.is_dda:
+            ms2_spec = self.viewer.spectrum_manager.current_ms2
+            if ms2_spec is not None and len(ms2_spec) == 0:
+                ms2_spec = None
+            params["ms2_spec"] = ms2_spec
+            params["ms2_mode"] = "selected_scan"
+
         try:
             query = query_from_signals(ensemble, ms1_signals, **params)
         except NotImplementedError:
@@ -208,6 +220,24 @@ class FindFormulaController(BaseToolController):
         chosen = assignment.chosen
         if ensemble is not None and chosen is not None:
             ensemble.proposed_formula = chosen.formula_str
+
+            # Debug aid: also drop an ion annotation on the envelope that fed the
+            # assignment, reusing the ion-formula draw path (add_ion_annot + the
+            # on-plot predicted envelope). selected_signals still hold the picked
+            # cofeatures at this point (cleared just below).
+            if self.selected_ms_level and self.selected_signals:
+                envelope_candidate = FormulaCandidate(
+                    formula=Formula(chosen.formula_str),
+                    error_ppm=chosen.error_ppm,
+                    error_da=chosen.error_da,
+                    rdbe=chosen.rdbe,
+                    adduct=chosen.adduct,
+                )
+                self.sigFormulaAssigned.emit(
+                    envelope_candidate,
+                    self.selected_ms_level,
+                    [x[2] for x in self.selected_signals],
+                )
 
         # Show the assignment as the MS1 title strip.
         if hasattr(self.viewer, "refresh_assignment_display"):

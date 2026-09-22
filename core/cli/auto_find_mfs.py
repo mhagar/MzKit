@@ -196,13 +196,24 @@ def _annotate_one(
     top_n: int,
     finder_kwargs: Optional[dict],
     attach_adduct_labels: bool,
+    ms1_peaks=None,
+    ms2_peaks=None,
+    precursor_mz: Optional[float] = None,
+    ms2_mode: str = 'tallest',
 ) -> FormulaAssignment:
-    composite = ensemble.composite_spectrum
+    # DIA default: pull the composite (representative) spectra and let find-mfs
+    # pick the base envelope (precursor_mz=None). When the caller passes explicit
+    # spectra (the temporary DDA path), use those + the given precursor instead.
+    if ms1_peaks is None:
+        composite = ensemble.composite_spectrum
+        ms1_peaks = composite.ms1
+        ms2_peaks = composite.ms2         # may be None -> MS2 term skipped
+        precursor_mz = None
 
     res = annotate_analyte_dia(
-        ms1_peaks=composite.ms1,
-        ms2_peaks=composite.ms2,          # may be None -> MS2 term skipped
-        precursor_mz=None,                # DIA default: base = tallest envelope
+        ms1_peaks=ms1_peaks,
+        ms2_peaks=ms2_peaks,              # may be None -> MS2 term skipped
+        precursor_mz=precursor_mz,
         scorer=scorer,
         elements=elements,
         error_ppm=error_ppm,
@@ -224,7 +235,7 @@ def _annotate_one(
         charge=res.charge,                       # resolved charge
         elements=elements,
         autodetect_cl_br=detect_halogens,
-        ms2_mode='tallest',                      # DIA composite MS2 source
+        ms2_mode=ms2_mode,
         error_ppm=error_ppm,
         instrument=instrument,
         ms2_weight=ms2_weight,
@@ -239,6 +250,80 @@ def _annotate_one(
         _attach_adduct_labels(ensemble, res.grouped)
 
     return assignment
+
+
+def annotate_ensemble_with_selected_ms2(
+    ensemble: 'Ensemble',
+    ms1_peaks,
+    ms2_peaks,
+    precursor_mz: Optional[float] = None,
+    *,
+    model_path: Optional[str] = None,
+    elements: str = 'CHNOPS',
+    error_ppm: float = 5.0,
+    instrument: str = 'unknown',
+    ms2_weight: float = 1.0,
+    detect_halogens: bool = True,
+    top_n: int = _DEFAULT_TOP_N,
+    finder_kwargs: Optional[dict] = None,
+    attach_adduct_labels: bool = True,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event: Optional[threading.Event] = None,
+) -> list[FormulaAssignment]:
+    """
+    TEMPORARY DDA compound-annotation path.
+
+    Runs find-mfs against caller-supplied MS1 + MS2 spectra (whatever the
+    EnsembleViewer currently has on screen) plus the ensemble's precursor,
+    rather than the DIA composite (which is undefined for DDA). Produces a
+    single FormulaAssignment, returned in a list to match the DIA completion
+    handler.
+
+    This is a stopgap until DDA MS2 'consensus' stitching lands and
+    `composite_spectrum` works for DDA; it will be retired then. Note that
+    unlike the DIA path we hand find-mfs a real precursor_mz.
+
+    ProcessController-compatible (accepts progress_callback + cancel_event).
+    """
+    # Lazy import: find-mfs pulls in MistNet + scorers.
+    from find_mfs import annotate_analyte_dia
+
+    if progress_callback is not None:
+        progress_callback(0.0, "Annotating (DDA, selected MS2)…")
+
+    if cancel_event is not None and cancel_event.is_set():
+        return []
+
+    scorer = _get_scorer(model_path)
+
+    try:
+        assignment = _annotate_one(
+            ensemble,
+            annotate_analyte_dia=annotate_analyte_dia,
+            scorer=scorer,
+            elements=elements,
+            error_ppm=error_ppm,
+            instrument=instrument,
+            ms2_weight=ms2_weight,
+            detect_halogens=detect_halogens,
+            top_n=top_n,
+            finder_kwargs=finder_kwargs,
+            attach_adduct_labels=attach_adduct_labels,
+            ms1_peaks=ms1_peaks,
+            ms2_peaks=ms2_peaks,
+            precursor_mz=precursor_mz,
+            ms2_mode='selected_scan',
+        )
+    except ValueError as exc:
+        logger.warning("DDA annotate skipped for %s: %s", ensemble.uuid, exc)
+        if progress_callback is not None:
+            progress_callback(100.0, "No resolvable envelope")
+        return []
+
+    if progress_callback is not None:
+        progress_callback(100.0, "Annotated 1 ensemble")
+
+    return [assignment]
 
 
 def _attach_adduct_labels(

@@ -6,6 +6,10 @@ from core.utils.config import load_config
 from gui.views.sample_viewer.dda_overlays import DDAOverlayManager
 from gui.views.sample_viewer.ensemble_extraction import EnsembleExtractionManager
 from gui.views.sample_viewer.menus import FingerprintDisplayMenu
+from gui.dialogues.EnsembleExtractionDialog import (
+    EnsembleExtractionDialog,
+    ExtractionDialogMode,
+)
 from gui.views.sample_viewer.model import SampleViewerItemModel
 from gui.views.sample_viewer.spectrum_selection import SelectionManager
 from gui.views.sample_viewer.tools import (
@@ -39,11 +43,13 @@ class SampleViewer(
 
     sigMSLevelChanged = QtCore.pyqtSignal(int)
     sigEnsembleExtractionRequested = QtCore.pyqtSignal(
-        object,
+        object,  # EnsembleExtractionParams
+        object,  # find-mfs params dict, or None (chain after extraction)
     )
-    sigAutoEnsembleRequested = QtCore.pyqtSignal(
-        object,  # SampleUUID
-        object,  # auto-generation params dict (from settings menu)
+    sigAutoEnsembleBatchRequested = QtCore.pyqtSignal(
+        object,  # list[SampleUUID]
+        object,  # auto-generation params dict (AutoEnsembleParams kwargs)
+        object,  # find-mfs params dict, or None
     )
     sigAlignEnsemblesRequested = QtCore.pyqtSignal(
         object,  # list[SampleUUID]
@@ -90,7 +96,6 @@ class SampleViewer(
         )
 
         self.fprint_display_params_menu = FingerprintDisplayMenu(self)
-        # self.ensemble_extraction_settings_menu = EnsembleExtractionSettingsMenu(self)
 
         # Tool-state tracking
         self.tool_mgr = ToolManagerNew()
@@ -278,6 +283,7 @@ class SampleViewer(
             (self.actionView, self.toolView),
             (self.actionGetSpectrum, self.toolGetSpectrum),
             (self.actionGetCompound, self.toolGetCmpd),
+            (self.actionGetSeed, self.toolGetSeed),
         ]:
             action: QtWidgets.QAction
             btn: QtWidgets.QToolButton
@@ -321,15 +327,10 @@ class SampleViewer(
             self.sigEnsembleExtractionRequested.emit
         )
 
-        get_cmpd_btn_pos = lambda: (
-            self.mapToGlobal(self.toolGetCmpd.pos()),
-            self.toolGetCmpd.height()
-        )
-
+        # The Cmpd tool's settings dropdown opens the shared extraction dialog
+        # in SINGLE mode (auto-only params greyed; scoring + find-mfs editable).
         self.toolGetCmpdMenu.clicked.connect(
-            lambda: self.ensemble_extraction_mgr.showExtractionMenu(
-                *get_cmpd_btn_pos()
-            )
+            self._open_single_extraction_settings
         )
 
     def _setup_manual_xic_signals(self):
@@ -351,6 +352,9 @@ class SampleViewer(
         self.viewSampleStack.sigEnsemblePeakClicked.connect(
             self.on_ensemble_peak_clicked
         )
+        self.viewSampleStack.sigSeedBarDrawn.connect(
+            self.on_seed_bar_drawn
+        )
 
     # ***STATE TOGGLING***
     def on_tool_action_triggered(
@@ -366,6 +370,7 @@ class SampleViewer(
             self.actionView: ToolType.NONE,
             self.actionGetSpectrum: ToolType.GETSPECTRUM,
             self.actionGetCompound: ToolType.GETCOMPOUND,
+            self.actionGetSeed: ToolType.GETSEED,
         }
 
         tool_type = tool_map.get(
@@ -404,6 +409,12 @@ class SampleViewer(
             case ToolType.GETXIC:
                 self.status_bar.showMessage(
                     "Chromatogram Extraction Mode. Select a reference MS signal"
+                )
+
+            case ToolType.GETSEED:
+                self.status_bar.showMessage(
+                    "Auto-Extract Mode. Drag a cross-bar across a chromatogram "
+                    "to set the RT window and minimum seed intensity."
                 )
 
         # Reset any errant states
@@ -1037,21 +1048,107 @@ class SampleViewer(
                         Qt.CheckState.Checked
                     )
 
-    def _request_auto_ensemble_generation(self):
-        """
-        Emit auto-ensemble signal (with the current settings-menu params) for
-        each selected sample.
-        """
-        auto_params = (
-            self.ensemble_extraction_mgr.settings_menu.get_auto_params()
-        )
-        selected_idxs: list['QtCore.QModelIndex'] = self.viewSampleTree.selectedIndexes()
-        for idx in selected_idxs:
+    def _loaded_samples(self) -> list[tuple['SampleUUID', str]]:
+        """(uuid, name) for every sample loaded in this viewer's tree model."""
+        out: list[tuple['SampleUUID', str]] = []
+        for row in range(self.model.rowCount()):
+            item = self.model.item(row)
+            uuid = item.data(self.model.UuidRole)
+            if uuid:
+                out.append((uuid, item.text()))
+        return out
+
+    def _selected_sample_uuids(self) -> set['SampleUUID']:
+        """UUIDs of samples currently selected in the tree (deduped)."""
+        uuids: set['SampleUUID'] = set()
+        for idx in self.viewSampleTree.selectedIndexes():
             uuid = idx.data(self.model.UuidRole)
             if uuid:
-                sample = self.data_source.get_sample(uuid)
-                if sample and sample.injection:
-                    self.sigAutoEnsembleRequested.emit(uuid, auto_params)
+                uuids.add(uuid)
+        return uuids
+
+    def _open_single_extraction_settings(self):
+        """
+        Open the shared extraction dialog in SINGLE mode. On accept, store the
+        scoring params (+ any find-mfs opts) on the extraction manager so the next
+        manual Cmpd extraction uses them.
+        """
+        dialog = EnsembleExtractionDialog(
+            config=self.config,
+            mode=ExtractionDialogMode.SINGLE,
+            parent=self,
+        )
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        self.ensemble_extraction_mgr.set_manual_params(
+            dialog.get_params(),
+            dialog.get_findmfs_params(),
+        )
+
+    def _request_auto_ensemble_generation(self):
+        """
+        Open the shared extraction dialog in AUTO mode (sample list prechecked to
+        the current selection). On accept, emit one batch request with the chosen
+        samples, the auto params, and optional find-mfs params.
+        """
+        self._open_auto_extraction_dialog(
+            selected_uuids=self._selected_sample_uuids(),
+        )
+
+    def on_seed_bar_drawn(
+        self,
+        uuid: 'SampleUUID',
+        rt_start: float,
+        rt_end: float,
+        intensity: float,
+    ):
+        """
+        Cross-bar released on a chromatogram: open the AUTO dialog prefilled with
+        the drawn RT window (chrom X is in seconds; the dialog's spinners are in
+        minutes) and seed intensity, with the dragged sample added to the current
+        selection. Switching back to the View tool clears the drawn bar.
+        """
+        selected = self._selected_sample_uuids()
+        selected.add(uuid)
+
+        self.actionView.trigger()
+
+        self._open_auto_extraction_dialog(
+            selected_uuids=selected,
+            prefill_rt=(rt_start / 60.0, rt_end / 60.0),
+            prefill_seed_intsy=intensity,
+        )
+
+    def _open_auto_extraction_dialog(
+        self,
+        selected_uuids: set['SampleUUID'],
+        prefill_rt: 'Optional[tuple[float, float]]' = None,
+        prefill_seed_intsy: 'Optional[float]' = None,
+    ):
+        dialog = EnsembleExtractionDialog(
+            config=self.config,
+            mode=ExtractionDialogMode.AUTO,
+            loaded_samples=self._loaded_samples(),
+            selected_uuids=selected_uuids,
+            prefill_rt=prefill_rt,
+            prefill_seed_intsy=prefill_seed_intsy,
+            parent=self,
+        )
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            return
+
+        uuids = [
+            uuid for uuid in dialog.get_selected_sample_uuids()
+            if (s := self.data_source.get_sample(uuid)) and s.injection
+        ]
+        if not uuids:
+            return
+
+        self.sigAutoEnsembleBatchRequested.emit(
+            uuids,
+            dialog.get_auto_params(),
+            dialog.get_findmfs_params(),
+        )
 
     def _delete_all_ensembles_for_selected(self):
         """

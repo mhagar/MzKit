@@ -54,6 +54,10 @@ class EnsembleViewer(
     # Auto-annotate (find-mfs) requested for the current ensemble. The
     # MainController runs it through ProcessController and registers the result.
     sigAutoFindMfRequested = QtCore.pyqtSignal(object)  # Ensemble
+    # TEMPORARY DDA path: auto-annotate using the spectra currently on screen.
+    # Payload dict: {ensemble, ms1_peaks, ms2_peaks, precursor_mz}. Retire once
+    # DDA composite/consensus stitching lands and the DIA path covers DDA.
+    sigAutoFindMfSelectedMs2Requested = QtCore.pyqtSignal(object)
 
     def __init__(
         self,
@@ -119,6 +123,7 @@ class EnsembleViewer(
         self._setup_tool_listeners()
         self._connect_signals()
         self._hide_misc_plots()
+        self._add_status_bar()
 
         # React to formula assignments (from the manual tool, the auto button,
         # or a headless batch) landing for whatever ensemble is on screen, so
@@ -128,6 +133,16 @@ class EnsembleViewer(
             removal_callback=self._on_assignment_changed,
             change_type='Assignment',
         )
+
+    def _add_status_bar(self):
+        """
+        Add a status bar at the bottom of the window. Besides being useful for
+        transient messages, its QSizeGrip gives this MDI subwindow the
+        bottom-right resize handle (mirrors SampleViewer).
+        """
+        self.status_bar = QtWidgets.QStatusBar()
+        self.status_bar.setMaximumHeight(15)  # pixels
+        self.verticalLayout_2.addWidget(self.status_bar)
 
     def _connect_signals(self):
         # Connect spectrum manager signals
@@ -463,10 +478,11 @@ class EnsembleViewer(
         self.initialize_property_table()
         self.refresh_assignment_display()
 
-        # Auto find-MF is DIA-only (composite_spectrum raises for DDA), so
-        # disable the button on DDA ensembles.
-        self.toolAutoFindMf.setEnabled(not ensemble.is_dda)
-        self.actionAutoFindMf.setEnabled(not ensemble.is_dda)
+        # Auto find-MF: the DIA path uses composite_spectrum (raises for DDA).
+        # TEMPORARY: for DDA we route through a selected-MS2 path instead
+        # (see _on_auto_find_mf_triggered), so the button stays enabled for both.
+        self.toolAutoFindMf.setEnabled(True)
+        self.actionAutoFindMf.setEnabled(True)
 
     def refresh_assignment_display(self):
         """
@@ -489,12 +505,38 @@ class EnsembleViewer(
     def _on_auto_find_mf_triggered(self):
         """
         Ask the MainController to auto-annotate the current ensemble via
-        find-mfs (runs through ProcessController). DIA-only; the button is
-        already disabled for DDA, but guard anyway.
+        find-mfs (runs through ProcessController).
+
+        DIA uses the composite spectrum. DDA has no composite yet, so
+        (TEMPORARY) we hand find-mfs whatever MS1 + MS2 spectra are currently
+        on screen, plus the ensemble's precursor. Retire once DDA stitching
+        lands and the DIA path covers DDA.
         """
-        if not self.ensemble or self.ensemble.is_dda:
+        if not self.ensemble:
             return
-        self.sigAutoFindMfRequested.emit(self.ensemble)
+
+        if not self.ensemble.is_dda:
+            self.sigAutoFindMfRequested.emit(self.ensemble)
+            return
+
+        ms1_peaks = self.spectrum_manager.current_ms1
+        ms2_peaks = self.spectrum_manager.current_ms2
+        if ms1_peaks is None or len(ms1_peaks) == 0:
+            self.status_bar.showMessage(
+                "No MS1 spectrum on screen to annotate.", 5000
+            )
+            return
+
+        # An empty MS2 array means 'no MS2 on this scan' -> skip the MS2 term.
+        if ms2_peaks is not None and len(ms2_peaks) == 0:
+            ms2_peaks = None
+
+        self.sigAutoFindMfSelectedMs2Requested.emit({
+            "ensemble": self.ensemble,
+            "ms1_peaks": ms1_peaks,
+            "ms2_peaks": ms2_peaks,
+            "precursor_mz": self.ensemble.resolved_precursor_mz,
+        })
 
     def _on_assignment_changed(self, assignment):
         """

@@ -69,6 +69,10 @@ class Ui_Form(object):
         self.toolGetCmpd.setAutoRaise(True)
         self.toolGetCmpd.setObjectName("toolGetCmpd")
         self.horizontalLayout.addWidget(self.toolGetCmpd)
+        self.toolGetSeed = QtWidgets.QToolButton(self.verticalLayoutWidget)
+        self.toolGetSeed.setAutoRaise(True)
+        self.toolGetSeed.setObjectName("toolGetSeed")
+        self.horizontalLayout.addWidget(self.toolGetSeed)
         self.toolGetCmpdMenu = QtWidgets.QToolButton(self.verticalLayoutWidget)
         self.toolGetCmpdMenu.setArrowType(QtCore.Qt.DownArrow)
         self.toolGetCmpdMenu.setObjectName("toolGetCmpdMenu")
@@ -209,6 +213,8 @@ class Ui_Form(object):
         self.actionGetCompound = QtWidgets.QAction(Form)
         self.actionGetCompound.setCheckable(True)
         self.actionGetCompound.setObjectName("actionGetCompound")
+        self.actionGetSeed = QtWidgets.QAction(Form)
+        self.actionGetSeed.setObjectName("actionGetSeed")
 
         self.retranslateUi(Form)
         self.comboMSLevel.currentIndexChanged['int'].connect(Form.on_ms_level_change_requested) # type: ignore
@@ -221,6 +227,7 @@ class Ui_Form(object):
         self.toolView.setText(_translate("Form", "View"))
         self.toolGetSpectrum.setText(_translate("Form", "Spec"))
         self.toolGetCmpd.setText(_translate("Form", "Cmpd"))
+        self.toolGetSeed.setText(_translate("Form", "AutoCmpd"))
         self.toolGetCmpdMenu.setText(_translate("Form", "..."))
         self.checkShowEnsembles.setText(_translate("Form", "Show Ensembles"))
         self.spinSamplesPerWindow.setSuffix(_translate("Form", " Sample(s) per Window"))
@@ -246,5 +253,7 @@ class Ui_Form(object):
         self.actionModeNone.setText(_translate("Form", "None"))
         self.actionGetCompound.setText(_translate("Form", "Cmpd"))
         self.actionGetCompound.setShortcut(_translate("Form", "Shift+C"))
+        self.actionGetSeed.setText(_translate("Form", "GetSeed"))
+        self.actionGetSeed.setShortcut(_translate("Form", "Ctrl+Shift+C"))
 from gui.views.sample_viewer.plot_stack import SampleStackView
 from gui.widgets.MSPlotWidget import MSPlotWidget

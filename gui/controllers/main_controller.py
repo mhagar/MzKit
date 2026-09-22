@@ -248,8 +248,8 @@ class MainController:
             self._handle_generate_ensemble_request
         )
 
-        sample_viewer.sigAutoEnsembleRequested.connect(
-            self._handle_auto_ensemble_request
+        sample_viewer.sigAutoEnsembleBatchRequested.connect(
+            self._handle_auto_ensemble_batch_request
         )
 
         sample_viewer.sigAlignEnsemblesRequested.connect(
@@ -292,6 +292,9 @@ class MainController:
 
         ensemble_viewer.sigAutoFindMfRequested.connect(
             self._handle_auto_find_mf_request
+        )
+        ensemble_viewer.sigAutoFindMfSelectedMs2Requested.connect(
+            self._handle_auto_find_mf_selected_ms2_request
         )
 
     def _handle_add_samples_request(
@@ -621,15 +624,17 @@ class MainController:
         ]
         samples = [s for s in samples if s is not None]
 
-        from core.data_structs.alignment import AlignmentParams
+        from gui.views.sample_viewer.menus import AlignmentParamsDialog
 
-        # TODO: expose these params in the GUI (shared with align).
-        params = AlignmentParams(
-            rt_tolerance=10.0,
-            mz_tolerance=0.01,
-            ms1_similarity_threshold=0.7,
-            ms2_similarity_threshold=0.6,
+        # TEMPORARY: same modal as the align path, seeded from (and savable
+        # back to) the shared [alignment] config section. Replace with a
+        # proper alignment configuration UI later.
+        params = AlignmentParamsDialog.get_params(
+            parent=self.main_view,
+            config=self.config,
         )
+        if params is None:
+            return
 
         self.process_controller.start_process(
             module_path="core.cli.align_alignments",
@@ -826,7 +831,14 @@ class MainController:
     def _handle_generate_ensemble_request(
         self,
         input_params: 'EnsembleExtractionParams',  # Qt signal is named tuple
+        findmfs: 'Optional[dict]' = None,
     ):
+        def on_complete(ensembles):
+            if ensembles:
+                self.sample_controller.on_ensemble_generation(ensembles)
+                if findmfs is not None:
+                    self._run_findmfs_over(ensembles, findmfs)
+
         self.process_controller.start_process(
             module_path="core.cli.generate_ensemble",
             function_name="get_cofeature_ensembles",
@@ -840,32 +852,69 @@ class MainController:
                 "precursor_mz_tolerance": input_params.precursor_mz_tolerance,
                 "method": input_params.method,
             },
-            on_completion_func=self.sample_controller.on_ensemble_generation,
+            on_completion_func=on_complete,
         )
 
-    def _handle_auto_ensemble_request(
+    def _handle_auto_ensemble_batch_request(
         self,
-        sample_uuid: 'data_structs.SampleUUID',
+        sample_uuids: list['data_structs.SampleUUID'],
         auto_params: dict,
+        findmfs: 'Optional[dict]',
     ):
-        sample = self.data_registry.get_sample(sample_uuid)
-        if not sample or not sample.injection:
-            return
-
+        """
+        Run auto-generation across every chosen sample; once all have finished,
+        optionally chain one find-mfs pass over all the ensembles they produced.
+        Completions fire on the GUI thread, so the shared accumulator is safe.
+        """
         from core.cli.generate_ensemble import AutoEnsembleParams
 
-        # Params come from the Sample Viewer's extraction settings menu
-        # (shared with manual extraction, plus the auto-only controls).
         params = AutoEnsembleParams(**auto_params)
 
+        injections = []
+        for uuid in sample_uuids:
+            sample = self.data_registry.get_sample(uuid)
+            if sample and sample.injection:
+                injections.append(sample.injection)
+        if not injections:
+            return
+
+        state = {"remaining": len(injections), "ensembles": []}
+
+        def on_one_complete(ensembles):
+            if ensembles:
+                self.sample_controller.on_ensemble_generation(ensembles)
+                state["ensembles"].extend(ensembles)
+            state["remaining"] -= 1
+            if state["remaining"] == 0 and findmfs is not None:
+                self._run_findmfs_over(state["ensembles"], findmfs)
+
+        for injection in injections:
+            self.process_controller.start_process(
+                module_path="core.cli.generate_ensemble",
+                function_name="auto_generate_ensembles",
+                parameters={
+                    "injection": injection,
+                    "params": params,
+                },
+                on_completion_func=on_one_complete,
+            )
+
+    def _run_findmfs_over(
+        self,
+        ensembles: list,
+        findmfs: dict,
+    ):
+        """Chain a batch find-mfs pass over freshly created ensembles."""
+        if not ensembles:
+            return
         self.process_controller.start_process(
-            module_path="core.cli.generate_ensemble",
-            function_name="auto_generate_ensembles",
+            module_path="core.cli.auto_find_mfs",
+            function_name="annotate_ensembles_dia",
             parameters={
-                "injection": sample.injection,
-                "params": params,
+                "ensembles": ensembles,
+                **findmfs,
             },
-            on_completion_func=self.sample_controller.on_ensemble_generation,
+            on_completion_func=self._on_auto_find_mf_complete,
         )
 
     def _handle_auto_find_mf_request(
@@ -888,6 +937,40 @@ class MainController:
             parameters={
                 "ensembles": [ensemble],
                 **annotation_params_from_config(self.config),
+            },
+            on_completion_func=self._on_auto_find_mf_complete,
+        )
+
+    def _handle_auto_find_mf_selected_ms2_request(
+        self,
+        payload: dict,
+    ):
+        """
+        TEMPORARY DDA path: auto-annotate a single ensemble using the MS1 + MS2
+        spectra the EnsembleViewer currently has on screen (DDA has no composite
+        yet). Same completion handler as the DIA button. Retire once DDA
+        stitching lands.
+        """
+        ensemble = payload.get("ensemble")
+        if ensemble is None:
+            return
+
+        from core.cli.auto_find_mfs import annotation_params_from_config
+
+        params = annotation_params_from_config(self.config)
+        # attach_adduct_labels assumes DIA composite MS1 cofeature ordering;
+        # skip it on this stopgap DDA path to avoid mislabeled envelopes.
+        params["attach_adduct_labels"] = False
+
+        self.process_controller.start_process(
+            module_path="core.cli.auto_find_mfs",
+            function_name="annotate_ensemble_with_selected_ms2",
+            parameters={
+                "ensemble": ensemble,
+                "ms1_peaks": payload.get("ms1_peaks"),
+                "ms2_peaks": payload.get("ms2_peaks"),
+                "precursor_mz": payload.get("precursor_mz"),
+                **params,
             },
             on_completion_func=self._on_auto_find_mf_complete,
         )
@@ -918,15 +1001,17 @@ class MainController:
         if len(samples) < 2:
             return
 
-        from core.data_structs.alignment import AlignmentParams
+        from gui.views.sample_viewer.menus import AlignmentParamsDialog
 
-        # TODO: expose these params in the GUI
-        params = AlignmentParams(
-            rt_tolerance=10.0,
-            mz_tolerance=0.01,
-            ms1_similarity_threshold=0.7,
-            ms2_similarity_threshold=0.6,
+        # TEMPORARY: prompt the user for params via a modal dialog, seeded from
+        # (and savable back to) the [alignment] config section. Replace with a
+        # proper alignment configuration UI later.
+        params = AlignmentParamsDialog.get_params(
+            parent=self.main_view,
+            config=self.config,
         )
+        if params is None:
+            return
 
         self.process_controller.start_process(
             module_path="core.cli.align_ensembles",
