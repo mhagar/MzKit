@@ -579,14 +579,19 @@
           </attribute>
           <layout class="QVBoxLayout" name="verticalLayout_7">
            <item>
-            <widget class="QCheckBox" name="checkRunFindMfs">
-             <property name="text">
-              <string>Run find-mfs on new ensembles</string>
+            <widget class="QGroupBox" name="groupRunFindMfs">
+             <property name="title">
+              <string>Run find-mfs on new ensembless</string>
              </property>
+             <property name="checkable">
+              <bool>true</bool>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_8">
+              <item>
+               <widget class="FindMfsParamWidget" name="findMfsParams" native="true"/>
+              </item>
+             </layout>
             </widget>
-           </item>
-           <item>
-            <widget class="FindMfsParamWidget" name="findMfsParams" native="true"/>
            </item>
           </layout>
          </widget>

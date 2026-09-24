@@ -31,3 +31,7 @@ AssignmentUUID = NewType(
     'AssignmentUUID',
     int,
 )
+AnalyteUUID = NewType(
+    'AnalyteUUID',
+    int,
+)

@@ -105,13 +105,14 @@ def test_composite_spectrum_is_memoized(ensemble: 'Ensemble'):
     assert ensemble.composite_spectrum is ensemble.composite_spectrum
 
 
-def test_composite_spectrum_dda_not_implemented(ensemble: 'Ensemble', monkeypatch):
-    # Composite is DIA-only for now; DDA must fail loudly rather than return a
-    # half-defined spectrum.
+def test_composite_spectrum_dda_placeholder(ensemble: 'Ensemble', monkeypatch):
+    # DDA composite is a placeholder (apex MS1, tallest-precursor MS2); it must
+    # at least produce a well-formed composite rather than raise.
     monkeypatch.setattr(ensemble.injection, 'acquisition_mode', 'dda')
     assert ensemble.is_dda is True
-    with pytest.raises(NotImplementedError):
-        _ = ensemble.composite_spectrum
+    composite = ensemble.composite_spectrum
+    assert isinstance(composite, CompositeSpectrum)
+    assert composite.ms1.size > 0
 
 
 

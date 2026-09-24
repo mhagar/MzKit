@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 logger = logging.getLogger(__name__)
 
 def save_project(
@@ -153,6 +153,7 @@ def serialize_alignment(
     analytes_data = []
     for analyte in alignment.analytes:
         analytes_data.append({
+            'uuid': analyte.uuid,
             'ensemble_map': {
                 str(k): v for k, v in analyte.ensemble_map.items()
             },
@@ -183,6 +184,7 @@ def deserialize_alignment(
     analytes = []
     for a in data['analytes']:
         analytes.append(AlignedAnalyte(
+            uuid=a['uuid'],
             ensemble_map={int(k): v for k, v in a['ensemble_map'].items()},
             consensus_rt=a['consensus_rt'],
             consensus_mz=a['consensus_mz'],
@@ -498,7 +500,16 @@ def load_project(
             and name.endswith('.json')
         ]
         for alignment_path in alignment_paths:
-            alignment = deserialize_alignment(alignment_path, zf)
+            try:
+                alignment = deserialize_alignment(alignment_path, zf)
+            except KeyError:
+                # Pre-1.1.0 alignments have no analyte uuids; these are
+                # deliberately not migrated (re-align instead)
+                logger.warning(
+                    f"Skipping alignment {alignment_path}: saved by an older "
+                    f"format version; please re-run the alignment."
+                )
+                continue
             alignments.append(alignment)
 
         # Load formula assignments

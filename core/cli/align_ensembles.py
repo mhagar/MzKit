@@ -10,25 +10,27 @@ The work is split into three stages so each can be tuned or
 swapped independently:
 
 1. `_build_spectra`:
-    Extract every ensemble's MS1 (and MS2) spectrum *once* into
-    `matchms.Spectrum` objects.
+    Convert every ensemble's composite MS1 (and MS2) spectrum *once*
+    into `matchms.Spectrum` objects.
 
 2. `_score_pairs`: RT-windowed, cross-sample similarity scoring
    using matchms' `CosineGreedy`. Only pairs within `rt_tolerance`
     are scored.
    TODO: Implement other scoring systems i.e. `ModifiedCosine`, `NeutralLosses`
+   `score_ensemble_pair` exposes the same scoring for a single pair
+   (i.e. for comparing ensembles in the GUI).
 
 3. `_cluster`: group ensembles from the precomputed score graph
    via score-descending single-linkage with a per-sample-uniqueness
    constraint (i.e. each group holds up to one ensemble per sample).
 """
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import NamedTuple, Optional, TYPE_CHECKING
 
 import numpy as np
-from numba import njit
 from matchms import Spectrum
 from matchms.similarity import CosineGreedy
+from matchms.similarity.spectrum_similarity_functions import collect_peak_pairs
 
 from core.data_structs.alignment import (
     AlignmentParams,
@@ -38,9 +40,8 @@ from core.data_structs.alignment import (
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
-    from core.data_structs import Sample, SampleUUID, EnsembleUUID
-    from core.data_structs.feature_pointer import FeaturePointer
-    from core.data_structs.scan_array import ScanArray
+    from core.data_structs import Sample, SampleUUID, EnsembleUUID, Ensemble
+    from core.utils.array_types import SpectrumArray
 
 
 # Config section holding the persisted alignment defaults. Single source of
@@ -141,130 +142,53 @@ def align_ensembles(
     )
 
 
-@njit(cache=True)
-def _extract_peaks_kernel(
-    mz_data, intsy_data, indices, indptr,
-    lanes, starts, ends, out_mz, out_intsy,
-):
-    """
-    Per-cofeature windowed max m/z and max intensity, over shared CSR.
-
-    `mz_data`/`intsy_data` share the CSR sparsity pattern
-    (`indices`/`indptr`), so one pass yields both.
-
-    For cofeature `k` the peak is the max m/z and max intensity
-     over columns (scans) in `[starts[k], ends[k])` of row (m/z lane)
-      `lanes[k]`. CSR column indices are assumed sorted ascending
-        within a row.
-    """
-    for k in range(lanes.shape[0]):
-        r = lanes[k]
-        s = starts[k]
-        e = ends[k]
-        p0 = indptr[r]
-        p1 = indptr[r + 1]
-
-        # Binary search for the first stored column >= s.
-        lo = p0
-        hi = p1
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if indices[mid] < s:
-                lo = mid + 1
-            else:
-                hi = mid
-        best_mz = 0.0
-        best_intsy = 0.0
-        p = lo
-        while p < p1:
-            c = indices[p]
-            if c >= e:
-                break
-            m = mz_data[p]
-            if m > best_mz:
-                best_mz = m
-            iv = intsy_data[p]
-            if iv > best_intsy:
-                best_intsy = iv
-            p += 1
-        out_mz[k] = best_mz
-        out_intsy[k] = best_intsy
-
-
-def _extract_peaks(
-    scan_array: 'ScanArray',
-    feature_lists: list[list['FeaturePointer']],
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    """
-    Extract (mz, intsy) peak arrays for many ensembles in
-    one numba pass.
-
-    `feature_lists[i]` is ensemble `i`'s cofeature pointers;
-     the result at `i` is that ensemble's `(mz, intsy)` peak
-      arrays (one peak per cofeature).
-    """
-    lanes: list[int] = []
-    starts: list[int] = []
-    ends: list[int] = []
-    seg_lens: list[int] = []
-    for feats in feature_lists:
-        seg_lens.append(len(feats))
-        for fp in feats:
-            scan_idxs = fp.scan_idxs
-            lanes.append(fp.mz_lane_idx)
-            starts.append(int(scan_idxs[0]))
-            ends.append(int(scan_idxs[-1]) + 1)  # inclusive of the apex scan
-
-    total = len(lanes)
-    out_mz = np.empty(total, dtype=np.float64)
-    out_intsy = np.empty(total, dtype=np.float64)
-    if total:
-        mz_arr = scan_array.mz_arr
-        intsy_arr = scan_array.intsy_arr
-        # Kernel relies on ascending column indices within each row.
-        mz_arr.sort_indices()
-        intsy_arr.sort_indices()
-        _extract_peaks_kernel(
-            mz_arr.data, intsy_arr.data,
-            mz_arr.indices.astype(np.int64),
-            mz_arr.indptr.astype(np.int64),
-            np.asarray(lanes, dtype=np.int64),
-            np.asarray(starts, dtype=np.int64),
-            np.asarray(ends, dtype=np.int64),
-            out_mz, out_intsy,
-        )
-
-    result: list[tuple[np.ndarray, np.ndarray]] = []
-    pos = 0
-    for length in seg_lens:
-        result.append((out_mz[pos:pos + length], out_intsy[pos:pos + length]))
-        pos += length
-    return result
-
-
 def _spectrum_from(mz: np.ndarray, intsy: np.ndarray) -> Spectrum:
     """
     Build an m/z-sorted matchms Spectrum,
      dropping zero-intensity peaks
     """
-    keep = intsy > 0.0
-    mz = mz[keep]
-    intsy = intsy[keep]
-    order = np.argsort(mz, kind='stable')  # matchms requires ascending m/z
-    return Spectrum(
-        mz=np.ascontiguousarray(mz[order], dtype=float),
-        intensities=np.ascontiguousarray(intsy[order], dtype=float),
+    spectrum, _ = _spectrum_and_order_from(mz, intsy)
+    return spectrum
+
+
+def _spectrum_and_order_from(
+    mz: np.ndarray,
+    intsy: np.ndarray,
+) -> tuple[Spectrum, np.ndarray]:
+    """
+    As `_spectrum_from`, but also returns the indices into the *input*
+     arrays of each peak kept in the Spectrum (in Spectrum order), so
+      matched peaks can be mapped back onto the source array
+    """
+    keep = np.flatnonzero(np.asarray(intsy) > 0.0)
+    order = keep[np.argsort(np.asarray(mz)[keep], kind='stable')]  # matchms requires ascending m/z
+    spectrum = Spectrum(
+        mz=np.ascontiguousarray(np.asarray(mz)[order], dtype=float),
+        intensities=np.ascontiguousarray(np.asarray(intsy)[order], dtype=float),
         metadata_harmonization=False,
     )
+    return spectrum, order
+
+
+def _composite_spectra(
+    ensemble: 'Ensemble',
+) -> tuple[Spectrum, Optional[Spectrum]]:
+    """
+    The (MS1, MS2) matchms Spectra alignment scores an ensemble by:
+     its composite spectrum
+    """
+    composite = ensemble.composite_spectrum
+    ms1 = _spectrum_from(composite.ms1['mz'], composite.ms1['intsy'])
+    ms2 = None
+    if composite.ms2 is not None and composite.ms2.size:
+        ms2 = _spectrum_from(composite.ms2['mz'], composite.ms2['intsy'])
+    return ms1, ms2
 
 
 def _build_spectra(samples: list['Sample']) -> _SpectraBundle:
     """
-    Pool every ensemble across samples, extracting each spectrum once
-
-    Spectrum peaks are pulled straight from the injection's
-     CSR scan arrays via a single batched numba pass per
-      sample per MS level (more efficient here)
+    Pool every ensemble across samples, converting each ensemble's
+     composite spectrum to matchms Spectra once
     """
     sample_idx_of: dict['SampleUUID', int] = {
         s.uuid: i for i, s in enumerate(samples)
@@ -280,33 +204,13 @@ def _build_spectra(samples: list['Sample']) -> _SpectraBundle:
         if not injection:
             continue
         si = sample_idx_of[sample.uuid]
-        ens_items = list(injection.ensembles.items())
 
-        ms1_peaks = _extract_peaks(
-            injection.scan_array_ms1,
-            [ens.ms1_cofeatures for _, ens in ens_items],
-        )
-
-        has_ms2 = [bool(ens.ms2_cofeatures) for _, ens in ens_items]
-        if any(has_ms2) and injection.scan_array_ms2 is not None:
-            ms2_peaks = _extract_peaks(
-                injection.scan_array_ms2,
-                [ens.ms2_cofeatures if flag else []
-                 for (_, ens), flag in zip(ens_items, has_ms2)],
-            )
-        else:
-            ms2_peaks = [None] * len(ens_items)
-
-        for idx, (ens_uuid, ensemble) in enumerate(ens_items):
-            mz1, intsy1 = ms1_peaks[idx]
-            ms2_spec = None
-            if has_ms2[idx] and ms2_peaks[idx] is not None:
-                mz2, intsy2 = ms2_peaks[idx]
-                ms2_spec = _spectrum_from(mz2, intsy2)
+        for ens_uuid, ensemble in injection.ensembles.items():
+            ms1_spec, ms2_spec = _composite_spectra(ensemble)
 
             bundle.sample_uuids.append(sample.uuid)
             bundle.ens_uuids.append(ens_uuid)
-            bundle.ms1_specs.append(_spectrum_from(mz1, intsy1))
+            bundle.ms1_specs.append(ms1_spec)
             bundle.ms2_specs.append(ms2_spec)
             sample_idxs.append(si)
             rts.append(ensemble.peak_rt)
@@ -316,6 +220,107 @@ def _build_spectra(samples: list['Sample']) -> _SpectraBundle:
     bundle.rts = np.asarray(rts, dtype=float)
     bundle.mzs = np.asarray(mzs, dtype=float)
     return bundle
+
+
+def _make_cosine(
+        params: AlignmentParams
+) -> CosineGreedy:
+    """
+    The cosine scorer alignment uses; shared with `score_spectrum_pair`.
+    """
+    return CosineGreedy(
+        tolerance=params.mz_tolerance,
+        mz_power=0.0,
+        intensity_power=1.0,
+    )
+
+
+class PairScore(NamedTuple):
+    """
+    Cosine similarity between two spectra pairs, as alignment computes it.
+
+    `ms2` is None when either side has no MS2.
+    `*_matches` are (idx_a, idx_b) index pairs into the spectrum arrays
+     that were passed in (i.e. the SpectrumArrays, not matchms' filtered
+      and sorted copies)
+    """
+    ms1: float
+    ms2: Optional[float]
+    ms1_matches: list[tuple[int, int]]
+    ms2_matches: list[tuple[int, int]]
+
+
+def _cosine_with_matches(
+    cosine: CosineGreedy,
+    spec_a: 'SpectrumArray',
+    spec_b: 'SpectrumArray',
+) -> tuple[float, list[tuple[int, int]]]:
+    """
+    CosineGreedy score, plus the greedily-matched peak pairs
+     (mirrors matchms' `score_best_matches` peak assignment)
+    """
+    mspec_a, order_a = _spectrum_and_order_from(spec_a['mz'], spec_a['intsy'])
+    mspec_b, order_b = _spectrum_and_order_from(spec_b['mz'], spec_b['intsy'])
+    if not order_a.size or not order_b.size:
+        return 0.0, []
+
+    score = float(cosine.pair(mspec_a, mspec_b)['score'])
+
+    pairs = collect_peak_pairs(
+        mspec_a.peaks.to_numpy, mspec_b.peaks.to_numpy,
+        cosine.tolerance, shift=0.0,
+        mz_power=cosine.mz_power, intensity_power=cosine.intensity_power,
+    )
+    matches: list[tuple[int, int]] = []
+    if pairs is not None:
+        pairs = pairs[np.argsort(pairs[:, 2])[::-1], :]
+        used_a: set[int] = set()
+        used_b: set[int] = set()
+        for row in pairs:
+            i, j = int(row[0]), int(row[1])
+            if i in used_a or j in used_b:
+                continue
+            used_a.add(i)
+            used_b.add(j)
+            matches.append((int(order_a[i]), int(order_b[j])))
+
+    return score, matches
+
+
+def score_spectrum_pair(
+    ms1_a: 'SpectrumArray',
+    ms1_b: 'SpectrumArray',
+    ms2_a: Optional['SpectrumArray'],
+    ms2_b: Optional['SpectrumArray'],
+    params: AlignmentParams,
+) -> PairScore:
+    """
+    Score two (MS1, MS2) spectrum pairs the way alignment does
+    """
+    cosine = _make_cosine(params)
+    ms1, ms1_matches = _cosine_with_matches(cosine, ms1_a, ms1_b)
+
+    ms2: Optional[float] = None
+    ms2_matches: list[tuple[int, int]] = []
+    if ms2_a is not None and ms2_b is not None and ms2_a.size and ms2_b.size:
+        ms2, ms2_matches = _cosine_with_matches(cosine, ms2_a, ms2_b)
+
+    return PairScore(ms1, ms2, ms1_matches, ms2_matches)
+
+
+def score_ensemble_pair(
+    ensemble_a: 'Ensemble',
+    ensemble_b: 'Ensemble',
+    params: AlignmentParams,
+) -> PairScore:
+    """
+    Score two ensembles' composite spectra the way alignment does
+    """
+    comp_a = ensemble_a.composite_spectrum
+    comp_b = ensemble_b.composite_spectrum
+    return score_spectrum_pair(
+        comp_a.ms1, comp_b.ms1, comp_a.ms2, comp_b.ms2, params,
+    )
 
 
 def _score_pairs(
@@ -336,11 +341,7 @@ def _score_pairs(
     `rt_tolerance` (found via `searchsorted`).
     """
     n = len(bundle)
-    cosine = CosineGreedy(
-        tolerance=params.mz_tolerance,
-        mz_power=0.0,
-        intensity_power=1.0,
-    )
+    cosine = _make_cosine(params)
     ms1_thr = params.ms1_similarity_threshold
     ms2_thr = params.ms2_similarity_threshold
     w1 = params.ms1_weight

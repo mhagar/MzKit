@@ -1,20 +1,21 @@
 """
-Modal dialog for ensemble extraction — the single settings + launch surface for
-both automated ensemble generation and manual single-ensemble ("Cmpd")
-extraction.
+Modal dialog for ensemble extraction.
+Unified settings + launch surface for both automated ensemble generation
+ and manual single-ensemble extraction (i.e. "Cmpd" button)
 
-Modes:
+Two modes:
   - AUTO:   sample checklist + all extraction params + optional find-mfs; OK runs
-            auto-generation across the checked samples (and, if enabled, chains
-            find-mfs over the new ensembles).
-  - SINGLE: settings surface for the manual Cmpd tool. The auto-only groups and
-            the sample list are disabled; shared scoring + find-mfs stay editable.
-            OK just stores the params; the seed/window are still picked on the plot.
+            auto-generation across the checked samples
+            (and, if enabled, chains find-mfs over the new ensembles)
+  - SINGLE: settings surface for the manual Cmpd tool. The disables settings
+            pertaining to auto-extraction, and the sample list.
+            Group scoring + find-mfs params stay editable.
+            OK just stores the params. the seed/window are still picked on the plot.
 
-All initial values come from the config (``[auto_ensemble]`` + ``[findmfs]``), not
-from the ``.ui`` — config is the single source of truth. The dict shapes returned
-by ``get_params`` / ``get_auto_params`` match those the controller feeds to
-``EnsembleExtractionParams`` / ``AutoEnsembleParams`` unchanged.
+All initial values come from the config (`[auto_ensemble]`+ `[findmfs]`).
+
+The dict shapes returned by `get_params` / `get_auto_params` match those
+ the controller feeds to `EnsembleExtractionParams` / `AutoEnsembleParams` unchanged
 """
 from __future__ import annotations
 
@@ -61,12 +62,14 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
         self.config = config
         self.mode = mode
 
-        # find-mfs sheet owns its own [findmfs] persistence.
+        # find-mfs sheet manages its own [findmfs] persistence.
         self.findMfsParams.set_config(config)
 
         # Populate every extraction control from [auto_ensemble].
         if config is not None:
-            self._apply_auto_params(auto_params_from_config(config))
+            self._apply_auto_params(
+                auto_params_from_config(config)
+            )
 
         self._populate_sample_list(
             loaded_samples or [],
@@ -80,7 +83,7 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
         if mode is ExtractionDialogMode.SINGLE:
             self._apply_single_mode()
 
-        # Cross-bar prefill (RT window + seed intensity), AUTO mode.
+        # Cross-bar tool prefill (RT window + seed intensity), AUTO mode.
         if prefill_rt is not None:
             self.groupRTWindow.setChecked(True)
             self.spinnerRTStart.setValue(prefill_rt[0])
@@ -95,7 +98,6 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
         )
 
     # -- mode / samples ---------------------------------------------------
-
     def _apply_single_mode(self) -> None:
         """
         Grey out the auto-only surface (sample list + all auto params); keep the
@@ -130,10 +132,12 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
     # -- find-mfs ---------------------------------------------------------
 
     def run_findmfs(self) -> bool:
-        return self.checkRunFindMfs.isChecked()
+        return self.groupRunFindMfs.isChecked()
 
     def get_findmfs_params(self) -> Optional[dict]:
-        """Annotation kwargs when find-mfs is enabled, else None."""
+        """
+        Annotation kwargs when find-mfs is enabled, else None.
+        """
         if not self.run_findmfs():
             return None
         return self.findMfsParams.get_annotation_params()
@@ -147,8 +151,8 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
     def _rt_range(self) -> Optional[tuple[float, float]]:
         """
         (start, end) RT window in SECONDS, or None when the restriction is off or
-        the bounds are degenerate. Spinners are in minutes; the engine's rt_arr is
-        in seconds, so convert here.
+        the bounds are degenerate.
+        Spinners are in minutes; the engine's rt_arr is in seconds, so convert here.
         """
         if not self.groupRTWindow.isChecked():
             return None

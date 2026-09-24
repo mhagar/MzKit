@@ -14,9 +14,11 @@ from PyQt5 import QtCore
 from PyQt5.QtCore import QRectF, QPointF, QLineF
 from PyQt5.QtGui import QPicture, QPainter, QPolygonF, QColor
 
-from gui.views.alignment_viewer.layout import (
+from gui.widgets.alignment_plot.layout import (
     LaneMap,
     HoverTarget,
+    XAccessor,
+    ensemble_rt,
     resolve_ensemble,
     strip_geometry,
     scale_line_opacity,
@@ -24,9 +26,9 @@ from gui.views.alignment_viewer.layout import (
 )
 
 if TYPE_CHECKING:
-    from core.data_structs import DataRegistry
+    from core.interfaces.data_sources import SampleDataSource
     from core.data_structs.alignment import EnsembleAlignment
-    from gui.views.alignment_viewer.params import RenderParams
+    from gui.widgets.alignment_plot.params import RenderParams
 
 
 # Pixel radius for the "near a strip centre" fallback hit-test (helps when
@@ -42,22 +44,24 @@ class EnsembleStripsItem(pg.GraphicsObject):
     carrying a :class:`HoverTarget`.
     """
     sigHovered = QtCore.pyqtSignal(object)              # HoverTarget | None
-    sigSelected = QtCore.pyqtSignal(object)             # HoverTarget | None
+    sigSelected = QtCore.pyqtSignal(object, bool)       # HoverTarget | None, additive (Ctrl)
     sigActivated = QtCore.pyqtSignal(object)            # HoverTarget | None
     sigContextRequested = QtCore.pyqtSignal(object, object)  # target, QPoint
 
     def __init__(
         self,
         alignment: 'EnsembleAlignment',
-        data_registry: 'DataRegistry',
+        data_source: 'SampleDataSource',
         lane_map: LaneMap,
         params: 'RenderParams',
+        x_of: XAccessor = ensemble_rt,
     ):
         super().__init__()
         self._alignment = alignment
-        self._data_registry = data_registry
+        self._data_source = data_source
         self._lanes = lane_map
         self._params = params
+        self._x_of = x_of
 
         # Hit-test caches, keyed by analyte index.
         self.rects: dict[int, dict] = {}          # aid -> {sample_uuid: QRectF}
@@ -103,14 +107,14 @@ class EnsembleStripsItem(pg.GraphicsObject):
 
             for stagger_idx, sample_uuid in enumerate(samples):
                 ensemble = resolve_ensemble(
-                    analyte, sample_uuid, self._data_registry
+                    analyte, sample_uuid, self._data_source
                 )
                 if ensemble is None:
                     continue
 
                 lane_y = self._lanes.y_of_sample[sample_uuid]
                 rect, center = strip_geometry(
-                    ensemble, lane_y, aid, self._params
+                    ensemble, lane_y, aid, self._params, self._x_of,
                 )
                 painter.drawRect(rect)
 
@@ -201,22 +205,11 @@ class EnsembleStripsItem(pg.GraphicsObject):
         if hit is None:
             hit = self._near_center(point)
         if hit is not None:
-            aid, sample_uuid = hit
-            return HoverTarget(
-                kind='ensemble',
-                analyte_id=aid,
-                sample_uuid=sample_uuid,
-                ensemble=self._ensembles.get((aid, sample_uuid)),
-                analyte=self._analytes.get(aid),
-            )
+            return self.ensemble_target(*hit)
 
         aid = self._polyline_at(point)
         if aid is not None:
-            return HoverTarget(
-                kind='analyte',
-                analyte_id=aid,
-                analyte=self._analytes.get(aid),
-            )
+            return self.analyte_target(aid)
 
         sample_uuid = self._lane_at(point.y())
         if sample_uuid is not None:
@@ -245,7 +238,8 @@ class EnsembleStripsItem(pg.GraphicsObject):
         elif ev.double():
             self.sigActivated.emit(target)
         else:
-            self.sigSelected.emit(target)
+            additive = bool(ev.modifiers() & QtCore.Qt.ControlModifier)
+            self.sigSelected.emit(target, additive)
 
     # -- lookups for indicators / consumers ---------------------------------
 
@@ -257,6 +251,41 @@ class EnsembleStripsItem(pg.GraphicsObject):
 
     def rects_for_analyte(self, aid: int) -> list:
         return list(self.rects.get(aid, {}).values())
+
+    def ensemble_for(self, aid: int, sample_uuid):
+        return self._ensembles.get((aid, sample_uuid))
+
+    def analyte_for(self, aid: int):
+        return self._analytes.get(aid)
+
+    def center_for(self, aid: int, sample_uuid) -> Optional[QPointF]:
+        return self.rect_centers.get(aid, {}).get(sample_uuid)
+
+    def analyte_center(self, aid: int) -> Optional[QPointF]:
+        """Mean of an analyte's strip centres."""
+        centers = list(self.rect_centers.get(aid, {}).values())
+        if not centers:
+            return None
+        return QPointF(
+            sum(c.x() for c in centers) / len(centers),
+            sum(c.y() for c in centers) / len(centers),
+        )
+
+    def ensemble_target(self, aid: int, sample_uuid) -> HoverTarget:
+        return HoverTarget(
+            kind='ensemble',
+            analyte_id=aid,
+            sample_uuid=sample_uuid,
+            ensemble=self._ensembles.get((aid, sample_uuid)),
+            analyte=self._analytes.get(aid),
+        )
+
+    def analyte_target(self, aid: int) -> HoverTarget:
+        return HoverTarget(
+            kind='analyte',
+            analyte_id=aid,
+            analyte=self._analytes.get(aid),
+        )
 
     def lane_span(self, sample_uuid) -> Optional[tuple]:
         y = self._lanes.y_of_sample.get(sample_uuid)

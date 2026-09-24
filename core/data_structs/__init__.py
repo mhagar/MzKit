@@ -8,7 +8,7 @@ from .feature_pointer import FeaturePointer
 from .alignment import EnsembleAlignment, AlignedAnalyte, AlignmentParams
 from .uuid_types import (
     SampleUUID, FingerprintUUID, InjectionUUID, ScanArrayUUID,
-    EnsembleUUID, AlignmentUUID,
+    EnsembleUUID, AlignmentUUID, AnalyteUUID,
 )
 
 
@@ -30,4 +30,5 @@ __all__ = [
     "ScanArrayUUID",
     "FeaturePointer",
     "AlignmentUUID",
+    "AnalyteUUID",
 ]

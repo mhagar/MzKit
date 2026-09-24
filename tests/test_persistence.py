@@ -80,6 +80,28 @@ def test_formula_assignment_roundtrip(tmp_path):
     assert c.chem_logprior == -3.3
 
 
+def test_alignment_analyte_uuid_roundtrip(tmp_path):
+    """Analyte uuids must survive save/load (analyte metadata keys on them)."""
+    from core.data_structs.alignment import EnsembleAlignment, AlignedAnalyte
+
+    reg = DataRegistry()
+    analyte = AlignedAnalyte(
+        ensemble_map={1: 11, 2: 22}, consensus_rt=60.0, consensus_mz=300.1,
+    )
+    alignment = EnsembleAlignment(sample_uuids=(1, 2), analytes=[analyte])
+    reg.register_alignment(alignment)
+
+    path = tmp_path / "roundtrip.mzk"
+    persistence.save_project(filepath=path, data_registry=reg)
+    _, alignments, _ = persistence.load_project(filepath=path)
+
+    assert len(alignments) == 1
+    loaded = alignments[0].analytes[0]
+    assert loaded.uuid == analyte.uuid
+    assert alignments[0].get_analyte(analyte.uuid) is loaded
+    assert loaded.ensemble_map == {1: 11, 2: 22}
+
+
 def test_load_project(
     data_registry: DataRegistry,
 ):

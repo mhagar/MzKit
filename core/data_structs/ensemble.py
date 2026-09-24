@@ -292,28 +292,66 @@ class Ensemble:
         The ensemble's representative (MS1, MS2) pair
         i.e. for use with find-mfs or showing by default in EnsembleViewer
 
-        DIA / MS1-only only for now: just uses the apex scan.
-        DDA raises NotImplementedError until I implement precursor stitching
+        MS1 is the apex scan for all acquisition modes.
+        MS2: DIA / MS1-only uses the tallest MS2 scan; DDA uses the matched
+        MS2 scan with the tallest precursor (see `_dda_tallest_precursor_ms2`)
+
+        TODO: The DDA behaviour is a placeholder until precursor stitching lands
 
         Computed lazily
         """
-        if self.is_dda:
-            raise NotImplementedError(
-                "composite_spectrum is DIA-only for now (DDA stitching pending)"
-            )
-
         if self._composite is None:
-            ms2_spectra = self.get_ms2_spectra()
+            if self.is_dda:
+                ms2 = self._dda_tallest_precursor_ms2()
+            else:
+                ms2_spectra = self.get_ms2_spectra()
+                ms2 = ms2_spectra[0].spectrum if ms2_spectra else None
+
             self._composite = CompositeSpectrum(
                 ms1=self.get_spectrum(
                     ms_level=1, scan_num=self.base_scan_num
                 ),
-                ms2=ms2_spectra[0].spectrum if ms2_spectra else None,
+                ms2=ms2,
                 precursor_mz=self.resolved_precursor_mz,
                 charge=self.resolved_charge,
             )
 
         return self._composite
+
+    def _dda_tallest_precursor_ms2(self) -> Optional[SpectrumArray]:
+        """
+        Placeholder DDA composite MS2: the matched MS2 scan whose precursor
+        was most intense in the MS1 scan nearest to it.
+
+        Each scan's precursor is matched to the closest MS1 cofeature lane
+        (by m/z); falls back to the tallest MS2 scan when no MS1 cofeature
+        lies within 0.5 m/z of any precursor.
+        """
+        scan_specs = self._iter_ms2_scan_spectra()
+        if not scan_specs:
+            return None
+
+        ms1_arr = self.injection.scan_array_ms1
+        lane_mzs = np.array([
+            np.mean(mzs[mzs > 0]) if np.any(mzs > 0) else np.nan
+            for mzs in (
+                cf.get_mz_values(ms1_arr) for cf in self.ms1_cofeatures
+            )
+        ])
+
+        def precursor_intsy(spec: MS2Spectrum) -> float:
+            diffs = np.abs(lane_mzs - spec.precursor_mz)
+            if np.all(np.isnan(diffs)) or np.nanmin(diffs) > 0.5:
+                return -np.inf
+            cofeature = self.ms1_cofeatures[int(np.nanargmin(diffs))]
+            scan_num = ms1_arr.rt_to_scan_num(spec.rt)
+            return float(ms1_arr.intsy_arr[cofeature.mz_lane_idx, scan_num])
+
+        intsys = [precursor_intsy(s) for s in scan_specs]
+        if max(intsys) == -np.inf:
+            return max(scan_specs, key=_max_intsy).spectrum
+
+        return scan_specs[int(np.argmax(intsys))].spectrum
 
     # ------------------------------------------------------------------
     # MS2 spectrum production

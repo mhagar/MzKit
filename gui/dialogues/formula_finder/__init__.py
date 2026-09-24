@@ -124,6 +124,17 @@ class FormulaFinderDialog(
             **mf_params,
         )
 
+        if len(results) == 0:
+            self.search_results = None
+            self._results_mode = "ion"
+            self._compound_assignment = None
+            self._populate_ion_results()
+            self.statusbar.showMessage(
+                f"No formulae found for m/z {search_mz}"
+                + (" matching the isotope envelope" if has_envelope else "")
+            )
+            return
+
         SCORER.score(
             results,
             ms1_peaks=spec,

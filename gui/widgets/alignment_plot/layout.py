@@ -6,7 +6,7 @@ alignment -> ensemble resolution logic (lifted from the old
 ``AlignmentTableModel._get_ensemble``). Kept Qt-light so the numbers are
 easy to reason about and tweak.
 """
-from typing import NamedTuple, Optional, TYPE_CHECKING
+from typing import Callable, NamedTuple, Optional, TYPE_CHECKING
 
 import numpy as np
 import pyqtgraph as pg
@@ -16,9 +16,19 @@ from PyQt5.QtGui import QColor
 from core.utils.natural_sort import natural_sort_key
 
 if TYPE_CHECKING:
-    from core.data_structs import DataRegistry, SampleUUID, Ensemble
+    from core.data_structs import SampleUUID, Ensemble
+    from core.interfaces.data_sources import SampleDataSource
     from core.data_structs.alignment import EnsembleAlignment, AlignedAnalyte
-    from gui.views.alignment_viewer.params import RenderParams
+    from gui.widgets.alignment_plot.params import RenderParams
+
+
+# Maps an ensemble to its x-coordinate on the feature map.
+XAccessor = Callable[['Ensemble'], float]
+
+
+def ensemble_rt(ensemble: 'Ensemble') -> float:
+    """Default x-coordinate: the ensemble's peak retention time (s)."""
+    return float(ensemble.peak_rt)
 
 
 # Colour for singleton analytes (present in a single sample). All other
@@ -47,7 +57,7 @@ class HoverTarget(NamedTuple):
 
 def build_lane_map(
     alignment: 'EnsembleAlignment',
-    data_registry: 'DataRegistry',
+    data_source: 'SampleDataSource',
 ) -> LaneMap:
     """
     Resolve sample names and lay the lanes out top-to-bottom, natural-sorted
@@ -55,7 +65,7 @@ def build_lane_map(
     """
     names: dict['SampleUUID', str] = {}
     for uuid in alignment.sample_uuids:
-        sample = data_registry.get_sample(uuid)
+        sample = data_source.get_sample(uuid)
         names[uuid] = sample.name if sample else f"...{str(uuid)[-5:]}"
 
     ordered = sorted(
@@ -69,7 +79,7 @@ def build_lane_map(
 def resolve_ensemble(
     analyte: 'AlignedAnalyte',
     sample_uuid: 'SampleUUID',
-    data_registry: 'DataRegistry',
+    data_source: 'SampleDataSource',
 ) -> Optional['Ensemble']:
     """
     Look up the concrete Ensemble an analyte points at in a given sample.
@@ -78,7 +88,7 @@ def resolve_ensemble(
     ens_uuid = analyte.ensemble_map.get(sample_uuid)
     if ens_uuid is None:
         return None
-    sample = data_registry.get_sample(sample_uuid)
+    sample = data_source.get_sample(sample_uuid)
     if not sample or not sample.injection:
         return None
     return sample.injection.ensembles.get(ens_uuid)
@@ -134,17 +144,18 @@ def strip_geometry(
     lane_y: float,
     stagger_idx: int,
     params: 'RenderParams',
+    x_of: XAccessor = ensemble_rt,
 ) -> tuple[QRectF, QPointF]:
     """
     Build the strip rect + its centre point for one ensemble.
 
-    X-centre = peak RT; both width and height scale with intensity (on their
+    X-centre = `x_of(ensemble)` (peak RT by default); both width and height scale with intensity (on their
     own ranges). The strip is nudged vertically within its lane by
     ``stagger_idx`` so it stays clickable.
     """
     width = scale_width(ensemble.base_intsy, params)
     height = scale_height(ensemble.base_intsy, params)
-    cx = float(ensemble.peak_rt)
+    cx = x_of(ensemble)
     cy = (
         lane_y + params.stagger_base
         + (stagger_idx % params.stagger_count) * params.stagger_step
