@@ -17,10 +17,9 @@ import pytest
 from core.cli.main import _load_registry
 from core.cli.auto_find_mfs import (
     annotate_ensembles_dia,
-    annotation_params_from_config,
-    _elements_from_counts,
     ADDUCT_ANNOT_SOURCE,
 )
+from core.formula.params import FindMfsParams
 from core.data_structs.ensemble import GenericAnnotation
 
 
@@ -61,6 +60,13 @@ def _fake_results(formulas):
         candidates=cands,
         log_posterior=lambda ms2_weight=1.0: np.full(len(cands), -1.0),
         ms2_loglik=lambda: np.zeros(len(cands)),
+        query_params={
+            'elements': 'CHNOClBr',
+            'max_counts': {'C': float('inf'), 'H': float('inf'), 'N': 3,
+                           'O': float('inf'), 'Cl': 4, 'Br': 4},
+            'min_counts': {'C': 0, 'H': 0, 'N': 0, 'O': 0, 'Cl': 0, 'Br': 0},
+            'halogen_detected': True,
+        },
     )
 
 
@@ -140,55 +146,56 @@ def test_dda_ensemble_is_skipped(dia_ensemble, monkeypatch):
     assert dia_ensemble.generic_annots == {}       # nothing attached
 
 
-# --- config -> constraints (element set stays consistent with max_counts) ----
+# --- params -> find-mfs, provenance -> assignment -----------------------------
 
-def test_elements_derived_from_counts():
-    # Elements come straight from the constraint strings, so max_counts and the
-    # element set can never disagree (find-mfs zeroes/raises otherwise).
-    assert _elements_from_counts('C*H*N*O*P1S1') == 'CHNOPS'
-    assert _elements_from_counts('C*H*N*O*P0S2Br*Cl*') == 'CHNOPSBrCl'
-    assert _elements_from_counts('') == 'CHNOPS'          # empty -> plain CHNOPS
-
-
-def test_config_packs_finder_kwargs_and_elements():
-    from configparser import ConfigParser
-    cfg = ConfigParser()
-    cfg['findmfs'] = {
-        'max_counts': 'C*H*N*O*P0S2Br*Cl*',
-        'min_rdbe': '-1', 'max_rdbe': '99', 'check_octet': 'True',
-        'error_ppm': '8', 'top_n': '30', 'autodetect_cl_br': 'True',
-    }
-    p = annotation_params_from_config(cfg)
-    assert p['elements'] == 'CHNOPSBrCl'
-    assert p['finder_kwargs']['max_counts'] == 'C*H*N*O*P0S2Br*Cl*'
-    assert p['finder_kwargs']['filter_rdbe'] == (-1.0, 99.0)
-    assert p['finder_kwargs']['check_octet'] is True
-    assert p['error_ppm'] == 8.0 and p['top_n'] == 30
-
-
-def test_annotate_forwards_finder_kwargs(dia_ensemble, monkeypatch):
-    # The finder_kwargs handed to annotate_ensembles_dia must reach find-mfs.
+def test_annotate_forwards_params(dia_ensemble, monkeypatch):
+    """Every FindMfsParams setting -- constraints AND scoring weights -- must
+    reach find-mfs (the weights used to be dropped on this path)."""
     captured = {}
+    res = _install_fake_annotate(monkeypatch)
 
     def fake(*a, **k):
         captured.update(k)
-        return _install_fake_annotate.__wrapped_res__
+        return res
 
-    res = SimpleNamespace(
-        candidates=_fake_results(['C6H12O6']),
-        precursor_mz=180.0, charge=1,
-        grouped=SimpleNamespace(n_groups=0,
-                                adduct_label=np.array([], dtype=object),
-                                mono_idx=np.array([], dtype=int)),
-    )
-    _install_fake_annotate.__wrapped_res__ = res
-    monkeypatch.setattr('core.cli.auto_find_mfs._get_scorer', lambda mp: object())
     monkeypatch.setattr('find_mfs.annotate_analyte_dia', fake, raising=False)
 
-    fk = {'max_counts': 'C*H*N*O*P0S1', 'check_octet': True}
-    annotate_ensembles_dia([dia_ensemble], elements='CHNOPS', finder_kwargs=fk)
-    assert captured['finder_kwargs'] == fk
-    assert captured['elements'] == 'CHNOPS'
+    params = FindMfsParams(
+        max_counts='C*H*N*O*P0S1', halogen_cap='Cl2Br1',
+        iso_weight=0.5, chem_weight=2.0, mass_weight=3.0, error_ppm=6.0,
+    )
+    annotate_ensembles_dia([dia_ensemble], params=params)
+
+    assert captured['max_counts'] == 'C*H*N*O*P0S1'
+    assert captured['halogen_cap'] == 'Cl2Br1'
+    assert captured['iso_weight'] == 0.5
+    assert captured['chem_weight'] == 2.0
+    assert captured['mass_weight'] == 3.0
+    assert captured['mass_sigma_ppm'] == pytest.approx(2.0)
+    assert captured['finder_kwargs']['check_octet'] is True
+
+
+def test_assignment_records_search_provenance(dia_ensemble, monkeypatch):
+    _install_fake_annotate(monkeypatch)
+    params = FindMfsParams(halogen_cap='Cl4Br4')
+
+    a = annotate_ensembles_dia([dia_ensemble], params=params)[0]
+
+    assert a.elements == 'CHNOClBr'
+    assert a.max_counts == 'C*H*N3O*Cl4Br4'
+    assert a.min_counts is None                    # all-zero minimum -> none
+    assert a.halogen_detected is True
+    assert a.params['halogen_cap'] == 'Cl4Br4'
+
+
+def test_invalid_params_fail_once_up_front(dia_ensemble, monkeypatch):
+    """A bad constraint must raise before the batch starts, not be swallowed
+    per ensemble as if it had no resolvable envelope."""
+    _install_fake_annotate(monkeypatch)
+    with pytest.raises(ValueError, match='halogen_cap'):
+        annotate_ensembles_dia(
+            [dia_ensemble], params=FindMfsParams(halogen_cap='F2'),
+        )
 
 
 # --- GenericAnnotation.source persistence semantics -------------------------

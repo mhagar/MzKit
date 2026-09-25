@@ -477,21 +477,17 @@ def cmd_auto_extract(args: argparse.Namespace) -> None:
 
 def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
     from core.utils.config import load_config
-    from core.cli.auto_find_mfs import (
-        annotate_ensembles_dia,
-        annotation_params_from_config,
-    )
+    from core.cli.auto_find_mfs import annotate_ensembles_dia
+    from core.formula.params import FindMfsParams
 
     mzk_path = Path(args.mzk)
     registry = _load_registry(mzk_path)
 
-    params = annotation_params_from_config(load_config())
+    params = FindMfsParams.from_config(load_config())
     if args.error_ppm is not None:
-        params['error_ppm'] = args.error_ppm
+        params.error_ppm = args.error_ppm
     if args.top_n is not None:
-        params['top_n'] = args.top_n
-    if args.no_adduct_labels:
-        params['attach_adduct_labels'] = False
+        params.top_n = args.top_n
 
     samples = registry.get_all_samples()
     if args.sample_name:
@@ -514,7 +510,11 @@ def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
         logger.warning("No ensembles to annotate")
         return
 
-    assignments = annotate_ensembles_dia(ensembles, **params)
+    assignments = annotate_ensembles_dia(
+        ensembles,
+        params=params,
+        attach_adduct_labels=not args.no_adduct_labels,
+    )
     for assignment in assignments:
         registry.register_assignment(assignment)
 

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
+    from core.formula.params import FindMfsParams
     from core.data_structs import (
         SampleUUID,
     )
@@ -66,12 +67,12 @@ class EnsembleExtractionManager(
 
         # Updated whenever the user OKs the settings dialog in SINGLE mode.
         self.manual_params: dict = _manual_params_from_config(config)
-        self.pending_findmfs: Optional[dict] = None
+        self.pending_findmfs: Optional['FindMfsParams'] = None
 
     def set_manual_params(
         self,
         params: dict,
-        findmfs: Optional[dict] = None,
+        findmfs: Optional['FindMfsParams'] = None,
     ) -> None:
         """Store the params the next manual extraction should use."""
         self.manual_params = params

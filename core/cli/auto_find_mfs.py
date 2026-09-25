@@ -17,18 +17,19 @@ GUI button and the whole-sample headless batch.
 from __future__ import annotations
 
 import logging
-import re
 import threading
+from dataclasses import asdict
 from typing import Callable, Iterable, Optional, TYPE_CHECKING
 
 from core.formula.assign_formula import (
     _get_scorer,
     results_to_assigned_candidates,
+    search_provenance,
 )
+from core.formula.params import FindMfsParams
 from core.data_structs.formula_assignment import FormulaAssignment
 
 if TYPE_CHECKING:
-    from configparser import ConfigParser
     from core.data_structs import Ensemble
 
 logger = logging.getLogger(__name__)
@@ -37,87 +38,12 @@ logger = logging.getLogger(__name__)
 # clear+replace only these (leaving user annotations alone).
 ADDUCT_ANNOT_SOURCE = 'auto_adduct'
 
-_DEFAULT_TOP_N = 50
-
-_ELEMENT_RE = re.compile(r'[A-Z][a-z]?')
-
-
-def _elements_from_counts(*count_strings: str) -> str:
-    """
-    Derive the decomposition element set from the count-constraint strings
-    (e.g. "C*H*N*O*P1S1Br*Cl*" -> "CHNOPSBrCl").
-
-    find-mfs's `to_bounds_dict` RAISES if `max_counts` names an element absent
-    from the element set, and silently ZEROES any element in the set but absent
-    from `max_counts`. Deriving the element set straight from the constraints
-    keeps the two consistent by construction: exactly the elements the user
-    wrote (with their bounds) get searched. Empty -> plain CHNOPS.
-    """
-    seen: list[str] = []
-    for s in count_strings:
-        for sym in _ELEMENT_RE.findall(s or ''):
-            if sym not in seen:
-                seen.append(sym)
-    return ''.join(seen) if seen else 'CHNOPS'
-
-
-def annotation_params_from_config(
-    config: 'ConfigParser',
-) -> dict:
-    """
-    Read the DIA auto-annotation parameters from the `[findmfs]` config section,
-    falling back to find-mfs-friendly defaults when a key is absent. Returns a
-    kwargs dict suitable for `annotate_ensembles_dia`.
-
-    The decomposition constraints (min/max counts, RDBE window, octet rule) are
-    packed into `finder_kwargs` exactly as the manual FormulaFinder dialog does,
-    and the element set is derived from the count strings so they stay
-    consistent (see `_elements_from_counts`).
-    """
-    section = 'findmfs'
-
-    def _get(getter, key, default):
-        try:
-            return getter(section, key)
-        except Exception:
-            return default
-
-    max_counts = (_get(config.get, 'max_counts', '') or '').strip()
-    min_counts = (_get(config.get, 'min_counts', '') or '').strip()
-
-    finder_kwargs: dict = {}
-    if max_counts:
-        finder_kwargs['max_counts'] = max_counts
-    if min_counts:
-        finder_kwargs['min_counts'] = min_counts
-    min_rdbe = _get(config.getfloat, 'min_rdbe', None)
-    max_rdbe = _get(config.getfloat, 'max_rdbe', None)
-    if min_rdbe is not None and max_rdbe is not None:
-        finder_kwargs['filter_rdbe'] = (min_rdbe, max_rdbe)
-    finder_kwargs['check_octet'] = _get(config.getboolean, 'check_octet', True)
-
-    return dict(
-        elements=_elements_from_counts(max_counts, min_counts),
-        error_ppm=_get(config.getfloat, 'error_ppm', 5.0),
-        ms2_weight=_get(config.getfloat, 'ms2_weight', 1.0),
-        instrument=_get(config.get, 'instrument', 'unknown'),
-        detect_halogens=_get(config.getboolean, 'autodetect_cl_br', True),
-        top_n=_get(config.getint, 'top_n', _DEFAULT_TOP_N),
-        finder_kwargs=finder_kwargs,
-    )
-
 
 def annotate_ensembles_dia(
     ensembles: Iterable['Ensemble'],
     *,
+    params: Optional[FindMfsParams] = None,
     model_path: Optional[str] = None,
-    elements: str = 'CHNOPS',
-    error_ppm: float = 5.0,
-    instrument: str = 'unknown',
-    ms2_weight: float = 1.0,
-    detect_halogens: bool = True,
-    top_n: int = _DEFAULT_TOP_N,
-    finder_kwargs: Optional[dict] = None,
     attach_adduct_labels: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
@@ -130,10 +56,17 @@ def annotate_ensembles_dia(
     `attach_adduct_labels` — replaces prior 'auto_adduct' generic annotations
     with the resolved per-envelope adduct labels. DDA ensembles are skipped.
 
+    :param params: find-mfs constraints/scoring; defaults to FindMfsParams().
     :return: one FormulaAssignment per successfully-annotated ensemble.
+    :raises ValueError: up front, if the count constraints are invalid (rather
+        than once per ensemble, where it would be indistinguishable from an
+        ensemble with no resolvable envelope).
     """
     # Lazy import: find-mfs pulls in MistNet + scorers.
     from find_mfs import annotate_analyte_dia
+
+    params = params if params is not None else FindMfsParams()
+    params.validate()
 
     scorer = _get_scorer(model_path)  # MistNet warmed once, cached across calls
 
@@ -158,13 +91,7 @@ def annotate_ensembles_dia(
                 ensemble,
                 annotate_analyte_dia=annotate_analyte_dia,
                 scorer=scorer,
-                elements=elements,
-                error_ppm=error_ppm,
-                instrument=instrument,
-                ms2_weight=ms2_weight,
-                detect_halogens=detect_halogens,
-                top_n=top_n,
-                finder_kwargs=finder_kwargs,
+                params=params,
                 attach_adduct_labels=attach_adduct_labels,
             )
         except ValueError as exc:
@@ -188,13 +115,7 @@ def _annotate_one(
     *,
     annotate_analyte_dia,
     scorer,
-    elements: str,
-    error_ppm: float,
-    instrument: str,
-    ms2_weight: float,
-    detect_halogens: bool,
-    top_n: int,
-    finder_kwargs: Optional[dict],
+    params: FindMfsParams,
     attach_adduct_labels: bool,
     ms1_peaks=None,
     ms2_peaks=None,
@@ -215,16 +136,11 @@ def _annotate_one(
         ms2_peaks=ms2_peaks,              # may be None -> MS2 term skipped
         precursor_mz=precursor_mz,
         scorer=scorer,
-        elements=elements,
-        error_ppm=error_ppm,
-        detect_halogens=detect_halogens,
-        instrument=instrument,
-        ms2_weight=ms2_weight,
-        finder_kwargs=finder_kwargs or None,
+        **params.search_kwargs(),
     )
 
     candidates = results_to_assigned_candidates(
-        res.candidates, ms2_weight=ms2_weight, top_n=top_n
+        res.candidates, ms2_weight=params.ms2_weight, top_n=params.top_n
     )
 
     assignment = FormulaAssignment(
@@ -233,12 +149,9 @@ def _annotate_one(
         chosen_idx=0 if candidates else None,   # auto-pick the top hit
         precursor_mz=res.precursor_mz,          # precursor find-mfs actually used
         charge=res.charge,                       # resolved charge
-        elements=elements,
-        autodetect_cl_br=detect_halogens,
         ms2_mode=ms2_mode,
-        error_ppm=error_ppm,
-        instrument=instrument,
-        ms2_weight=ms2_weight,
+        params=asdict(params),
+        **search_provenance(res.candidates),
     )
 
     # Mirror the manual path: keep the ensemble's free-text formula in sync so
@@ -258,14 +171,8 @@ def annotate_ensemble_with_selected_ms2(
     ms2_peaks,
     precursor_mz: Optional[float] = None,
     *,
+    params: Optional[FindMfsParams] = None,
     model_path: Optional[str] = None,
-    elements: str = 'CHNOPS',
-    error_ppm: float = 5.0,
-    instrument: str = 'unknown',
-    ms2_weight: float = 1.0,
-    detect_halogens: bool = True,
-    top_n: int = _DEFAULT_TOP_N,
-    finder_kwargs: Optional[dict] = None,
     attach_adduct_labels: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
@@ -294,6 +201,8 @@ def annotate_ensemble_with_selected_ms2(
     if cancel_event is not None and cancel_event.is_set():
         return []
 
+    params = params if params is not None else FindMfsParams()
+    params.validate()
     scorer = _get_scorer(model_path)
 
     try:
@@ -301,13 +210,7 @@ def annotate_ensemble_with_selected_ms2(
             ensemble,
             annotate_analyte_dia=annotate_analyte_dia,
             scorer=scorer,
-            elements=elements,
-            error_ppm=error_ppm,
-            instrument=instrument,
-            ms2_weight=ms2_weight,
-            detect_halogens=detect_halogens,
-            top_n=top_n,
-            finder_kwargs=finder_kwargs,
+            params=params,
             attach_adduct_labels=attach_adduct_labels,
             ms1_peaks=ms1_peaks,
             ms2_peaks=ms2_peaks,

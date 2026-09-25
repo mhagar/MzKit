@@ -167,11 +167,15 @@ class FindFormulaController(BaseToolController):
 
             return
 
-        ms1_signals = params.pop("ms1_signals", None)
-        top_n = params.pop("top_n", 50)
+        ms1_signals = params.get("ms1_signals")
         if not ms1_signals:
             dialog.statusbar.showMessage("No MS1 signals selected")
             return
+
+        query_kwargs = dict(
+            adducts=params.get("adducts"),
+            params=params["params"],
+        )
 
         # TEMPORARY DDA path: ensemble MS2 production isn't wired up yet, so
         # hand find-mfs whatever MS2 spectrum the viewer currently shows
@@ -181,11 +185,11 @@ class FindFormulaController(BaseToolController):
             ms2_spec = self.viewer.spectrum_manager.current_ms2
             if ms2_spec is not None and len(ms2_spec) == 0:
                 ms2_spec = None
-            params["ms2_spec"] = ms2_spec
-            params["ms2_mode"] = "selected_scan"
+            query_kwargs["ms2_spec"] = ms2_spec
+            query_kwargs["ms2_mode"] = "selected_scan"
 
         try:
-            query = query_from_signals(ensemble, ms1_signals, **params)
+            query = query_from_signals(ensemble, ms1_signals, **query_kwargs)
         except NotImplementedError:
             dialog.statusbar.showMessage(
                 "Compound formula assignment is not yet supported for DDA."
@@ -199,7 +203,7 @@ class FindFormulaController(BaseToolController):
             QtCore.Qt.WaitCursor
         )
         try:
-            assignment = assign_formula([query], top_n=top_n)[0]
+            assignment = assign_formula([query])[0]
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
 

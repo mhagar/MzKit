@@ -15,7 +15,10 @@ import logging
 import threading
 from typing import Callable, Optional
 
+from dataclasses import asdict
+
 from find_mfs import FormulaScorer
+from core.formula.params import counts_to_str
 from core.formula.query import FormulaQuery
 from core.data_structs.formula_assignment import (
     AssignedCandidate,
@@ -23,9 +26,6 @@ from core.data_structs.formula_assignment import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Ranked candidates kept per assignment
-_DEFAULT_TOP_N = 50
 
 # MistNet scorers are read-only once loaded; cache by model path so repeated
 # (synchronous GUI) calls don't pay the load/warm-up cost each time.
@@ -80,9 +80,25 @@ def results_to_assigned_candidates(
     ]
 
 
+def search_provenance(hits) -> dict:
+    """
+    FormulaAssignment provenance for the search find-mfs actually ran, read off
+    its results: element set and bounds after any halogen widening, and whether
+    Cl/Br was detected.
+    """
+    qp = getattr(hits, 'query_params', None) or {}
+    return dict(
+        elements=qp.get('elements'),
+        max_counts=counts_to_str(qp.get('max_counts')),
+        min_counts=counts_to_str(
+            {k: v for k, v in (qp.get('min_counts') or {}).items() if v}
+        ),
+        halogen_detected=qp.get('halogen_detected'),
+    )
+
+
 def assign_formula(
     queries: list[FormulaQuery],
-    top_n: int = _DEFAULT_TOP_N,
     model_path: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
@@ -91,7 +107,6 @@ def assign_formula(
     Assign molecular formulae for each query.
 
     :param queries: one FormulaQuery per source (MVP: length 1).
-    :param top_n: number of ranked candidates to retain per assignment.
     :param model_path: MistNet .npz path; None uses the weights bundled with
         find-mfs.
     :return: one FormulaAssignment per query, in the same order.
@@ -113,7 +128,7 @@ def assign_formula(
             progress_callback(100.0 * i / n, f"Assigning formula {i + 1}/{n}")
 
         assignments.append(
-            _assign_one(query, scorer, top_n, annotate_precursor)
+            _assign_one(query, scorer, annotate_precursor)
         )
 
     if progress_callback is not None:
@@ -125,19 +140,13 @@ def assign_formula(
 def _assign_one(
     query: FormulaQuery,
     scorer,
-    top_n: int,
     annotate_precursor,
 ) -> FormulaAssignment:
     kwargs = dict(
-        elements=query.elements,
-        error_ppm=query.error_ppm,
         scorer=scorer,
-        autodetect_cl_br=query.autodetect_cl_br,
         ms1_peaks=query.ms1_spec,
         ms2_peaks=query.ms2_spec,
-        instrument=query.instrument,
-        ms2_weight=query.ms2_weight,
-        finder_kwargs=query.finder_kwargs or None,
+        **query.params.search_kwargs(),
     )
     # adducts=None to find-mfs means "one adductless search";
     # to get the joint DEFAULT_ADDUCTS ranking we must omit the arg entirely
@@ -147,7 +156,7 @@ def _assign_one(
     hits = annotate_precursor(query.precursor_mz, **kwargs)
 
     candidates = results_to_assigned_candidates(
-        hits, ms2_weight=query.ms2_weight, top_n=top_n
+        hits, ms2_weight=query.params.ms2_weight, top_n=query.params.top_n
     )
 
     return FormulaAssignment(
@@ -156,10 +165,7 @@ def _assign_one(
         precursor_mz=query.precursor_mz,
         charge=query.charge,
         adducts=query.adducts,
-        elements=query.elements,
-        autodetect_cl_br=query.autodetect_cl_br,
         ms2_mode=query.ms2_mode,
-        error_ppm=query.error_ppm,
-        instrument=query.instrument,
-        ms2_weight=query.ms2_weight,
+        params=asdict(query.params),
+        **search_provenance(hits),
     )

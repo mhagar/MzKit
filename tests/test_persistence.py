@@ -54,8 +54,10 @@ def test_formula_assignment_roundtrip(tmp_path):
             ),
         ],
         chosen_idx=0,
-        precursor_mz=356.0126, charge=1, adducts=["H"], elements="CHNOPS",
-        autodetect_cl_br=True, ms2_mode="tallest", error_ppm=5.0, ms2_weight=5.0,
+        precursor_mz=356.0126, charge=1, adducts=["H"], ms2_mode="tallest",
+        elements="CHNOSClBr", max_counts="C*H*N*O*S2Cl4Br4", min_counts=None,
+        halogen_detected=True,
+        params={"max_counts": "C*H*N*O*P0S2", "halogen_cap": "Cl4Br4"},
     )
     reg.register_assignment(assignment)
 
@@ -68,7 +70,9 @@ def test_formula_assignment_roundtrip(tmp_path):
     assert loaded.uuid == assignment.uuid
     assert loaded.source_uuid == 999
     assert loaded.chosen_idx == 0
-    assert loaded.autodetect_cl_br is True
+    assert loaded.halogen_detected is True
+    assert loaded.max_counts == "C*H*N*O*S2Cl4Br4"
+    assert loaded.params == assignment.params
     assert loaded.precursor_mz == 356.0126
     assert loaded.adducts == ["H"]
 
@@ -78,6 +82,28 @@ def test_formula_assignment_roundtrip(tmp_path):
     assert c.ms2_loglik == -0.5          # score terms round-trip exactly
     assert c.log_posterior == -7.0
     assert c.chem_logprior == -3.3
+
+
+def test_pre_1_2_assignment_is_skipped_not_fatal(tmp_path, caplog):
+    """Assignments saved before 1.2.0 (element-set provenance fields) aren't
+    migrated; loading skips them with a warning and keeps the rest."""
+    import json
+    import zipfile
+
+    path = tmp_path / "old.mzk"
+    persistence.save_project(filepath=path, data_registry=DataRegistry())
+    old = {
+        "source_uuid": 1, "candidates": [], "uuid": 2, "chosen_idx": None,
+        "elements": "CHNOPS", "autodetect_cl_br": True, "error_ppm": 5.0,
+    }
+    with zipfile.ZipFile(path, mode="a") as zf:
+        zf.writestr("assignments/2.json", json.dumps(old))
+
+    with caplog.at_level(logging.WARNING):
+        _, _, assignments = persistence.load_project(filepath=path)
+
+    assert assignments == []
+    assert "older format version" in caplog.text
 
 
 def test_alignment_analyte_uuid_roundtrip(tmp_path):

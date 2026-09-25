@@ -3,7 +3,8 @@ Tests for core/formula: the MS2-based formula-assignment orchestration.
 
 - DDA guard on the extractor (no data needed).
 - The worker end-to-end on a synthetic thiamphenicol MS1 envelope: proves
-  autodetect_cl_br flows MzKit -> find-mfs and the FormulaAssignment is built.
+  the halogen cap flows MzKit -> find-mfs and the FormulaAssignment records
+  the search that actually ran.
 - End-to-end from the real `ensemble` fixture (Cycloheximide; skips without the
   gitignored .mzk).
 """
@@ -15,7 +16,8 @@ from molmass import Formula
 
 from core.utils.array_types import to_spec_arr
 from core.formula import (
-    FormulaQuery, query_from_ensemble, query_from_signals, assign_formula,
+    FindMfsParams, FormulaQuery, query_from_ensemble, query_from_signals,
+    assign_formula,
 )
 from core.data_structs.formula_assignment import FormulaAssignment
 
@@ -81,9 +83,10 @@ def test_query_from_signals_uses_selection_as_envelope():
 # --- worker end-to-end on a synthetic envelope ------------------------------
 
 @needs_mistnet
-def test_worker_autodetects_halogen_and_builds_assignment():
-    """Thiamphenicol [M+H]+ (C12H15Cl2NO5S) Cl2 envelope: the worker must widen
-    to halogens (autodetect) and return a well-formed FormulaAssignment."""
+def test_worker_widens_to_halogens_and_builds_assignment():
+    """Thiamphenicol [M+H]+ (C12H15Cl2NO5S) Cl2 envelope: with a halogen-free
+    max_counts, detection must widen the search via the cap, and the
+    FormulaAssignment must record that it did."""
     ms1 = to_spec_arr(
         [356.01261, 357.01537, 358.00965, 359.01269, 360.00702],
         [398411.0, 59720.0, 285583.0, 40221.0, 59256.0],
@@ -95,9 +98,9 @@ def test_worker_autodetects_halogen_and_builds_assignment():
         ms2_spec=None,
         charge=1,
         adducts=["H"],
-        elements="CHNOPS",
-        autodetect_cl_br=True,
-        error_ppm=5.0,
+        params=FindMfsParams(
+            max_counts="C*H*N*O*P0S2", halogen_cap="Cl4Br4", top_n=20,
+        ),
     )
 
     out = assign_formula([query])
@@ -108,11 +111,14 @@ def test_worker_autodetects_halogen_and_builds_assignment():
     assert a.source_uuid == 12345
     assert a.chosen_idx is None
     assert a.top is not None
-    # provenance recorded
-    assert a.autodetect_cl_br is True
-    assert a.elements == "CHNOPS"
+    assert len(a.candidates) <= 20                 # params.top_n respected
+    # provenance: the search that actually ran
+    assert a.halogen_detected is True
+    assert a.elements == "CHNOSClBr"               # P0 dropped, Cl/Br added
+    assert a.max_counts == "C*H*N*O*S2Cl4Br4"
+    assert a.params["halogen_cap"] == "Cl4Br4"
     assert a.precursor_mz == pytest.approx(356.0126)
-    # autodetect widened CHNOPS -> +Cl/Br, so the true Cl2 formula is reachable
+    # the cap widened the search, so the true Cl2 formula is reachable
     assert _has_formula(a, "C12H15Cl2NO5S")
 
 

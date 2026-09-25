@@ -1,31 +1,36 @@
 """
 Reusable find-mfs parameter sheet.
 
-Owns the entire find-mfs parameter panel (element/charge/counts/RDBE/octet +
-Mass-Error, Isotope, Chemical-Prior and MS2/MistNet scoring groups) plus its own
-Save/Reset/RestoreDefaults button box, and is the single source of truth for the
-``[findmfs]`` config section.
+Owns the entire find-mfs parameter panel (charge/counts/halogen cap/RDBE/octet +
+Mass-Error, Isotope, Chemical-Prior and MS2/MistNet scoring groups) and is the
+single source of truth for the ``[findmfs]`` config section. Its state is a
+``core.formula.FindMfsParams``.
 
 Embedded (via Qt Designer widget promotion) into both:
   - FormulaFinderDialog  (the "Parameters" tab)
   - EnsembleExtractionDialog  (the "Auto find-mfs" tab)
 
-so the same controls, defaults and persistence back every place find-mfs is
-configured. Constructed param-less by pyuic5; the parent injects a ConfigParser
-via ``set_config()`` after ``setupUi``.
+Every edit is written straight into the shared config (so e.g. the Ensemble
+Viewer's auto button, which reads the config, always uses what's on screen) and
+saved to disk shortly after. Constructed param-less by pyuic5; the parent
+injects a ConfigParser via ``set_config()`` after ``setupUi``.
 """
 from typing import Optional, TYPE_CHECKING
 
-from PyQt5 import QtWidgets
+from PyQt5 import QtCore, QtWidgets
 
 from gui.resources.FindMfsParamSheet import Ui_Form
+from core.formula.params import FindMfsParams
 from core.utils.config import save_config, load_default_config
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
 
-_SECTION = "findmfs"
+# Coalesce bursts of edits (typing, spinning) into one disk write.
+_SAVE_DELAY_MS = 500
+
+_INVALID_STYLE = "QLineEdit { border: 1px solid #d9534f; }"
 
 
 class FindMfsParamWidget(QtWidgets.QWidget, Ui_Form):
@@ -36,7 +41,21 @@ class FindMfsParamWidget(QtWidgets.QWidget, Ui_Form):
         # Injected later via set_config(); may stay None in config-less contexts.
         self.config: Optional["ConfigParser"] = None
 
+        # Guards against programmatic updates (set_params) echoing back as edits.
+        self._loading = False
+
+        self._save_timer = QtCore.QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(_SAVE_DELAY_MS)
+        self._save_timer.timeout.connect(self._save_to_disk)
+
+        self.lineHalogenCap.setPlaceholderText("e.g. Cl4Br4")
+        self._base_tooltips = {
+            line: line.toolTip()
+            for line in (self.lineMaxCounts, self.lineMinCounts, self.lineHalogenCap)
+        }
         self._populate_instrument_combo()
+        self._connect_edit_signals()
         self.btnConfigBox.clicked.connect(self.on_config_btn_pressed)
 
     # -- config wiring ----------------------------------------------------
@@ -44,7 +63,14 @@ class FindMfsParamWidget(QtWidgets.QWidget, Ui_Form):
     def set_config(self, config: Optional["ConfigParser"]) -> None:
         """Inject the config and populate the controls from it."""
         self.config = config
-        self.load_from_config()
+        self.set_params(FindMfsParams.from_config(config))
+
+    def showEvent(self, event) -> None:
+        # Several sheets can share one config (e.g. the formula finder and the
+        # extraction dialog); pick up edits made in another one since.
+        if self.config is not None and not self._save_timer.isActive():
+            self.set_params(FindMfsParams.from_config(self.config))
+        super().showEvent(event)
 
     def _populate_instrument_combo(self) -> None:
         """
@@ -62,186 +88,127 @@ class FindMfsParamWidget(QtWidgets.QWidget, Ui_Form):
         ]:
             self.comboInstrument.addItem(label, value)
 
+    def _connect_edit_signals(self) -> None:
+        for spin in (
+            self.spinCharge, self.spinRDBEMin, self.spinRDBEMax,
+            self.spinMassErrorPpm, self.spinMassErrorDa, self.spinMassErrorWeight,
+            self.spinIsotopeWeight, self.spinIsotopeErrorPpm,
+            self.spinIsotopeMatchTolDa, self.spinIsotopeMinRelIntsy,
+            self.spinChemPriorWeight, self.spinChemPriorStrength,
+            self.spinChemPriorSoftness, self.doubleSpinMs2Weight, self.spinTopN,
+        ):
+            spin.valueChanged.connect(self._on_edited)
+        for line in (self.lineMaxCounts, self.lineMinCounts, self.lineHalogenCap):
+            line.textChanged.connect(self._on_edited)
+        for check in (self.checkOctet, self.checkAutodetectHalogens):
+            check.toggled.connect(self._on_edited)
+        self.comboInstrument.currentIndexChanged.connect(self._on_edited)
+
     def on_config_btn_pressed(
         self,
         button: QtWidgets.QAbstractButton,
     ) -> None:
         standard_button = self.btnConfigBox.standardButton(button)
         match standard_button:
-            case QtWidgets.QDialogButtonBox.StandardButton.Save:
-                self.save_to_config()
             case QtWidgets.QDialogButtonBox.StandardButton.RestoreDefaults:
-                # Populate from the shipped template, ignoring user overrides.
-                self.load_from_config(load_default_config())
-            case QtWidgets.QDialogButtonBox.StandardButton.Reset:
-                self.load_from_config()
+                # The shipped template, ignoring user overrides. Goes through
+                # the normal edit path, so it is persisted too.
+                self.set_params(
+                    FindMfsParams.from_config(load_default_config()),
+                    persist=True,
+                )
+            case QtWidgets.QDialogButtonBox.StandardButton.Save:
+                # Edits already persist on their own; just don't wait for it.
+                self._save_to_disk()
 
-    def load_from_config(
-        self,
-        config: Optional["ConfigParser"] = None,
-    ) -> None:
-        """
-        Populate the controls from a ConfigParser. Defaults to the widget's own
-        config; pass a different one (e.g. the shipped template) to restore those
-        values instead. No-op when no config is available.
-        """
-        config = config if config is not None else self.config
-        if not config:
+    # -- persistence ------------------------------------------------------
+
+    def _on_edited(self, *_) -> None:
+        self._update_validation()
+        if self._loading or self.config is None:
             return
+        # In-memory config is updated immediately; only the disk write waits.
+        self.get_params().to_config(self.config)
+        self._save_timer.start()
 
-        g = _SECTION
-        self.spinCharge.setValue(config.getint(g, "charge", fallback=0))
-        self.spinMassErrorPpm.setValue(config.getfloat(g, "error_ppm", fallback=5.0))
-        self.spinMassErrorDa.setValue(config.getfloat(g, "error_da", fallback=0.01))
-        self.spinMassErrorWeight.setValue(
-            config.getfloat(g, "mass_weight", fallback=1.0)
-        )
-        self.lineMinCounts.setText(config.get(g, "min_counts", fallback=""))
-        self.lineMaxCounts.setText(config.get(g, "max_counts", fallback=""))
-        self.spinRDBEMin.setValue(config.getfloat(g, "min_rdbe", fallback=0.0))
-        self.spinRDBEMax.setValue(config.getfloat(g, "max_rdbe", fallback=0.0))
-        self.checkOctet.setChecked(config.getboolean(g, "check_octet", fallback=True))
+    def _save_to_disk(self) -> None:
+        self._save_timer.stop()
+        if self.config is not None:
+            save_config(self.config)
 
-        self.spinIsotopeErrorPpm.setValue(config.getfloat(g, "iso_ppm", fallback=5.0))
-        self.spinIsotopeMatchTolDa.setValue(
-            config.getfloat(g, "iso_mz_match_da", fallback=0.02)
-        )
-        self.spinIsotopeMinRelIntsy.setValue(
-            config.getfloat(g, "iso_min_rel", fallback=0.02)
-        )
-        self.spinIsotopeWeight.setValue(config.getfloat(g, "iso_weight", fallback=1.0))
+    # -- params -----------------------------------------------------------
 
-        self.spinChemPriorWeight.setValue(
-            config.getfloat(g, "chem_weight", fallback=1.0)
-        )
-        self.spinChemPriorStrength.setValue(
-            config.getfloat(g, "chem_strength", fallback=1.0)
-        )
-        self.spinChemPriorSoftness.setValue(
-            config.getfloat(g, "chem_softness", fallback=1.0)
-        )
-
-        # === Compound (MS2) / MistNet ===
-        self.doubleSpinMs2Weight.setValue(config.getfloat(g, "ms2_weight", fallback=1.0))
-        instr = config.get(g, "instrument", fallback="unknown")
-        instr_idx = self.comboInstrument.findData(instr)
-        self.comboInstrument.setCurrentIndex(instr_idx if instr_idx >= 0 else 0)
-        self.checkBoxAcheckAutodetectHalogens.setChecked(
-            config.getboolean(g, "autodetect_cl_br", fallback=True)
-        )
-        self.spinTopN.setValue(config.getint(g, "top_n", fallback=50))
-
-    def save_to_config(self) -> None:
-        """Persist the current controls to the ``[findmfs]`` section and disk."""
-        if not self.config:
-            return
-        g = _SECTION
-
-        def setv(key, value):
-            self.config.set(section=g, option=key, value=str(value))
-
-        setv("charge", self.spinCharge.value())
-        setv("error_ppm", self.spinMassErrorPpm.value())
-        setv("error_da", self.spinMassErrorDa.value())
-        setv("mass_weight", self.spinMassErrorWeight.value())
-        setv("min_counts", self.lineMinCounts.text())
-        setv("max_counts", self.lineMaxCounts.text())
-        setv("min_rdbe", self.spinRDBEMin.value())
-        setv("max_rdbe", self.spinRDBEMax.value())
-        setv("check_octet", self.checkOctet.isChecked())
-
-        setv("iso_ppm", self.spinIsotopeErrorPpm.value())
-        setv("iso_mz_match_da", self.spinIsotopeMatchTolDa.value())
-        setv("iso_min_rel", self.spinIsotopeMinRelIntsy.value())
-        setv("iso_weight", self.spinIsotopeWeight.value())
-
-        setv("chem_weight", self.spinChemPriorWeight.value())
-        setv("chem_strength", self.spinChemPriorStrength.value())
-        setv("chem_softness", self.spinChemPriorSoftness.value())
-
-        setv("ms2_weight", self.doubleSpinMs2Weight.value())
-        setv("instrument", self.comboInstrument.currentData() or "unknown")
-        setv("autodetect_cl_br", self.checkBoxAcheckAutodetectHalogens.isChecked())
-        setv("top_n", int(self.spinTopN.value()))
-
-        save_config(self.config)
-
-    # -- param getters ----------------------------------------------------
-
-    def get_element_set_text(self) -> str:
-        return self.comboElementSet.currentText()
-
-    def get_elements_str(self) -> str:
-        """Element set as the string find-mfs' compound path expects."""
-        return (
-            "CHNOPSFClBrI"
-            if "halogen" in self.comboElementSet.currentText().lower()
-            else "CHNOPS"
+    def get_params(self) -> FindMfsParams:
+        return FindMfsParams(
+            charge=self.spinCharge.value(),
+            max_counts=self.lineMaxCounts.text().strip(),
+            min_counts=self.lineMinCounts.text().strip(),
+            detect_halogens=self.checkAutodetectHalogens.isChecked(),
+            halogen_cap=self.lineHalogenCap.text().strip(),
+            min_rdbe=self.spinRDBEMin.value(),
+            max_rdbe=self.spinRDBEMax.value(),
+            check_octet=self.checkOctet.isChecked(),
+            error_ppm=self.spinMassErrorPpm.value(),
+            error_da=self.spinMassErrorDa.value(),
+            mass_weight=self.spinMassErrorWeight.value(),
+            iso_weight=self.spinIsotopeWeight.value(),
+            iso_ppm=self.spinIsotopeErrorPpm.value(),
+            iso_mz_match_da=self.spinIsotopeMatchTolDa.value(),
+            iso_min_rel=self.spinIsotopeMinRelIntsy.value(),
+            chem_weight=self.spinChemPriorWeight.value(),
+            chem_strength=self.spinChemPriorStrength.value(),
+            chem_softness=self.spinChemPriorSoftness.value(),
+            ms2_weight=self.doubleSpinMs2Weight.value(),
+            instrument=self.comboInstrument.currentData() or "unknown",
+            top_n=int(self.spinTopN.value()),
         )
 
-    def get_finder_kwargs(self) -> dict:
-        return {
-            "min_counts": self.lineMinCounts.text(),
-            "max_counts": self.lineMaxCounts.text(),
-            "filter_rdbe": (self.spinRDBEMin.value(), self.spinRDBEMax.value()),
-            "check_octet": self.checkOctet.isChecked(),
-        }
+    def set_params(self, p: FindMfsParams, persist: bool = False) -> None:
+        """Populate the controls. `persist` also writes them to the config."""
+        self._loading = True
+        try:
+            self.spinCharge.setValue(p.charge)
+            self.lineMaxCounts.setText(p.max_counts)
+            self.lineMinCounts.setText(p.min_counts)
+            self.checkAutodetectHalogens.setChecked(p.detect_halogens)
+            self.lineHalogenCap.setText(p.halogen_cap)
+            self.lineHalogenCap.setEnabled(p.detect_halogens)
+            self.spinRDBEMin.setValue(p.min_rdbe)
+            self.spinRDBEMax.setValue(p.max_rdbe)
+            self.checkOctet.setChecked(p.check_octet)
+            self.spinMassErrorPpm.setValue(p.error_ppm)
+            self.spinMassErrorDa.setValue(p.error_da)
+            self.spinMassErrorWeight.setValue(p.mass_weight)
+            self.spinIsotopeWeight.setValue(p.iso_weight)
+            self.spinIsotopeErrorPpm.setValue(p.iso_ppm)
+            self.spinIsotopeMatchTolDa.setValue(p.iso_mz_match_da)
+            self.spinIsotopeMinRelIntsy.setValue(p.iso_min_rel)
+            self.spinChemPriorWeight.setValue(p.chem_weight)
+            self.spinChemPriorStrength.setValue(p.chem_strength)
+            self.spinChemPriorSoftness.setValue(p.chem_softness)
+            self.doubleSpinMs2Weight.setValue(p.ms2_weight)
+            idx = self.comboInstrument.findData(p.instrument)
+            self.comboInstrument.setCurrentIndex(idx if idx >= 0 else 0)
+            self.spinTopN.setValue(p.top_n)
+        finally:
+            self._loading = False
+        if persist:
+            self._on_edited()
+        self._update_validation()
 
-    def get_mf_params(self) -> dict:
-        """
-        find-mfs ion-search kwargs (no ``adduct`` — that lives on the caller,
-        e.g. FormulaFinder's own line edit, and is merged in there).
-        """
-        return {
-            "charge": self.spinCharge.value(),
-            "error_ppm": self.spinMassErrorPpm.value(),
-            "error_da": self.spinMassErrorDa.value(),
-            "min_counts": self.lineMinCounts.text(),
-            "max_counts": self.lineMaxCounts.text(),
-            "filter_rdbe": (self.spinRDBEMin.value(), self.spinRDBEMax.value()),
-            "check_octet": self.checkOctet.isChecked(),
-        }
+    # -- validation -------------------------------------------------------
 
-    def get_score_params(self) -> dict:
-        return {
-            "iso_ppm": self.spinIsotopeErrorPpm.value(),
-            "iso_mz_match_da": self.spinIsotopeMatchTolDa.value(),
-            "iso_min_rel": self.spinIsotopeMinRelIntsy.value(),
-            "iso_weight": self.spinIsotopeWeight.value(),
-            "mass_weight": self.spinMassErrorWeight.value(),
-            "chem_weight": self.spinChemPriorWeight.value(),
-            "chem_strength": self.spinChemPriorStrength.value(),
-            "chem_softness": self.spinChemPriorSoftness.value(),
-        }
+    def validation_error(self) -> Optional[str]:
+        """Why find-mfs would reject the current constraints, or None if OK."""
+        try:
+            self.get_params().validate()
+        except ValueError as exc:
+            return str(exc)
+        return None
 
-    def get_compound_params(self) -> dict:
-        """
-        Kwargs for FormulaFinder's interactive compound (MS2) search
-        (``core.formula.query_from_signals``), minus ``adducts`` which the caller
-        merges from its own adduct field. Note this path spells the halogen flag
-        ``autodetect_cl_br`` (vs. ``detect_halogens`` for the batch annotator).
-        """
-        return {
-            "elements": self.get_elements_str(),
-            "autodetect_cl_br": self.checkBoxAcheckAutodetectHalogens.isChecked(),
-            "error_ppm": self.spinMassErrorPpm.value(),
-            "instrument": self.comboInstrument.currentData() or "unknown",
-            "ms2_weight": self.doubleSpinMs2Weight.value(),
-            "top_n": int(self.spinTopN.value()),
-            "finder_kwargs": self.get_finder_kwargs(),
-        }
-
-    def get_annotation_params(self) -> dict:
-        """
-        Kwargs for ``core.cli.auto_find_mfs.annotate_ensembles_dia`` (the batch
-        MS2 annotator). Same shape as ``annotation_params_from_config``.
-        """
-        return {
-            "elements": self.get_elements_str(),
-            "error_ppm": self.spinMassErrorPpm.value(),
-            "instrument": self.comboInstrument.currentData() or "unknown",
-            "ms2_weight": self.doubleSpinMs2Weight.value(),
-            "detect_halogens": self.checkBoxAcheckAutodetectHalogens.isChecked(),
-            "top_n": int(self.spinTopN.value()),
-            "finder_kwargs": self.get_finder_kwargs(),
-        }
+    def _update_validation(self) -> None:
+        """Outline the constraint fields red (with the reason) while invalid."""
+        error = self.validation_error()
+        for line, base_tip in self._base_tooltips.items():
+            line.setStyleSheet(_INVALID_STYLE if error else "")
+            line.setToolTip(error or base_tip)

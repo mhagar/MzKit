@@ -12,6 +12,7 @@ from typing import Optional, Union, TYPE_CHECKING
 
 import numpy as np
 
+from core.formula.params import FindMfsParams
 from core.formula.query import FormulaQuery
 from core.utils.array_types import to_spec_arr
 
@@ -83,14 +84,9 @@ def query_from_signals(
     *,
     charge: Optional[int] = None,
     adducts: Optional[list[str]] = None,
-    elements: str = 'CHNOPS',
-    autodetect_cl_br: bool = True,
-    error_ppm: float = 5.0,
-    instrument: str = 'unknown',
-    ms2_weight: float = 1.0,
+    params: Optional[FindMfsParams] = None,
     ms2_mode: str = 'tallest',
     ms2_spec: Optional['SpectrumArray'] = None,
-    finder_kwargs: Optional[dict] = None,
 ) -> FormulaQuery:
     """
     Build a FormulaQuery from user-selected MS1 isotopologue signals.
@@ -106,6 +102,7 @@ def query_from_signals(
 
     :param ms1_signals: selected MS1 peaks — a SpectrumArray or a list of
         (mz, intensity) pairs.
+    :param params: find-mfs constraints/scoring; defaults to FindMfsParams().
     :param ms2_spec: explicit MS2 spectrum override. When given, it is used
         directly and the DDA guard is skipped.
     :raises NotImplementedError: for DDA ensembles when no `ms2_spec` override
@@ -135,13 +132,8 @@ def query_from_signals(
         ms2_spec=ms2_spec,
         charge=charge if charge is not None else ensemble.resolved_charge,
         adducts=adducts,
-        elements=elements,
-        autodetect_cl_br=autodetect_cl_br,
-        error_ppm=error_ppm,
-        instrument=instrument,
-        ms2_weight=ms2_weight,
+        params=params if params is not None else FindMfsParams(),
         ms2_mode=ms2_mode,
-        finder_kwargs=finder_kwargs or {},
     )
 
 
@@ -151,13 +143,8 @@ def query_from_ensemble(
     precursor_mz: Optional[float] = None,
     charge: Optional[int] = None,
     adducts: Optional[list[str]] = None,
-    elements: str = 'CHNOPS',
-    autodetect_cl_br: bool = True,
-    error_ppm: float = 5.0,
-    instrument: str = 'unknown',
-    ms2_weight: float = 1.0,
+    params: Optional[FindMfsParams] = None,
     ms2_mode: str = 'tallest',
-    finder_kwargs: Optional[dict] = None,
 ) -> FormulaQuery:
     """
     Build a FormulaQuery from a (DIA) Ensemble
@@ -191,11 +178,6 @@ def query_from_ensemble(
         ms2_spec=ms2_spec,
         charge=charge if charge is not None else ensemble.resolved_charge,
         adducts=adducts,
-        elements=elements,
-        autodetect_cl_br=autodetect_cl_br,
-        error_ppm=error_ppm,
-        instrument=instrument,
-        ms2_weight=ms2_weight,
+        params=params if params is not None else FindMfsParams(),
         ms2_mode=ms2_mode,
-        finder_kwargs=finder_kwargs or {},
     )

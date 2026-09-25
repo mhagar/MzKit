@@ -51,12 +51,19 @@ class FormulaAssignment:
     precursor_mz: Optional[float] = None
     charge: Optional[int] = None
     adducts: Optional[list[str]] = None
-    elements: Optional[str] = None
-    autodetect_cl_br: bool = False
     ms2_mode: Optional[str] = None
-    error_ppm: Optional[float] = None
-    instrument: str = 'unknown'
-    ms2_weight: float = 1.0
+
+    # The search find-mfs actually ran: element set and bounds *after* any
+    # halogen widening, and whether the Cl/Br pattern was detected (None when
+    # detection was off).
+    elements: Optional[str] = None
+    max_counts: Optional[str] = None
+    min_counts: Optional[str] = None
+    halogen_detected: Optional[bool] = None
+
+    # Snapshot of the FindMfsParams used (asdict), for reproducing the search.
+    params: Optional[dict] = None
+
     created_at: float = field(default_factory=time.time)
 
     @property

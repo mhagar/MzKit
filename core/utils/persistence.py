@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 logger = logging.getLogger(__name__)
 
 def save_project(
@@ -519,7 +519,17 @@ def load_project(
             and name.endswith('.json')
         ]
         for assignment_path in assignment_paths:
-            assignments.append(deserialize_assignment(assignment_path, zf))
+            try:
+                assignment = deserialize_assignment(assignment_path, zf)
+            except TypeError:
+                # Pre-1.2.0 assignments carry the old element-set provenance
+                # fields; these are deliberately not migrated (re-assign instead)
+                logger.warning(
+                    f"Skipping formula assignment {assignment_path}: saved by "
+                    f"an older format version; please re-run formula assignment."
+                )
+                continue
+            assignments.append(assignment)
 
     logger.info(
         f"Loaded {len(samples)} samples, "

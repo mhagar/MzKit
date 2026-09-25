@@ -77,6 +77,7 @@ class MeasureLossController(BaseToolController):
         ):
             # User dismissed the finder — clear state and exit tool.
             self._pending_finder_mode = None
+            self.formula_finder_menu.charge_override = None
             self.viewer.tool_manager.request_cancel()
         return False  # don't consume the event
 
@@ -223,6 +224,7 @@ class MeasureLossController(BaseToolController):
 
     def handle_show_finder_menu(self):
         self._pending_finder_mode = 'ion'
+        self.formula_finder_menu.charge_override = None
         self.formula_finder_menu.show()
 
         # Send selected_signals to formula finder
@@ -241,10 +243,9 @@ class MeasureLossController(BaseToolController):
         """
         self._pending_finder_mode = 'neutral_loss'
 
-        # Save the user's prior charge setting so the next ion-formula
-        # search isn't accidentally locked at 0.
-        self._saved_charge = self.formula_finder_menu.spinCharge.value()
-        self.formula_finder_menu.spinCharge.setValue(0)
+        # Charge 0 for this search only; the shared param sheet (and the
+        # config it saves to) keeps the user's ion charge.
+        self.formula_finder_menu.charge_override = 0
 
         self.formula_finder_menu.populate_table([(delta_mz, 1.0)])
         self.formula_finder_menu.show()
@@ -265,9 +266,7 @@ class MeasureLossController(BaseToolController):
 
         if mode == 'neutral_loss':
             self.sigMzDiffFormulaAssigned.emit(formula)
-            # Restore the user's prior charge setting.
-            if hasattr(self, '_saved_charge'):
-                self.formula_finder_menu.spinCharge.setValue(self._saved_charge)
+            self.formula_finder_menu.charge_override = None
             self.formula_finder_menu.hide()
             # The Hide event filter will request_cancel.
             return

@@ -35,6 +35,7 @@ from core.cli.generate_ensemble import (
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
+    from core.formula.params import FindMfsParams
     from core.data_structs import SampleUUID
 
 
@@ -134,13 +135,13 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
     def run_findmfs(self) -> bool:
         return self.groupRunFindMfs.isChecked()
 
-    def get_findmfs_params(self) -> Optional[dict]:
+    def get_findmfs_params(self) -> Optional["FindMfsParams"]:
         """
-        Annotation kwargs when find-mfs is enabled, else None.
+        The find-mfs parameters when find-mfs is enabled, else None.
         """
         if not self.run_findmfs():
             return None
-        return self.findMfsParams.get_annotation_params()
+        return self.findMfsParams.get_params()
 
     # -- param getters (dict shapes must match the extraction call sites) --
 
@@ -299,6 +300,15 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
                 self,
                 "No samples selected",
                 "Select at least one sample to extract from.",
+            )
+            return
+        error = self.findMfsParams.validation_error() if self.run_findmfs() else None
+        if error:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid find-mfs parameters",
+                f"{error}\n\nFix them on the 'Auto find-mfs' tab, or untick "
+                f"'Run find-mfs on new ensembles'.",
             )
             return
         super().accept()

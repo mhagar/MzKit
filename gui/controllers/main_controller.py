@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from core.data_structs.fingerprint import FingerprintImportParams
     from core.data_structs.scan_array import ScanArrayParameters
     from core.cli.generate_ensemble import EnsembleExtractionParams
+    from core.formula.params import FindMfsParams
     import core.data_structs as data_structs
     from gui.views.sample_viewer import SampleViewer
     from gui.views.process_monitor import ProcessMonitorWindow
@@ -831,7 +832,7 @@ class MainController:
     def _handle_generate_ensemble_request(
         self,
         input_params: 'EnsembleExtractionParams',  # Qt signal is named tuple
-        findmfs: 'Optional[dict]' = None,
+        findmfs: 'Optional[FindMfsParams]' = None,
     ):
         def on_complete(ensembles):
             if ensembles:
@@ -859,7 +860,7 @@ class MainController:
         self,
         sample_uuids: list['data_structs.SampleUUID'],
         auto_params: dict,
-        findmfs: 'Optional[dict]',
+        findmfs: 'Optional[FindMfsParams]',
     ):
         """
         Run auto-generation across every chosen sample; once all have finished,
@@ -902,7 +903,7 @@ class MainController:
     def _run_findmfs_over(
         self,
         ensembles: list,
-        findmfs: dict,
+        findmfs: 'FindMfsParams',
     ):
         """Chain a batch find-mfs pass over freshly created ensembles."""
         if not ensembles:
@@ -912,7 +913,7 @@ class MainController:
             function_name="annotate_ensembles_dia",
             parameters={
                 "ensembles": ensembles,
-                **findmfs,
+                "params": findmfs,
             },
             on_completion_func=self._on_auto_find_mf_complete,
         )
@@ -929,14 +930,14 @@ class MainController:
         if ensemble is None:
             return
 
-        from core.cli.auto_find_mfs import annotation_params_from_config
+        from core.formula.params import FindMfsParams
 
         self.process_controller.start_process(
             module_path="core.cli.auto_find_mfs",
             function_name="annotate_ensembles_dia",
             parameters={
                 "ensembles": [ensemble],
-                **annotation_params_from_config(self.config),
+                "params": FindMfsParams.from_config(self.config),
             },
             on_completion_func=self._on_auto_find_mf_complete,
         )
@@ -955,12 +956,7 @@ class MainController:
         if ensemble is None:
             return
 
-        from core.cli.auto_find_mfs import annotation_params_from_config
-
-        params = annotation_params_from_config(self.config)
-        # attach_adduct_labels assumes DIA composite MS1 cofeature ordering;
-        # skip it on this stopgap DDA path to avoid mislabeled envelopes.
-        params["attach_adduct_labels"] = False
+        from core.formula.params import FindMfsParams
 
         self.process_controller.start_process(
             module_path="core.cli.auto_find_mfs",
@@ -970,7 +966,11 @@ class MainController:
                 "ms1_peaks": payload.get("ms1_peaks"),
                 "ms2_peaks": payload.get("ms2_peaks"),
                 "precursor_mz": payload.get("precursor_mz"),
-                **params,
+                "params": FindMfsParams.from_config(self.config),
+                # attach_adduct_labels assumes DIA composite MS1 cofeature
+                # ordering; skip it on this stopgap DDA path to avoid
+                # mislabeled envelopes.
+                "attach_adduct_labels": False,
             },
             on_completion_func=self._on_auto_find_mf_complete,
         )

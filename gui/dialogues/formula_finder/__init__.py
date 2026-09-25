@@ -4,7 +4,8 @@ Rushed to make something useable
 """
 import numpy as np
 from PyQt5 import QtWidgets, QtCore
-from find_mfs import FormulaFinder, FormulaScorer
+from find_mfs import FormulaScorer, annotate_precursor
+from find_mfs.spectra.halogen import HALOGEN_M2_OFFSET
 
 from gui.resources.FormulaFinderWindow import Ui_Form
 from core.utils.formula_formatting import format_formula_obj_to_html
@@ -54,9 +55,9 @@ class FormulaFinderDialog(
         self._setup_statusbar()
         self._setup_results_table()
 
-        # Formula finder
-        # TODO: expose element params to user
-        self.finder = FormulaFinder()
+        # Per-search charge that overrides the shared param sheet without
+        # persisting (the neutral-loss tool searches at charge 0).
+        self.charge_override: Optional[int] = None
 
         # State stuff
         self.search_query: list[tuple[float, float]] = []
@@ -102,46 +103,56 @@ class FormulaFinderDialog(
 
     def on_search_execute(self):
         """
-        Called when user hits 'Find MFs' button
+        Called when user hits 'Find Ion MF': rank formulae for the selected
+        signals (no MS2) with find-mfs `annotate_precursor`, using the shared
+        parameter sheet.
         """
         self._retrieve_table_input()
 
         if not self.search_query:
             return
 
-        envelope: NDArray = np.array(self.search_query)
-        search_mz = envelope[:, 0].min()  # Uses lowest m/z.. for now?
+        params = self.findMfsParams.get_params()
+        error = self.findMfsParams.validation_error()
+        if error:
+            # Don't leave the previous search's results looking current
+            self.search_results = None
+            self._populate_ion_results()
+            self.statusbar.showMessage(f"Invalid parameters: {error}")
+            return
 
-        mf_params, score_params = self._retrieve_params_from_ui()
+        envelope: NDArray = np.array(self.search_query)
+        search_mz = float(envelope[:, 0].min())  # the monoisotopic peak
 
         has_envelope = envelope.shape[0] > 1
         spec = to_spec_arr(envelope[:, 0], envelope[:, 1]) if has_envelope else None
 
-        results = self.finder.find_formulae(
-            mass=search_mz,
-            # Perf-only prefilter; actual isotope scoring happens below via SCORER.score()
-            isotope_prefilter=spec,
-            **mf_params,
+        adduct = self.lineAdduct.text().strip() or None
+        charge = (
+            self.charge_override if self.charge_override is not None
+            else params.charge
         )
+
+        results = annotate_precursor(
+            search_mz,
+            adducts=[(adduct, charge)],
+            scorer=SCORER,
+            ms1_peaks=spec,
+            sort=False,     # sorted below, per the 'sort by' combo
+            **params.search_kwargs(),
+        )
+
+        self._results_mode = "ion"
+        self._compound_assignment = None
 
         if len(results) == 0:
             self.search_results = None
-            self._results_mode = "ion"
-            self._compound_assignment = None
             self._populate_ion_results()
             self.statusbar.showMessage(
-                f"No formulae found for m/z {search_mz}"
-                + (" matching the isotope envelope" if has_envelope else "")
+                f"No formulae found for m/z {search_mz:.4f}"
+                + self._halogen_note(results, envelope, charge)
             )
             return
-
-        SCORER.score(
-            results,
-            ms1_peaks=spec,
-            precursor_mz=search_mz,
-            mass_sigma_ppm=mf_params['error_ppm'] / 3,
-            **score_params,
-        )
 
         match self._retrieve_requested_sort():
             case "mass_error":
@@ -156,13 +167,30 @@ class FormulaFinderDialog(
             case "posterior":
                 self.search_results = results.sort_by_posterior()
 
-        self._results_mode = "ion"
-        self._compound_assignment = None
         self._populate_ion_results()
 
         self.statusbar.showMessage(
-            f"Found {len(self.search_results)} formulae for m/z {search_mz}"
+            f"Found {len(self.search_results)} formulae for m/z {search_mz:.4f}"
+            + self._halogen_note(results, envelope, charge)
         )
+
+    @staticmethod
+    def _halogen_note(results, envelope: NDArray, charge: int) -> str:
+        """Status-bar suffix saying what halogen detection did, if it ran."""
+        detected = results.query_params.get("halogen_detected")
+        if detected is None:
+            # Detection off, or a single peak (no envelope to look at)
+            return ""
+        if detected:
+            return (
+                f" · Cl/Br pattern detected, searched "
+                f"{results.query_params.get('elements')}"
+            )
+        # Detection needs the M+2 peak; say so if it wasn't selected
+        m2_mz = envelope[:, 0].min() + HALOGEN_M2_OFFSET / (abs(charge) or 1)
+        if not np.any(np.abs(envelope[:, 0] - m2_mz) < 0.05):
+            return " · select the M+2 peak for halogen detection"
+        return " · no Cl/Br pattern"
 
     def populate_table(
         self,
@@ -288,63 +316,6 @@ class FormulaFinderDialog(
             f"Must contain 'mass', 'isotope', 'chemical', or 'posterior'"
         )
 
-    def _retrieve_params_from_ui(self) -> tuple[dict, dict]:
-        """
-        Retrieves parameters from UI. The scoring/constraint controls live in the
-        shared find-mfs param widget; the adduct is FormulaFinder-local.
-        """
-        mf_params = {
-            "adduct": self.lineAdduct.text() or None,
-            **self.findMfsParams.get_mf_params(),
-        }
-
-        score_params = self.findMfsParams.get_score_params()
-
-        self._check_finder_element_set(
-            self.findMfsParams.get_element_set_text()
-        )
-
-        return mf_params, score_params
-
-    def _check_finder_element_set(
-        self, element_set: Literal["CHNOPS", "CHNOPS + Halogens"]
-    ):
-        """
-        Checks whether the FormulaFinder object needs to be re-instantiated
-        (i.e. user has changed the element set)
-        """
-        element_set = {
-            "CHNOPS": {
-                "C",
-                "H",
-                "N",
-                "O",
-                "P",
-                "S",
-            },
-            "CHNOPS + Halogens": {
-                "C",
-                "H",
-                "N",
-                "O",
-                "P",
-                "S",
-                "F",
-                "Br",
-                "I",
-                "Cl",
-            },
-        }[element_set]
-
-        if element_set != self.finder.element_set:
-            print(
-                f"DEBUGGING: User requested element set {element_set},"
-                f" but finder is using {self.finder.element_set}. "
-                f"Reinstantiating."
-            )
-
-            self.finder = FormulaFinder(element_set)
-
     def _request_compound_search(self):
         """
         Ask the controller to run the MS2 compound assignment
@@ -356,20 +327,17 @@ class FormulaFinderDialog(
             )
             return
 
-        params = self._retrieve_compound_params()
-        params["ms1_signals"] = list(self.search_query)
-        self.sigCompoundSearchRequested.emit(params)
+        error = self.findMfsParams.validation_error()
+        if error:
+            self.statusbar.showMessage(f"Invalid parameters: {error}")
+            return
 
-    def _retrieve_compound_params(self) -> dict:
-        """
-        Assemble kwargs for core.formula.query_from_signals + a top_n. The
-        scoring/constraint controls come from the shared param widget; the
-        adduct is FormulaFinder-local.
-        """
         adduct = self.lineAdduct.text().strip() or None
-        params = self.findMfsParams.get_compound_params()
-        params["adducts"] = [adduct] if adduct else None
-        return params
+        self.sigCompoundSearchRequested.emit({
+            "ms1_signals": list(self.search_query),
+            "adducts": [adduct] if adduct else None,
+            "params": self.findMfsParams.get_params(),
+        })
 
     def on_assign_selected(self):
         """
