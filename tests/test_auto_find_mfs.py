@@ -17,6 +17,8 @@ import pytest
 from core.cli.main import _load_registry
 from core.cli.auto_find_mfs import (
     annotate_ensembles_dia,
+    BatchAnnotationResult,
+    EnsembleSelection,
     ADDUCT_ANNOT_SOURCE,
 )
 from core.formula.params import FindMfsParams
@@ -93,7 +95,7 @@ def _install_fake_annotate(monkeypatch, *, formulas=('C6H12O6', 'C5H10O5'),
 def test_annotate_builds_assignment_and_labels(dia_ensemble, monkeypatch):
     _install_fake_annotate(monkeypatch)
 
-    out = annotate_ensembles_dia([dia_ensemble])
+    out = annotate_ensembles_dia([dia_ensemble]).assignments
 
     assert len(out) == 1
     a = out[0]
@@ -141,8 +143,9 @@ def test_dda_ensemble_is_skipped(dia_ensemble, monkeypatch):
     monkeypatch.setattr(dia_ensemble.injection, 'acquisition_mode', 'dda')
     assert dia_ensemble.is_dda is True
 
-    out = annotate_ensembles_dia([dia_ensemble])
-    assert out == []
+    result = annotate_ensembles_dia([dia_ensemble])
+    assert result.assignments == []
+    assert result.n_dda == 1
     assert dia_ensemble.generic_annots == {}       # nothing attached
 
 
@@ -179,7 +182,7 @@ def test_assignment_records_search_provenance(dia_ensemble, monkeypatch):
     _install_fake_annotate(monkeypatch)
     params = FindMfsParams(halogen_cap='Cl4Br4')
 
-    a = annotate_ensembles_dia([dia_ensemble], params=params)[0]
+    a = annotate_ensembles_dia([dia_ensemble], params=params).assignments[0]
 
     assert a.elements == 'CHNOClBr'
     assert a.max_counts == 'C*H*N3O*Cl4Br4'
@@ -196,6 +199,105 @@ def test_invalid_params_fail_once_up_front(dia_ensemble, monkeypatch):
         annotate_ensembles_dia(
             [dia_ensemble], params=FindMfsParams(halogen_cap='F2'),
         )
+
+
+# --- batch selection + skip reporting ----------------------------------------
+
+def _ens(intsy, dda=False):
+    return SimpleNamespace(base_intsy=intsy, is_dda=dda, uuid=int(intsy))
+
+
+def test_selection_ranks_and_limits():
+    ensembles = [_ens(x) for x in (5e4, 3e6, 2e5, 1e3, 8e5)]
+
+    sel, below, beyond = EnsembleSelection().select(ensembles)
+    assert [e.base_intsy for e in sel] == [3e6, 8e5, 2e5, 5e4, 1e3]   # no limits
+    assert (below, beyond) == (0, 0)
+
+    sel, below, beyond = EnsembleSelection(
+        limit_intensity=True, min_base_intsy=1e5,
+        limit_count=True, max_ensembles=2,
+    ).select(ensembles)
+    assert [e.base_intsy for e in sel] == [3e6, 8e5]
+    assert (below, beyond) == (2, 1)          # floor applies before the count
+
+
+def test_selection_values_kept_while_disabled():
+    sel = EnsembleSelection(limit_count=False, max_ensembles=1)
+    assert len(sel.select([_ens(1.0), _ens(2.0)])[0]) == 2
+
+
+def test_selection_config_roundtrip():
+    from configparser import ConfigParser
+    sel = EnsembleSelection(limit_count=True, max_ensembles=75,
+                            limit_intensity=True, min_base_intsy=2.5e5)
+    cfg = ConfigParser()
+    sel.to_config(cfg)
+    assert EnsembleSelection.from_config(cfg) == sel
+    assert EnsembleSelection.from_config(ConfigParser()) == EnsembleSelection()
+
+
+def test_batch_reports_every_skip(dia_ensemble, monkeypatch):
+    """DDA, below-floor, beyond-count and no-envelope ensembles are each counted,
+    and the survivors are annotated most intense first."""
+    res = _install_fake_annotate(monkeypatch)
+    annotated = []
+
+    def fake(ms1_peaks=None, **k):
+        annotated.append(fake.current)
+        if fake.current.base_intsy == 4e5:
+            raise ValueError("No signal groups in MS1")
+        return res
+
+    monkeypatch.setattr('find_mfs.annotate_analyte_dia', fake, raising=False)
+    import core.cli.auto_find_mfs as afm
+    real_one = afm._annotate_one
+
+    def spy(ensemble, **k):
+        fake.current = ensemble
+        return real_one(dia_ensemble, **k)       # real conversion, real ensemble
+
+    monkeypatch.setattr(afm, '_annotate_one', spy)
+
+    ensembles = [
+        _ens(1e6), _ens(4e5), _ens(9e5), _ens(2e5),   # DIA, ranked 1e6 > 9e5 > 4e5 > 2e5
+        _ens(5e4),                                    # below the floor
+        _ens(3e6, dda=True),                          # DDA
+    ]
+    result = annotate_ensembles_dia(
+        ensembles,
+        selection=EnsembleSelection(limit_intensity=True, min_base_intsy=1e5,
+                                    limit_count=True, max_ensembles=3),
+    )
+
+    assert [e.base_intsy for e in annotated] == [1e6, 9e5, 4e5]
+    assert len(result.assignments) == 2
+    assert (result.n_ensembles, result.n_dda, result.n_below_intensity,
+            result.n_beyond_count, result.n_no_envelope) == (6, 1, 1, 1, 1)
+    assert result.summary() == (
+        "Annotated 2 of 6 ensembles; skipped 1 below min. intensity, "
+        "1 beyond the N most intense, 1 with no resolvable envelope, "
+        "1 DDA (not supported yet)"
+    )
+
+
+def test_cancelled_batch_counts_unreached(dia_ensemble, monkeypatch):
+    import threading
+    _install_fake_annotate(monkeypatch)
+    cancel = threading.Event()
+    cancel.set()
+    result = annotate_ensembles_dia([dia_ensemble], cancel_event=cancel)
+    assert result.assignments == [] and result.n_cancelled == 1
+    assert "1 not reached (cancelled)" in result.summary()
+
+
+def test_summary_mentions_empty_searches():
+    from core.data_structs.formula_assignment import FormulaAssignment
+    r = BatchAnnotationResult(
+        assignments=[FormulaAssignment(source_uuid=1, candidates=[])],
+        n_ensembles=1,
+    )
+    assert r.summary() == "Annotated 1 of 1 ensemble (1 with no candidate formula)"
 
 
 # --- GenericAnnotation.source persistence semantics -------------------------

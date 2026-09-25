@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from core.data_structs.scan_array import ScanArrayParameters
     from core.cli.generate_ensemble import EnsembleExtractionParams
     from core.formula.params import FindMfsParams
+    from core.cli.auto_find_mfs import BatchAnnotationResult, EnsembleSelection
     import core.data_structs as data_structs
     from gui.views.sample_viewer import SampleViewer
     from gui.views.process_monitor import ProcessMonitorWindow
@@ -861,6 +862,7 @@ class MainController:
         sample_uuids: list['data_structs.SampleUUID'],
         auto_params: dict,
         findmfs: 'Optional[FindMfsParams]',
+        selection: 'Optional[EnsembleSelection]' = None,
     ):
         """
         Run auto-generation across every chosen sample; once all have finished,
@@ -887,7 +889,7 @@ class MainController:
                 state["ensembles"].extend(ensembles)
             state["remaining"] -= 1
             if state["remaining"] == 0 and findmfs is not None:
-                self._run_findmfs_over(state["ensembles"], findmfs)
+                self._run_findmfs_over(state["ensembles"], findmfs, selection)
 
         for injection in injections:
             self.process_controller.start_process(
@@ -904,6 +906,7 @@ class MainController:
         self,
         ensembles: list,
         findmfs: 'FindMfsParams',
+        selection: 'Optional[EnsembleSelection]' = None,
     ):
         """Chain a batch find-mfs pass over freshly created ensembles."""
         if not ensembles:
@@ -914,6 +917,7 @@ class MainController:
             parameters={
                 "ensembles": ensembles,
                 "params": findmfs,
+                "selection": selection,
             },
             on_completion_func=self._on_auto_find_mf_complete,
         )
@@ -977,16 +981,21 @@ class MainController:
 
     def _on_auto_find_mf_complete(
         self,
-        assignments: list,
+        result: 'Optional[BatchAnnotationResult]',
     ):
         """
         Register each assignment. sigAssignmentAdded then drives the Ensemble
         Viewer's title-strip + adduct-label refresh and the Sample Viewer's
         overlay label. (Adduct annotations + proposed_formula were already
         attached to the ensemble in the worker.)
+
+        The run's summary one-liner goes to the status bar
         """
-        for assignment in assignments or []:
+        if result is None:
+            return
+        for assignment in result.assignments:
             self.data_registry.register_assignment(assignment)
+        self.main_view.statusbar.showMessage(f"find-mfs: {result.summary()}")
 
     def _handle_align_ensembles_request(
         self,

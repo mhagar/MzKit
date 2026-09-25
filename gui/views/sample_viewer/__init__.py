@@ -44,12 +44,13 @@ class SampleViewer(
     sigMSLevelChanged = QtCore.pyqtSignal(int)
     sigEnsembleExtractionRequested = QtCore.pyqtSignal(
         object,  # EnsembleExtractionParams
-        object,  # find-mfs params dict, or None (chain after extraction)
+        object,  # FindMfsParams, or None (chain after extraction)
     )
     sigAutoEnsembleBatchRequested = QtCore.pyqtSignal(
         object,  # list[SampleUUID]
         object,  # auto-generation params dict (AutoEnsembleParams kwargs)
-        object,  # find-mfs params dict, or None
+        object,  # FindMfsParams, or None
+        object,  # EnsembleSelection (which new ensembles get find-mfs)
     )
     sigAlignEnsemblesRequested = QtCore.pyqtSignal(
         object,  # list[SampleUUID]
@@ -1148,6 +1149,7 @@ class SampleViewer(
             uuids,
             dialog.get_auto_params(),
             dialog.get_findmfs_params(),
+            dialog.get_findmfs_selection(),
         )
 
     def _delete_all_ensembles_for_selected(self):

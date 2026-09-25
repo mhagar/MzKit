@@ -477,7 +477,7 @@ def cmd_auto_extract(args: argparse.Namespace) -> None:
 
 def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
     from core.utils.config import load_config
-    from core.cli.auto_find_mfs import annotate_ensembles_dia
+    from core.cli.auto_find_mfs import annotate_ensembles_dia, EnsembleSelection
     from core.formula.params import FindMfsParams
 
     mzk_path = Path(args.mzk)
@@ -510,18 +510,28 @@ def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
         logger.warning("No ensembles to annotate")
         return
 
-    assignments = annotate_ensembles_dia(
+    # Limits only when asked for on the command line (not from the GUI's
+    # saved [auto_find_mfs] settings), so a scripted run never silently skips.
+    selection = EnsembleSelection(
+        limit_count=args.max_ensembles is not None,
+        max_ensembles=args.max_ensembles or 0,
+        limit_intensity=args.min_intensity is not None,
+        min_base_intsy=args.min_intensity or 0.0,
+    )
+
+    result = annotate_ensembles_dia(
         ensembles,
         params=params,
+        selection=selection,
         attach_adduct_labels=not args.no_adduct_labels,
     )
-    for assignment in assignments:
+    for assignment in result.assignments:
         registry.register_assignment(assignment)
 
     output = _resolve_output(args, mzk_path)
     save_project(output, registry)
     logger.info(
-        f"Annotated {len(assignments)} ensemble(s); saved to {output}"
+        f"{result.summary()}; saved to {output}"
     )
 
 
@@ -942,6 +952,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_find_mf.add_argument(
         '--top-n', type=int, default=None,
         help='Ranked candidates to keep per ensemble (default: config)',
+    )
+    p_find_mf.add_argument(
+        '--max-ensembles', type=int, default=None,
+        help='Only annotate the N most intense ensembles (by base-peak '
+             'intensity; default: all)',
+    )
+    p_find_mf.add_argument(
+        '--min-intensity', type=float, default=None,
+        help='Only annotate ensembles whose base-peak intensity is at least '
+             'this (default: no floor)',
     )
     p_find_mf.add_argument(
         '--no-adduct-labels', action='store_true', default=False,

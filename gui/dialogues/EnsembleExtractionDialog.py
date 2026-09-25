@@ -12,7 +12,8 @@ Two modes:
             Group scoring + find-mfs params stay editable.
             OK just stores the params. the seed/window are still picked on the plot.
 
-All initial values come from the config (`[auto_ensemble]`+ `[findmfs]`).
+All initial values come from the config (`[auto_ensemble]`, `[auto_find_mfs]`
++ `[findmfs]`).
 
 The dict shapes returned by `get_params` / `get_auto_params` match those
  the controller feeds to `EnsembleExtractionParams` / `AutoEnsembleParams` unchanged
@@ -32,6 +33,7 @@ from core.cli.generate_ensemble import (
     auto_params_from_config,
     auto_params_to_config,
 )
+from core.cli.auto_find_mfs import EnsembleSelection
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -66,19 +68,21 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
         # find-mfs sheet manages its own [findmfs] persistence.
         self.findMfsParams.set_config(config)
 
-        # Populate every extraction control from [auto_ensemble].
+        # Populate every extraction control from [auto_ensemble], and the
+        # find-mfs ensemble limits from [auto_find_mfs].
         if config is not None:
             self._apply_auto_params(
                 auto_params_from_config(config)
             )
+            self._apply_findmfs_selection(EnsembleSelection.from_config(config))
 
         self._populate_sample_list(
             loaded_samples or [],
             selected_uuids or set(),
         )
 
-        # Dialog-level config buttons persist [auto_ensemble] only; the find-mfs
-        # widget carries its own Save/Reset/RestoreDefaults for [findmfs].
+        # Dialog-level config buttons persist [auto_ensemble] + [auto_find_mfs]
+        # (the ensemble limits); the find-mfs sheet saves [findmfs] on every edit.
         self.btnConfigBox.clicked.connect(self._on_config_btn_pressed)
 
         if mode is ExtractionDialogMode.SINGLE:
@@ -106,6 +110,12 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
         """
         self.groupSamples.setEnabled(False)
         self.groupAuto.setEnabled(False)
+        # One ensemble at a time: the batch limits don't apply
+        for w in (
+            self.checkLimitCount, self.spinMaxEnsembles,
+            self.checkLimitIntensity, self.spinMinBaseIntsy,
+        ):
+            w.setEnabled(False)
 
     def _populate_sample_list(
         self,
@@ -134,6 +144,25 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
 
     def run_findmfs(self) -> bool:
         return self.groupRunFindMfs.isChecked()
+
+    def get_findmfs_selection(self) -> EnsembleSelection:
+        """Which of the new ensembles find-mfs annotates (batch runs only)."""
+        return EnsembleSelection(
+            limit_count=self.checkLimitCount.isChecked(),
+            max_ensembles=int(self.spinMaxEnsembles.value()),
+            limit_intensity=self.checkLimitIntensity.isChecked(),
+            min_base_intsy=float(self.spinMinBaseIntsy.value()),
+        )
+
+    def _apply_findmfs_selection(self, sel: EnsembleSelection) -> None:
+        self.checkLimitCount.setChecked(sel.limit_count)
+        self.spinMaxEnsembles.setValue(sel.max_ensembles)
+        self.checkLimitIntensity.setChecked(sel.limit_intensity)
+        self.spinMinBaseIntsy.setValue(sel.min_base_intsy)
+        # The .ui ties each spinner's enabled state to its checkbox's toggled
+        # signal, which doesn't fire when the state is unchanged
+        self.spinMaxEnsembles.setEnabled(sel.limit_count)
+        self.spinMinBaseIntsy.setEnabled(sel.limit_intensity)
 
     def get_findmfs_params(self) -> Optional["FindMfsParams"]:
         """
@@ -226,10 +255,15 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
             case QtWidgets.QDialogButtonBox.StandardButton.Save:
                 self._save_auto_params_to_config()
             case QtWidgets.QDialogButtonBox.StandardButton.RestoreDefaults:
-                self._apply_auto_params(auto_params_from_config(load_default_config()))
+                defaults = load_default_config()
+                self._apply_auto_params(auto_params_from_config(defaults))
+                self._apply_findmfs_selection(EnsembleSelection.from_config(defaults))
             case QtWidgets.QDialogButtonBox.StandardButton.Reset:
                 if self.config is not None:
                     self._apply_auto_params(auto_params_from_config(self.config))
+                    self._apply_findmfs_selection(
+                        EnsembleSelection.from_config(self.config)
+                    )
 
     def _save_auto_params_to_config(self) -> None:
         if self.config is None:
@@ -240,6 +274,7 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
             **self.get_auto_params()
         )
         auto_params_to_config(self.config, merged)
+        self.get_findmfs_selection().to_config(self.config)
         save_config(self.config)
 
     def _select_combo(

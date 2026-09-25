@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field, fields
 from typing import Callable, Iterable, Optional, TYPE_CHECKING
 
 from core.formula.assign_formula import (
@@ -30,24 +30,145 @@ from core.formula.params import FindMfsParams
 from core.data_structs.formula_assignment import FormulaAssignment
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
     from core.data_structs import Ensemble
 
 logger = logging.getLogger(__name__)
 
-# The generic-annotation source tag for adduct labels we attach, so re-runs can
-# clear+replace only these (leaving user annotations alone).
+# The generic-annotation source tag for adduct labels we attach,
+# so re-runs can clear+replace only these (leaving user annotations alone).
 ADDUCT_ANNOT_SOURCE = 'auto_adduct'
+
+SELECTION_SECTION = 'auto_find_mfs'
+
+
+@dataclass
+class EnsembleSelection:
+    """
+    Handles deciding which ensembles a batch find-mfs run annotates.
+
+    Both limits rank by `Ensemble.base_intsy`,
+    so a whole-sample run can skip the long tail of low-intensity ensembles.
+     The values are kept while a limit is off, so the GUI can restore them.
+    """
+    limit_count: bool = False
+    max_ensembles: int = 200
+    limit_intensity: bool = False
+    min_base_intsy: float = 100_000.0
+
+    @classmethod
+    def from_config(cls, config: Optional['ConfigParser']) -> 'EnsembleSelection':
+        """
+        Read `[auto_find_mfs]`; missing or unparsable keys keep defaults.
+        """
+        sel = cls()
+        if config is None or not config.has_section(SELECTION_SECTION):
+            return sel
+        for f in fields(cls):
+            if not config.has_option(SELECTION_SECTION, f.name):
+                continue
+            getter = {
+                bool: config.getboolean,
+                int: config.getint,
+                float: config.getfloat,
+            }[type(getattr(sel, f.name))]
+            try:
+                setattr(sel, f.name, getter(SELECTION_SECTION, f.name))
+            except ValueError:
+                pass
+        return sel
+
+    def to_config(self, config: 'ConfigParser') -> None:
+        """
+        Write into `[auto_find_mfs]` (does not save to disk)
+        """
+        if not config.has_section(SELECTION_SECTION):
+            config.add_section(SELECTION_SECTION)
+        for f in fields(self):
+            config.set(SELECTION_SECTION, f.name, str(getattr(self, f.name)))
+
+    def select(
+        self,
+        ensembles: list['Ensemble'],
+    ) -> tuple[list['Ensemble'], int, int]:
+        """
+        Apply the limits, most intense first.
+
+        :return: (selected ensembles in descending base_intsy order,
+                  number dropped by the intensity floor,
+                  number dropped by the count limit)
+        """
+        ranked = sorted(ensembles, key=lambda e: e.base_intsy, reverse=True)
+
+        n_below = 0
+        if self.limit_intensity:
+            kept = [e for e in ranked if e.base_intsy >= self.min_base_intsy]
+            n_below = len(ranked) - len(kept)
+            ranked = kept
+
+        n_beyond = 0
+        if self.limit_count and len(ranked) > self.max_ensembles:
+            n_beyond = len(ranked) - self.max_ensembles
+            ranked = ranked[:self.max_ensembles]
+
+        return ranked, n_below, n_beyond
+
+
+@dataclass
+class BatchAnnotationResult:
+    """
+    What a find-mfs annotation run did, including what it skipped and why
+    """
+    assignments: list[FormulaAssignment] = field(default_factory=list)
+    n_ensembles: int = 0            # handed in
+    n_dda: int = 0                  # skipped: TODO DDA has no composite spectrum yet
+    n_below_intensity: int = 0      # skipped: below the base-peak intensity floor
+    n_beyond_count: int = 0         # skipped: outside the N most intense
+    n_no_envelope: int = 0          # skipped: find-mfs found no resolvable envelope
+    n_cancelled: int = 0            # not reached before cancellation
+
+    @property
+    def n_no_candidates(self) -> int:
+        """
+        Annotated, but the search found no formula.
+        """
+        return sum(1 for a in self.assignments if not a.candidates)
+
+    def summary(self) -> str:
+        """
+        One liner for status bar / log, e.g.
+        'Annotated 212 of 340 ensembles; skipped 100 below min. intensity,
+         28 with no resolvable envelope'.
+         """
+        noun = 'ensemble' if self.n_ensembles == 1 else 'ensembles'
+        text = f"Annotated {len(self.assignments)} of {self.n_ensembles} {noun}"
+        if self.n_no_candidates:
+            text += f" ({self.n_no_candidates} with no candidate formula)"
+
+        skipped = [
+            f"{n} {why}" for n, why in (
+                (self.n_below_intensity, "below min. intensity"),
+                (self.n_beyond_count, "beyond the N most intense"),
+                (self.n_no_envelope, "with no resolvable envelope"),
+                (self.n_dda, "DDA (not supported yet)"),
+                (self.n_cancelled, "not reached (cancelled)"),
+            ) if n
+        ]
+        if skipped:
+            text += "; skipped " + ", ".join(skipped)
+        return text
 
 
 def annotate_ensembles_dia(
     ensembles: Iterable['Ensemble'],
     *,
     params: Optional[FindMfsParams] = None,
+    selection: Optional[EnsembleSelection] = None,
     model_path: Optional[str] = None,
     attach_adduct_labels: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
-) -> list[FormulaAssignment]:
+) -> BatchAnnotationResult:
     """
     Run find-mfs `annotate_analyte_dia` over each (DIA) ensemble.
 
@@ -56,8 +177,12 @@ def annotate_ensembles_dia(
     `attach_adduct_labels` — replaces prior 'auto_adduct' generic annotations
     with the resolved per-envelope adduct labels. DDA ensembles are skipped.
 
+    Ensembles are annotated most intense first (so a cancelled run has done
+    the ones that matter), limited by `selection` if given.
+
     :param params: find-mfs constraints/scoring; defaults to FindMfsParams().
-    :return: one FormulaAssignment per successfully-annotated ensemble.
+    :param selection: which ensembles to annotate; None annotates all of them.
+    :return: the assignments, plus counts of what was skipped and why.
     :raises ValueError: up front, if the count constraints are invalid (rather
         than once per ensemble, where it would be indistinguishable from an
         ensemble with no resolvable envelope).
@@ -67,24 +192,28 @@ def annotate_ensembles_dia(
 
     params = params if params is not None else FindMfsParams()
     params.validate()
+    selection = selection if selection is not None else EnsembleSelection()
+
+    ensembles = list(ensembles)
+    result = BatchAnnotationResult(n_ensembles=len(ensembles))
+
+    # Composite is DIA-only for now; nothing to do for DDA.
+    dia = [e for e in ensembles if not e.is_dda]
+    result.n_dda = len(ensembles) - len(dia)
+
+    todo, result.n_below_intensity, result.n_beyond_count = selection.select(dia)
 
     scorer = _get_scorer(model_path)  # MistNet warmed once, cached across calls
 
-    ensembles = list(ensembles)
-    n = len(ensembles)
-    assignments: list[FormulaAssignment] = []
-
-    for i, ensemble in enumerate(ensembles):
+    n = len(todo)
+    for i, ensemble in enumerate(todo):
         if cancel_event is not None and cancel_event.is_set():
             logger.info("annotate_ensembles_dia cancelled at %d/%d", i, n)
+            result.n_cancelled = n - i
             break
 
         if progress_callback is not None:
             progress_callback(100.0 * i / n, f"Annotating {i + 1}/{n}")
-
-        if ensemble.is_dda:
-            # Composite is DIA-only for now; nothing to do for DDA.
-            continue
 
         try:
             assignment = _annotate_one(
@@ -100,14 +229,16 @@ def annotate_ensembles_dia(
             logger.warning(
                 "Skipping ensemble %s: %s", ensemble.uuid, exc
             )
+            result.n_no_envelope += 1
             continue
 
-        assignments.append(assignment)
+        result.assignments.append(assignment)
 
+    logger.info(result.summary())
     if progress_callback is not None:
-        progress_callback(100.0, f"Annotated {len(assignments)} ensemble(s)")
+        progress_callback(100.0, result.summary())
 
-    return assignments
+    return result
 
 
 def _annotate_one(
@@ -176,15 +307,15 @@ def annotate_ensemble_with_selected_ms2(
     attach_adduct_labels: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
-) -> list[FormulaAssignment]:
+) -> BatchAnnotationResult:
     """
     TEMPORARY DDA compound-annotation path.
 
     Runs find-mfs against caller-supplied MS1 + MS2 spectra (whatever the
     EnsembleViewer currently has on screen) plus the ensemble's precursor,
     rather than the DIA composite (which is undefined for DDA). Produces a
-    single FormulaAssignment, returned in a list to match the DIA completion
-    handler.
+    single FormulaAssignment, returned as a BatchAnnotationResult to match the
+    DIA completion handler.
 
     This is a stopgap until DDA MS2 'consensus' stitching lands and
     `composite_spectrum` works for DDA; it will be retired then. Note that
@@ -198,8 +329,10 @@ def annotate_ensemble_with_selected_ms2(
     if progress_callback is not None:
         progress_callback(0.0, "Annotating (DDA, selected MS2)…")
 
+    result = BatchAnnotationResult(n_ensembles=1)
     if cancel_event is not None and cancel_event.is_set():
-        return []
+        result.n_cancelled = 1
+        return result
 
     params = params if params is not None else FindMfsParams()
     params.validate()
@@ -221,12 +354,14 @@ def annotate_ensemble_with_selected_ms2(
         logger.warning("DDA annotate skipped for %s: %s", ensemble.uuid, exc)
         if progress_callback is not None:
             progress_callback(100.0, "No resolvable envelope")
-        return []
+        result.n_no_envelope = 1
+        return result
 
     if progress_callback is not None:
         progress_callback(100.0, "Annotated 1 ensemble")
 
-    return [assignment]
+    result.assignments.append(assignment)
+    return result
 
 
 def _attach_adduct_labels(
