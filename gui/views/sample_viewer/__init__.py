@@ -82,7 +82,7 @@ class SampleViewer(
         self.data_source.subscribe_to_changes(
             addition_callback=self._on_assignment_changed,
             removal_callback=self._on_assignment_changed,
-            update_callback=lambda x: None,   # Unused for assignments
+            update_callback=self._on_assignment_changed,
             change_type='Assignment',
         )
 
@@ -734,6 +734,10 @@ class SampleViewer(
         menu = QtWidgets.QMenu(self)
 
         action_open = menu.addAction("Open in Ensemble Viewer")
+        action_review = menu.addAction("Review Formula Assignment...")
+        action_review.setEnabled(
+            self.data_source.get_assignment_for_source(ensemble_uuid) is not None
+        )
         action_export = menu.addAction("Export...")
         menu.addSeparator()
         action_delete = menu.addAction("Delete Ensemble")
@@ -742,9 +746,29 @@ class SampleViewer(
 
         if action == action_open:
             self._open_ensemble_in_viewer(sample_uuid, ensemble_uuid)
+        elif action == action_review:
+            self._review_formula_assignment(sample_uuid, ensemble_uuid)
         elif action == action_delete:
             self._delete_ensemble(sample_uuid, ensemble_uuid)
         # elif action == action_export: ...
+
+    def _review_formula_assignment(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID'
+    ):
+        from gui.dialogues.formula_assignment_dialog import (
+            FormulaAssignmentDialog, ensemble_title,
+        )
+
+        injection = self.model.getInjection(sample_uuid)
+        ensemble = injection.ensembles.get(ensemble_uuid) if injection else None
+        FormulaAssignmentDialog(
+            self.data_source,
+            ensemble_uuid,
+            title=ensemble_title(ensemble) if ensemble else None,
+            parent=self,
+        ).show()
 
     def _open_ensemble_in_viewer(
         self,

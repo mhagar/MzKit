@@ -129,9 +129,29 @@
         </widget>
        </item>
        <item>
+        <spacer name="horizontalSpacer_5">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
         <widget class="QToolButton" name="toolAutoFindMf">
          <property name="text">
           <string>AUTO FIND-MF</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QToolButton" name="toolReviewFormula">
+         <property name="text">
+          <string>REVIEW MF</string>
          </property>
         </widget>
        </item>
@@ -385,6 +405,11 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+F</string>
+   </property>
+  </action>
+  <action name="actionReviewFormula">
+   <property name="text">
+    <string>ReviewFormula</string>
    </property>
   </action>
  </widget>

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import asdict, dataclass, field, fields
-from typing import Callable, Iterable, Optional, TYPE_CHECKING
+from typing import Callable, Collection, Iterable, Optional, TYPE_CHECKING
 
 from core.formula.assign_formula import (
     _get_scorer,
@@ -32,6 +32,7 @@ from core.data_structs.formula_assignment import FormulaAssignment
 if TYPE_CHECKING:
     from configparser import ConfigParser
     from core.data_structs import Ensemble
+    from core.data_structs.uuid_types import EnsembleUUID
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ class BatchAnnotationResult:
     n_beyond_count: int = 0         # skipped: outside the N most intense
     n_no_envelope: int = 0          # skipped: find-mfs found no resolvable envelope
     n_cancelled: int = 0            # not reached before cancellation
+    n_user_chosen: int = 0          # kept: formula already chosen by the user
 
     @property
     def n_no_candidates(self) -> int:
@@ -156,6 +158,9 @@ class BatchAnnotationResult:
         ]
         if skipped:
             text += "; skipped " + ", ".join(skipped)
+        if self.n_user_chosen:
+            s = '' if self.n_user_chosen == 1 else 's'
+            text += f"; kept {self.n_user_chosen} user-chosen formula{s}"
         return text
 
 
@@ -164,6 +169,7 @@ def annotate_ensembles_dia(
     *,
     params: Optional[FindMfsParams] = None,
     selection: Optional[EnsembleSelection] = None,
+    keep: Collection['EnsembleUUID'] = (),
     model_path: Optional[str] = None,
     attach_adduct_labels: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
@@ -173,7 +179,7 @@ def annotate_ensembles_dia(
     Run find-mfs `annotate_analyte_dia` over each (DIA) ensemble.
 
     For each ensemble: builds a FormulaAssignment (top candidate pre-selected,
-    `chosen_idx=0`), sets `ensemble.proposed_formula`, and — if
+    `chosen_idx=0`, `chosen_by='auto'`), and — if
     `attach_adduct_labels` — replaces prior 'auto_adduct' generic annotations
     with the resolved per-envelope adduct labels. DDA ensembles are skipped.
 
@@ -182,6 +188,8 @@ def annotate_ensembles_dia(
 
     :param params: find-mfs constraints/scoring; defaults to FindMfsParams().
     :param selection: which ensembles to annotate; None annotates all of them.
+    :param keep: ensembles whose formula the user chose; not re-annotated, so
+        the caller's registry keeps their assignments.
     :return: the assignments, plus counts of what was skipped and why.
     :raises ValueError: up front, if the count constraints are invalid (rather
         than once per ensemble, where it would be indistinguishable from an
@@ -196,6 +204,10 @@ def annotate_ensembles_dia(
 
     ensembles = list(ensembles)
     result = BatchAnnotationResult(n_ensembles=len(ensembles))
+
+    keep = set(keep)
+    ensembles = [e for e in ensembles if e.uuid not in keep]
+    result.n_user_chosen = result.n_ensembles - len(ensembles)
 
     # Composite is DIA-only for now; nothing to do for DDA.
     dia = [e for e in ensembles if not e.is_dda]
@@ -278,17 +290,13 @@ def _annotate_one(
         source_uuid=ensemble.uuid,
         candidates=candidates,
         chosen_idx=0 if candidates else None,   # auto-pick the top hit
+        chosen_by='auto' if candidates else None,
         precursor_mz=res.precursor_mz,          # precursor find-mfs actually used
         charge=res.charge,                       # resolved charge
         ms2_mode=ms2_mode,
         params=asdict(params),
         **search_provenance(res.candidates),
     )
-
-    # Mirror the manual path: keep the ensemble's free-text formula in sync so
-    # non-assignment-aware displays (sample tree, labels) show it too.
-    if candidates:
-        ensemble.proposed_formula = candidates[0].formula_str
 
     if attach_adduct_labels:
         _attach_adduct_labels(ensemble, res.grouped)

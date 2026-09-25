@@ -302,7 +302,10 @@ class ProcessController:
         """
         processes_to_remove = []
 
-        for process_id, status in self.last_known_status.items():
+        # Iterate over a snapshot: completion callbacks run synchronously from
+        # here and may start new processes (e.g. find-mfs chained after
+        # extraction), which adds to last_known_status.
+        for process_id, status in list(self.last_known_status.items()):
             # Check for new output:
             while True:
                 output = self.get_process_output(
@@ -359,9 +362,6 @@ class ProcessController:
                     )
 
                     processes_to_remove.append(process_id)
-
-                # Need to break because dictionary was changed mid-loop!
-                break
 
         # Remove finished processes from having status tracked
         for process_id in processes_to_remove:
@@ -424,13 +424,17 @@ class ProcessController:
             f"Process {process_id} finished with result: {result}"
         )
 
+        # Forget this process -- only this one: another may have finished too
+        # but not been handled yet, and removing it now would lose its
+        # completion call.
+        with self._processes_lock:
+            self.running_processes.pop(process_id, None)
+
         # Call the 'on completion' function corresponding to this process,
         # (if it has one)
-        if process_id in self.return_func_registry.keys():
-            self.return_func_registry[process_id](result)
-
-        # Clean up the process
-        self.cleanup_completed_processes()
+        on_completion = self.return_func_registry.pop(process_id, None)
+        if on_completion is not None:
+            on_completion(result)
 
     def cancel_process(
             self,

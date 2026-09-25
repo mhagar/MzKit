@@ -131,6 +131,7 @@ class EnsembleViewer(
         self.data_source.subscribe_to_changes(
             addition_callback=self._on_assignment_changed,
             removal_callback=self._on_assignment_changed,
+            update_callback=self._on_assignment_changed,
             change_type='Assignment',
         )
 
@@ -291,6 +292,13 @@ class EnsembleViewer(
         self.actionAutoFindMf.triggered.connect(
             self._on_auto_find_mf_triggered
         )
+
+        # Review / change the ensemble's registered formula assignment
+        self.toolReviewFormula.setDefaultAction(self.actionReviewFormula)
+        self.actionReviewFormula.triggered.connect(
+            self._on_review_formula_triggered
+        )
+        self.actionReviewFormula.setEnabled(False)
 
         # Clear-annotation triggers (not modes — just one-shot actions).
         self.toolClearScanAnnots.setDefaultAction(self.actionClearScanAnnots)
@@ -495,12 +503,33 @@ class EnsembleViewer(
         title = self._assignment_label_html() if self.ensemble else None
         self.ms1_plot.getPlotItem().setTitle(title)
 
+        self.actionReviewFormula.setEnabled(
+            self.ensemble is not None
+            and self.data_source.get_assignment_for_source(self.ensemble.uuid)
+            is not None
+        )
+
+    def _on_review_formula_triggered(self):
+        """Open the current ensemble's formula assignment for review."""
+        if not self.ensemble:
+            return
+        from gui.dialogues.formula_assignment_dialog import (
+            FormulaAssignmentDialog, ensemble_title,
+        )
+
+        FormulaAssignmentDialog(
+            self.data_source,
+            self.ensemble.uuid,
+            title=ensemble_title(self.ensemble),
+            parent=self,
+        ).show()
+
     def _assignment_label_html(self) -> Optional[str]:
         # Shared with the sample-viewer overlays (single label source of truth).
         assignment = self.data_source.get_assignment_for_source(
             self.ensemble.uuid
         )
-        return format_assignment_label_html(self.ensemble, assignment)
+        return format_assignment_label_html(assignment)
 
     def _on_auto_find_mf_triggered(self):
         """
@@ -551,6 +580,8 @@ class EnsembleViewer(
             return
         self.refresh_assignment_display()
         self._redraw_annotations_for_current_scan()
+        if self.properties_model is not None:
+            self.properties_model.refresh_formula()
 
     def reset_for_new_project(self):
         """
@@ -718,7 +749,11 @@ class EnsembleViewer(
 
         self.properties_model = EnsemblePropertiesModel(
             ensemble=self.ensemble,
-            sample_name=sample_name
+            sample_name=sample_name,
+            data_source=self.data_source,
+        )
+        self.properties_model.sigFormulaRejected.connect(
+            lambda msg: self.status_bar.showMessage(msg, 5000)
         )
         self.tableViewProperties.setModel(self.properties_model)
 
@@ -1469,9 +1504,9 @@ class EnsembleViewer(
         Export the currently displayed ensemble for ingestion by external
         tools (SIRIUS, GNPS, etc.).
 
-        All metadata is read off the Ensemble itself (its `identity`,
-        `proposed_formula` and `user_metadata`, editable in the
-        properties table) — there is no separate data-entry step.
+        Metadata comes from the Ensemble (its `identity` and `user_metadata`)
+        and its accepted formula, all editable in the properties table —
+        there is no separate data-entry step.
         Spectra are pulled from the scan currently selected in the
         viewer; if none is selected, the ensemble apex is used.
         """
@@ -1485,11 +1520,14 @@ class EnsembleViewer(
         if not out_dir:
             return
 
+        assignment = self.data_source.get_assignment_for_source(self.ensemble.uuid)
+        chosen = assignment.chosen if assignment is not None else None
         export = build_ensemble_export(
             self.ensemble,
             # Fall back to the apex (peak_rt) if no scan is selected.
             rt=self.spectrum_manager.selected_rt or None,
             normalize=True,
+            formula=chosen.formula_str if chosen is not None else None,
         )
 
         # Group the artifacts in a per-ensemble subfolder.

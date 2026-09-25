@@ -162,160 +162,12 @@
           </layout>
          </item>
          <item>
-          <layout class="QHBoxLayout" name="horizontalLayout_3">
-           <property name="bottomMargin">
-            <number>0</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="label_2">
-             <property name="text">
-              <string>Candidate Molecular Formulae:</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <spacer name="horizontalSpacer_2">
-             <property name="orientation">
-              <enum>Qt::Horizontal</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size>
-               <width>40</width>
-               <height>20</height>
-              </size>
-             </property>
-            </spacer>
-           </item>
-           <item>
-            <widget class="QLabel" name="label_14">
-             <property name="text">
-              <string>Sort by</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QComboBox" name="comboSortBy">
-             <item>
-              <property name="text">
-               <string>Posterior Score</string>
-              </property>
-             </item>
-             <item>
-              <property name="text">
-               <string>Mass Error</string>
-              </property>
-             </item>
-             <item>
-              <property name="text">
-               <string>Isotope Envelope</string>
-              </property>
-             </item>
-             <item>
-              <property name="text">
-               <string>Chemical Prior</string>
-              </property>
-             </item>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item>
-          <widget class="QTableWidget" name="tableResults">
-           <property name="verticalScrollBarPolicy">
-            <enum>Qt::ScrollBarAsNeeded</enum>
-           </property>
-           <property name="horizontalScrollBarPolicy">
-            <enum>Qt::ScrollBarAsNeeded</enum>
-           </property>
-           <property name="sizeAdjustPolicy">
-            <enum>QAbstractScrollArea::AdjustIgnored</enum>
-           </property>
-           <property name="editTriggers">
-            <set>QAbstractItemView::NoEditTriggers</set>
-           </property>
-           <property name="alternatingRowColors">
-            <bool>true</bool>
-           </property>
-           <property name="selectionBehavior">
-            <enum>QAbstractItemView::SelectRows</enum>
-           </property>
-           <property name="sortingEnabled">
-            <bool>false</bool>
-           </property>
-           <attribute name="horizontalHeaderCascadingSectionResizes">
-            <bool>true</bool>
-           </attribute>
-           <attribute name="horizontalHeaderMinimumSectionSize">
-            <number>18</number>
-           </attribute>
-           <attribute name="horizontalHeaderDefaultSectionSize">
-            <number>97</number>
-           </attribute>
-           <attribute name="horizontalHeaderHighlightSections">
-            <bool>false</bool>
-           </attribute>
-           <attribute name="horizontalHeaderShowSortIndicator" stdset="0">
-            <bool>false</bool>
-           </attribute>
-           <attribute name="horizontalHeaderStretchLastSection">
-            <bool>true</bool>
-           </attribute>
-           <column>
-            <property name="text">
-             <string>Formula</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>Adduct</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>Error (ppm)</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>Error (Da)</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>RDBE</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>Mass LogLik</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>Isotope LogLik</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>Chem. Prior</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>MS2 LogLik</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>Posterior</string>
-            </property>
-           </column>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="btnAssignSelected">
-           <property name="text">
-            <string>Assign Selected</string>
+          <widget class="FormulaResultsWidget" name="formulaResults" native="true">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
            </property>
           </widget>
          </item>
@@ -339,15 +191,21 @@
  </widget>
  <customwidgets>
   <customwidget>
+   <class>FindMfsParamWidget</class>
+   <extends>QWidget</extends>
+   <header>gui.widgets.find_mfs_param_widget</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
    <class>FormulaFinderInputTable</class>
    <extends>QWidget</extends>
    <header>gui.dialogues.formula_finder.tables</header>
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>FindMfsParamWidget</class>
+   <class>FormulaResultsWidget</class>
    <extends>QWidget</extends>
-   <header>gui.widgets.find_mfs_param_widget</header>
+   <header>gui.widgets.formula_results_widget</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 logger = logging.getLogger(__name__)
 
 def save_project(
@@ -373,7 +373,6 @@ def serialize_injection_ensembles(
             'ion_pair_annots': serialized_ion_pair_annots,
             'generic_annots': serialized_generic_annots,
             # User-editable properties
-            'proposed_formula': ensemble.proposed_formula,
             'identity': ensemble.identity,
             'user_metadata': ensemble.user_metadata,
             # DDA precursor info
@@ -688,7 +687,6 @@ def deserialize_injection_ensembles(
             ion_pair_annots=reconstructed_ion_pair_annots,
             generic_annots=reconstructed_generic_annots,
             # User-editable properties (with defaults for backward compat)
-            proposed_formula=e_dict.get('proposed_formula'),
             identity=e_dict.get('identity'),
             user_metadata=e_dict.get('user_metadata', {}),
             # DDA precursor info (None for pre-DDA .mzk files)

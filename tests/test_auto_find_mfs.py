@@ -43,7 +43,6 @@ def dia_ensemble(_std_mix_registry):
         if inj and getattr(inj, 'acquisition_mode', None) == 'dia' and inj.ensembles:
             ens = next(iter(inj.ensembles.values()))
             ens.generic_annots = {}
-            ens.proposed_formula = None
             ens._composite = None
             return ens
     pytest.skip('no DIA ensemble in std_mix')
@@ -105,8 +104,7 @@ def test_annotate_builds_assignment_and_labels(dia_ensemble, monkeypatch):
     assert a.charge == 1
     assert [c.formula_str for c in a.candidates] == ['C6H12O6', 'C5H10O5']
     assert a.candidates[0].adduct == 'H'
-    # proposed_formula synced to the top hit
-    assert dia_ensemble.proposed_formula == 'C6H12O6'
+    assert a.chosen_by == 'auto'
 
     # Only the labelled group (idx 0) becomes an adduct annotation; None skipped.
     auto = [x for x in dia_ensemble.generic_annots.values()
@@ -279,6 +277,25 @@ def test_batch_reports_every_skip(dia_ensemble, monkeypatch):
         "1 beyond the N most intense, 1 with no resolvable envelope, "
         "1 DDA (not supported yet)"
     )
+
+
+def test_user_chosen_ensembles_are_kept(dia_ensemble, monkeypatch):
+    """Ensembles in `keep` (formula chosen by the user) aren't re-annotated."""
+    _install_fake_annotate(monkeypatch)
+    other = _ens(5e5)
+    import core.cli.auto_find_mfs as afm
+    seen = []
+    real_one = afm._annotate_one
+    monkeypatch.setattr(
+        afm, '_annotate_one',
+        lambda e, **k: seen.append(e) or real_one(dia_ensemble, **k),
+    )
+
+    result = annotate_ensembles_dia([dia_ensemble, other], keep={dia_ensemble.uuid})
+
+    assert seen == [other]
+    assert result.n_user_chosen == 1
+    assert result.summary().endswith("; kept 1 user-chosen formula")
 
 
 def test_cancelled_batch_counts_unreached(dia_ensemble, monkeypatch):

@@ -8,10 +8,9 @@ from gui.views.ensemble_viewer.tools import (
 )
 from gui.views.ensemble_viewer.tool_controllers import BaseToolController
 from core.formula import query_from_signals, assign_formula
+from core.formula.assign_formula import to_formula_candidate
 
 from PyQt5 import QtCore, QtWidgets
-from find_mfs import FormulaCandidate
-from molmass import Formula
 
 from typing import Literal, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -215,30 +214,20 @@ class FindFormulaController(BaseToolController):
     ):
         """
         Register the accepted compound assignment in the DataRegistry
-        (the EnsembleViewer's data_source) and sync a display string on the ensemble
+        (the EnsembleViewer's data_source)
         """
         registry = self.viewer.data_source
         registry.register_assignment(assignment)
 
-        ensemble = self.viewer.ensemble
         chosen = assignment.chosen
-        if ensemble is not None and chosen is not None:
-            ensemble.proposed_formula = chosen.formula_str
-
+        if self.viewer.ensemble is not None and chosen is not None:
             # Debug aid: also drop an ion annotation on the envelope that fed the
             # assignment, reusing the ion-formula draw path (add_ion_annot + the
             # on-plot predicted envelope). selected_signals still hold the picked
             # cofeatures at this point (cleared just below).
             if self.selected_ms_level and self.selected_signals:
-                envelope_candidate = FormulaCandidate(
-                    formula=Formula(chosen.formula_str),
-                    error_ppm=chosen.error_ppm,
-                    error_da=chosen.error_da,
-                    rdbe=chosen.rdbe,
-                    adduct=chosen.adduct,
-                )
                 self.sigFormulaAssigned.emit(
-                    envelope_candidate,
+                    to_formula_candidate(chosen),
                     self.selected_ms_level,
                     [x[2] for x in self.selected_signals],
                 )

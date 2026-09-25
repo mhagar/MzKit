@@ -98,8 +98,8 @@ class Ensemble:
         default_factory=dict, repr=False
     )
 
-    # User-editable properties
-    proposed_formula: Optional[str] = None
+    # User-editable properties. (The formula lives in the ensemble's
+    # FormulaAssignment, in the DataRegistry.)
     identity: Optional[str] = None
     user_metadata: dict[str, str] = field(
         default_factory=dict, repr=False
@@ -123,29 +123,6 @@ class Ensemble:
         """
         inj_name: str = self.injection.name
         return f"{inj_name}_{self.peak_rt:.1f}s_{self.base_mz:.5f}mz"
-
-    @property
-    def format_html_label(self) -> str:
-        """
-        Build an identity/proposed_formula label
-        (either may be empty)
-        """
-        parts: list[str] = []
-
-        if self.identity:
-            parts.append(
-                str(self.identity)
-            )
-
-        if self.proposed_formula:
-            try:
-                parts.append(
-                    format_formula_obj_to_html(Formula(self.proposed_formula))
-                )
-            except Exception:
-                parts.append(str(self.proposed_formula))
-
-        return "<br>".join(parts)
 
     def _populate_attrs(self):
         # Find the ensemble's MS1 apex and get the scan at that position

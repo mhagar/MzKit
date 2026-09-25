@@ -56,6 +56,9 @@ class DataRegistry(
     sigAssignmentRemoved = QtCore.pyqtSignal(
         object  # FormulaAssignment
     )
+    sigAssignmentUpdated = QtCore.pyqtSignal(
+        object  # FormulaAssignment (e.g. its chosen candidate changed)
+    )
 
     def __init__(self):
         self._samples: dict['SampleUUID', 'Sample'] = {}
@@ -104,6 +107,11 @@ class DataRegistry(
                 self.sigAssignmentRemoved.connect(
                     removal_callback
                 )
+
+                if update_callback:
+                    self.sigAssignmentUpdated.connect(
+                        update_callback
+                    )
 
     def register_sample(
         self,
@@ -377,6 +385,43 @@ class DataRegistry(
         source_uuid: 'EnsembleUUID',
     ) -> Optional['FormulaAssignment']:
         return self._assignments.get(source_uuid)
+
+    def set_chosen_candidate(
+        self,
+        source_uuid: 'EnsembleUUID',
+        chosen_idx: Optional[int],
+        chosen_by: str = 'user',
+    ):
+        """
+        Accept a different candidate of a registered assignment (None clears
+        the choice), recording who chose it.
+        """
+        assignment = self._assignments.get(source_uuid)
+        if assignment is None:
+            raise KeyError(f"No formula assignment for source {source_uuid}")
+        if chosen_idx is not None and not 0 <= chosen_idx < len(assignment.candidates):
+            raise IndexError(
+                f"Candidate {chosen_idx} out of range "
+                f"({len(assignment.candidates)} candidates)"
+            )
+
+        assignment.chosen_idx = chosen_idx
+        assignment.chosen_by = chosen_by if chosen_idx is not None else None
+        self.sigAssignmentUpdated.emit(assignment)
+
+    def user_chosen_sources(self) -> set['EnsembleUUID']:
+        """Sources whose formula the user chose (auto runs must keep them)."""
+        return {
+            uuid for uuid, a in self._assignments.items() if a.user_chosen
+        }
+
+    def chosen_formulas(self) -> dict['EnsembleUUID', str]:
+        """Accepted formula per source, for exports."""
+        return {
+            uuid: a.chosen.formula_str
+            for uuid, a in self._assignments.items()
+            if a.chosen is not None
+        }
 
     def get_all_assignment_source_uuids(
         self,

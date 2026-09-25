@@ -523,6 +523,7 @@ def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
         ensembles,
         params=params,
         selection=selection,
+        keep=registry.user_chosen_sources(),
         attach_adduct_labels=not args.no_adduct_labels,
     )
     for assignment in result.assignments:
@@ -618,6 +619,7 @@ def cmd_export_table(args: argparse.Namespace) -> None:
         separator=sep,
         write_mgf=args.mgf,
         mgf_mode='per_sample' if args.mgf_mode == 'per-sample' else 'consensus',
+        formulas=registry.chosen_formulas(),
     )
 
 
@@ -645,6 +647,7 @@ def cmd_export_compound(args: argparse.Namespace) -> None:
             output_dir=output_dir,
             write_json=args.json,
             normalize=normalize,
+            formulas=registry.chosen_formulas(),
         )
     else:
         export_compound_to_file(
@@ -654,6 +657,7 @@ def cmd_export_compound(args: argparse.Namespace) -> None:
             output_dir=output_dir,
             write_json=args.json,
             normalize=normalize,
+            formulas=registry.chosen_formulas(),
         )
 
 

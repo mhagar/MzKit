@@ -102,12 +102,15 @@ class FindMfsParams:
         """
         from find_mfs import resolve_search_bounds
 
-        resolve_search_bounds(
-            self.max_counts or _default_max_counts(),
-            self.min_counts or None,
-            self.effective_halogen_cap,
-            halogenated=True,
-        )
+        # Both outcomes of halogen detection must give a searchable space
+        # (e.g. 'C0H0' is only rescued by the cap when Cl/Br is detected)
+        for halogenated in (False, True):
+            resolve_search_bounds(
+                self.max_counts or _default_max_counts(),
+                self.min_counts or None,
+                self.effective_halogen_cap,
+                halogenated=halogenated,
+            )
 
     def search_kwargs(self) -> dict:
         """

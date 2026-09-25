@@ -120,6 +120,30 @@ class AssignmentDataSource(Protocol):
     def assignment_count(self) -> int:
         ...
 
+    def set_chosen_candidate(
+        self,
+        source_uuid: 'EnsembleUUID',
+        chosen_idx: Optional[int],
+        chosen_by: str = 'user',
+    ):
+        """
+        Accept a different candidate of a registered assignment (None clears
+        the choice); notifies update subscribers.
+        """
+        ...
+
+    def register_assignment(
+        self,
+        assignment: 'FormulaAssignment',
+    ):
+        ...
+
+    def remove_assignment(
+        self,
+        source_uuid: 'EnsembleUUID',
+    ):
+        ...
+
     def subscribe_to_changes(
         self,
         addition_callback: Callable[..., None],
@@ -130,7 +154,7 @@ class AssignmentDataSource(Protocol):
         """
         Subscribe to assignment change notifications; call with
         change_type='Assignment'. See SampleDataSource.subscribe_to_changes
-        for the full parameter contract (update_callback is unused for
-        assignments, which emit add/remove only).
+        for the full parameter contract; update_callback fires when an
+        assignment's chosen candidate changes.
         """
         ...

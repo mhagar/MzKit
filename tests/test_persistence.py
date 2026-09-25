@@ -52,8 +52,15 @@ def test_formula_assignment_roundtrip(tmp_path):
                 mass_loglik=-1.1, iso_loglik=-2.2, chem_logprior=-3.3,
                 ms2_loglik=-0.5, log_posterior=-7.0,
             ),
+            AssignedCandidate(
+                formula_str="C6H12O6", adduct=None, error_ppm=None,
+                error_da=None, rdbe=1.0, mass_loglik=None, iso_loglik=None,
+                chem_logprior=None, ms2_loglik=None, log_posterior=None,
+                manual=True,
+            ),
         ],
         chosen_idx=0,
+        chosen_by="user",
         precursor_mz=356.0126, charge=1, adducts=["H"], ms2_mode="tallest",
         elements="CHNOSClBr", max_counts="C*H*N*O*S2Cl4Br4", min_counts=None,
         halogen_detected=True,
@@ -70,13 +77,16 @@ def test_formula_assignment_roundtrip(tmp_path):
     assert loaded.uuid == assignment.uuid
     assert loaded.source_uuid == 999
     assert loaded.chosen_idx == 0
+    assert loaded.chosen_by == "user" and loaded.user_chosen
     assert loaded.halogen_detected is True
     assert loaded.max_counts == "C*H*N*O*S2Cl4Br4"
     assert loaded.params == assignment.params
     assert loaded.precursor_mz == 356.0126
     assert loaded.adducts == ["H"]
 
-    assert len(loaded.candidates) == 1
+    assert len(loaded.candidates) == 2
+    assert loaded.candidates[1].manual and loaded.candidates[1].error_ppm is None
+    assert not loaded.candidates[0].manual
     c = loaded.candidates[0]
     assert c.formula_str == "C12H15Cl2NO5S"
     assert c.ms2_loglik == -0.5          # score terms round-trip exactly

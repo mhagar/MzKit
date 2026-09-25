@@ -79,6 +79,7 @@ def test_blank_counts_fall_back_to_find_mfs_defaults():
     dict(max_counts='C*H*Xx2'),                  # not an element
     dict(halogen_cap='F2'),                      # only Cl/Br are detectable
     dict(max_counts='C*H*O*', min_counts='N1'),  # min needs what max forbids
+    dict(max_counts='C0H0'),                     # empty unless Cl/Br detected
 ])
 def test_validate_rejects_bad_constraints(overrides):
     with pytest.raises(ValueError):

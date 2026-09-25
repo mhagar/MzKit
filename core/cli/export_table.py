@@ -19,12 +19,13 @@ so the table's ``analyte_id`` column cross-references the MGF (GNPS-FBMN style).
 """
 import logging
 from pathlib import Path
-from typing import Literal, Optional, TYPE_CHECKING
+from typing import Literal, Mapping, Optional, TYPE_CHECKING
 
 from core.cli.export_ensemble import build_ensemble_export
 
 if TYPE_CHECKING:
     from core.data_structs import Sample, SampleUUID, Ensemble
+    from core.data_structs.uuid_types import EnsembleUUID
     from core.data_structs.alignment import EnsembleAlignment
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ def export_feature_mgf(
     samples: dict['SampleUUID', 'Sample'],
     mode: MgfMode = 'consensus',
     normalize: bool = True,
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
 ) -> str:
     """
     Build an MGF string for an alignment's aligned spectra.
@@ -119,9 +121,12 @@ def export_feature_mgf(
         across samples) or ``'per_sample'`` for one entry per aligned
         (analyte, sample).
     :param normalize: normalize spectra to 0-100.
+    :param formulas: accepted formula per ensemble (e.g.
+        DataRegistry.chosen_formulas()), written as FORMULA tags.
     :return: MGF text (empty string if nothing exportable).
     """
     blocks: list[str] = []
+    formulas = formulas or {}
 
     for i, analyte in enumerate(alignment.analytes):
         if mode == 'consensus':
@@ -130,6 +135,7 @@ def export_feature_mgf(
                 continue
             export = build_ensemble_export(
                 ensemble, rt=None, normalize=normalize,
+                formula=formulas.get(ensemble.uuid),
             )
             export.metadata['FEATURE_ID'] = str(i)
             text = export.to_mgf_text()
@@ -145,6 +151,7 @@ def export_feature_mgf(
                     continue
                 export = build_ensemble_export(
                     ensemble, rt=None, normalize=normalize,
+                    formula=formulas.get(ensemble.uuid),
                 )
                 export.metadata['FEATURE_ID'] = str(i)
                 export.metadata['SAMPLE'] = sample.name
@@ -164,6 +171,7 @@ def export_feature_table_to_file(
     write_mgf: bool = True,
     mgf_mode: MgfMode = 'consensus',
     normalize: bool = True,
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
 ) -> Optional[Path]:
     """
     Export a feature table to a file, and (by default) a companion .mgf.
@@ -203,6 +211,7 @@ def export_feature_table_to_file(
         samples=samples,
         mode=mgf_mode,
         normalize=normalize,
+        formulas=formulas,
     )
     mgf_path = output.with_suffix('.mgf')
     mgf_path.write_text(mgf_text)

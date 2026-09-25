@@ -110,6 +110,24 @@ def test_export_feature_mgf_consensus(aligned):
     assert len(set(feature_ids)) == n_detectable
 
 
+def test_export_feature_mgf_writes_accepted_formulas(aligned):
+    """FORMULA tags come from the formulas map (DataRegistry.chosen_formulas),
+    only for ensembles that have an accepted formula."""
+    samples, alignment = aligned
+    by_uuid = _samples_by_uuid(samples)
+
+    first = next(
+        e for a in alignment.analytes
+        if (e := _best_ensemble(a, by_uuid)) is not None
+    )
+    mgf = export_feature_mgf(
+        alignment, by_uuid, mode='consensus',
+        formulas={first.uuid: 'C8H10N4O2'},
+    )
+    assert mgf.count('FORMULA=C8H10N4O2') >= 1
+    assert 'FORMULA=' not in export_feature_mgf(alignment, by_uuid, mode='consensus')
+
+
 def test_export_feature_mgf_per_sample_has_more_entries(aligned):
     samples, alignment = aligned
     by_uuid = _samples_by_uuid(samples)

@@ -5,13 +5,17 @@ from PyQt5.QtCore import (
     QAbstractTableModel,
     QModelIndex,
     Qt,
+    pyqtSignal,
 )
 
 from enum import Enum, auto
 from typing import Optional, TYPE_CHECKING
 
+from core.formula.manual import assign_manual_formula
+
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
+    from core.interfaces.data_sources import AssignmentDataSource
 
 
 class RowType(Enum):
@@ -27,7 +31,15 @@ class EnsemblePropertiesModel(QAbstractTableModel):
     2-column table model for Ensemble properties.
     Column 0: Property name
     Column 1: Value
+
+    The Formula row shows the ensemble's accepted formula (from its
+    FormulaAssignment); typing one in makes it a user-chosen assignment, and
+    clearing it withdraws the choice (see core.formula.manual).
     """
+    # Why a typed formula was rejected (e.g. it doesn't parse)
+    sigFormulaRejected = pyqtSignal(str)
+    FORMULA_ROW = 6
+
     # Fixed rows (before user metadata)
     FIXED_ROWS = [
         # (label, row_type)
@@ -37,7 +49,7 @@ class EnsemblePropertiesModel(QAbstractTableModel):
         ("Base m/z", RowType.READONLY),
         ("Peak RT (s)", RowType.READONLY),
         ("", RowType.SEPARATOR),
-        ("Proposed Formula", RowType.EDITABLE),
+        ("Formula", RowType.EDITABLE),
         ("Identity", RowType.EDITABLE),
         ("", RowType.SEPARATOR),
     ]
@@ -46,11 +58,13 @@ class EnsemblePropertiesModel(QAbstractTableModel):
         self,
         ensemble: 'Ensemble',
         sample_name: str,
+        data_source: 'AssignmentDataSource',
         parent=None,
     ):
         super().__init__(parent)
         self._ensemble: 'Ensemble' = ensemble
         self._sample_name: str = sample_name
+        self._data_source = data_source
 
     @property
     def ensemble(self) -> 'Ensemble':
@@ -59,6 +73,11 @@ class EnsemblePropertiesModel(QAbstractTableModel):
     @property
     def sample_name(self) -> str:
         return self._sample_name
+
+    def refresh_formula(self):
+        """The ensemble's assignment changed elsewhere; redraw its row."""
+        index = self.index(self.FORMULA_ROW, 1)
+        self.dataChanged.emit(index, index, [Qt.DisplayRole])
 
     def set_ensemble(
         self,
@@ -128,8 +147,12 @@ class EnsemblePropertiesModel(QAbstractTableModel):
         Get the value for an editable property row
         """
         match row:
-            case 6:  # Proposed Formula
-                return self._ensemble.proposed_formula or ""
+            case self.FORMULA_ROW:
+                assignment = self._data_source.get_assignment_for_source(
+                    self._ensemble.uuid
+                )
+                chosen = assignment.chosen if assignment is not None else None
+                return chosen.formula_str if chosen is not None else ""
             case 7:  # Identity
                 return self._ensemble.identity or ""
             case _:
@@ -186,8 +209,14 @@ class EnsemblePropertiesModel(QAbstractTableModel):
         # Only editable and metadata rows can be edited
         if row_type == RowType.EDITABLE:
             match row:
-                case 6:  # Proposed Formula
-                    self._ensemble.proposed_formula = value if value else None
+                case self.FORMULA_ROW:
+                    try:
+                        assign_manual_formula(
+                            self._data_source, self._ensemble, value,
+                        )
+                    except ValueError as exc:
+                        self.sigFormulaRejected.emit(str(exc))
+                        return False
                 case 7:  # Identity
                     self._ensemble.identity = value if value else None
                 case _:

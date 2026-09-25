@@ -13,12 +13,13 @@ This module adds the alignment-specific concerns:
 import json
 import logging
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Mapping, Optional, TYPE_CHECKING
 
 from core.cli.export_ensemble import build_ensemble_export
 
 if TYPE_CHECKING:
     from core.data_structs import Sample, SampleUUID, Ensemble, AlignedAnalyte
+    from core.data_structs.uuid_types import EnsembleUUID
     from core.data_structs.alignment import EnsembleAlignment
     from core.data_structs.ensemble import MS2Mode
     from core.cli.export_ensemble import EnsembleExport
@@ -61,6 +62,7 @@ def _build(
     samples: dict['SampleUUID', 'Sample'],
     normalize: bool,
     ms2_mode: Optional['MS2Mode'] = None,
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
 ) -> Optional['EnsembleExport']:
     """
     Build EnsembleExport for `alignment`'s best Ensemble
@@ -73,6 +75,7 @@ def _build(
 
     export = build_ensemble_export(
         best, rt=None, ms2_mode=ms2_mode, normalize=normalize,
+        formula=(formulas or {}).get(best.uuid),
     )
     export.metadata['FEATURE_ID'] = str(analyte_index)
     return export
@@ -87,6 +90,7 @@ def export_compound_dict(
     samples: dict['SampleUUID', 'Sample'],
     normalize: bool = True,
     ms2_mode: Optional['MS2Mode'] = None,
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
 ) -> dict:
     """
     Build compound data for a single analyte in an alignment.
@@ -131,7 +135,7 @@ def export_compound_dict(
 
     export = _build(
         alignment, analyte_index,
-        samples, normalize, ms2_mode
+        samples, normalize, ms2_mode, formulas=formulas,
     )
     ms1_spectrum = None
     ms2_spectrum = None
@@ -157,6 +161,7 @@ def export_compound_mgf(
     samples: dict['SampleUUID', 'Sample'],
     normalize: bool = True,
     ms2_mode: Optional['MS2Mode'] = None,
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
 ) -> str:
     """
     Build MGF entries (MS1 + MS2) for a single analyte's best ensemble.
@@ -166,7 +171,7 @@ def export_compound_mgf(
     """
     export: Optional[EnsembleExport] = _build(
         alignment, analyte_index, samples,
-        normalize, ms2_mode
+        normalize, ms2_mode, formulas=formulas,
     )
     if export is None:
         return ''
@@ -181,6 +186,7 @@ def export_compound_to_file(
     write_json: bool = False,
     normalize: bool = True,
     ms2_mode: Optional['MS2Mode'] = None,
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
 ) -> None:
     """
     Export a single compound to MGF (and optionally JSON) in output_dir.
@@ -191,7 +197,7 @@ def export_compound_to_file(
 
     mgf_text = export_compound_mgf(
         alignment, analyte_index, samples,
-        normalize=normalize, ms2_mode=ms2_mode,
+        normalize=normalize, ms2_mode=ms2_mode, formulas=formulas,
     )
     if mgf_text:
         mgf_path = output_dir / f"{prefix}.mgf"
@@ -201,7 +207,7 @@ def export_compound_to_file(
     if write_json:
         data = export_compound_dict(
             alignment, analyte_index, samples,
-            normalize=normalize, ms2_mode=ms2_mode,
+            normalize=normalize, ms2_mode=ms2_mode, formulas=formulas,
         )
         json_path = output_dir / f"{prefix}.json"
         json_path.write_text(json.dumps(data, indent=2))
@@ -218,6 +224,7 @@ def export_all_compounds(
     write_json: bool = False,
     normalize: bool = True,
     ms2_mode: Optional['MS2Mode'] = None,
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
 ) -> None:
     """
     Export all compounds: single compounds.mgf + optional per-compound JSON
@@ -228,6 +235,7 @@ def export_all_compounds(
     for i in range(alignment.analyte_count):
         mgf_text = export_compound_mgf(
             alignment, i, samples, normalize=normalize, ms2_mode=ms2_mode,
+            formulas=formulas,
         )
         if mgf_text:
             mgf_blocks.append(mgf_text)
@@ -235,6 +243,7 @@ def export_all_compounds(
         if write_json:
             data = export_compound_dict(
                 alignment, i, samples, normalize=normalize, ms2_mode=ms2_mode,
+                formulas=formulas,
             )
             json_path = output_dir / f"compound_{i:03d}.json"
             json_path.write_text(json.dumps(data, indent=2))

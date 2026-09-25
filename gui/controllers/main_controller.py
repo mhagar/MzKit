@@ -11,6 +11,7 @@ from gui.views.main_view import MainView
 
 from pathlib import Path
 import logging
+from functools import partial
 from typing import Optional, Literal, TYPE_CHECKING
 
 
@@ -279,6 +280,9 @@ class MainController:
         )
         alignment_viewer.sigAddSamplesRequested.connect(
             self._handle_add_samples_request
+        )
+        alignment_viewer.sigAutoFindMfsRequested.connect(
+            self._handle_auto_find_mf_batch_request
         )
 
     def _connect_ensemble_viewer_signals(self) -> None:
@@ -593,6 +597,7 @@ class MainController:
             sample_names=sample_names,
             output=path,
             separator=separator,
+            formulas=self.data_registry.chosen_formulas(),
         )
         print(f"Exported to {path}")
 
@@ -918,6 +923,7 @@ class MainController:
                 "ensembles": ensembles,
                 "params": findmfs,
                 "selection": selection,
+                "keep": self.data_registry.user_chosen_sources(),
             },
             on_completion_func=self._on_auto_find_mf_complete,
         )
@@ -943,7 +949,10 @@ class MainController:
                 "ensembles": [ensemble],
                 "params": FindMfsParams.from_config(self.config),
             },
-            on_completion_func=self._on_auto_find_mf_complete,
+            # Asked for on this one ensemble: replaces even a user's pick
+            on_completion_func=partial(
+                self._on_auto_find_mf_complete, protect_user_choices=False,
+            ),
         )
 
     def _handle_auto_find_mf_selected_ms2_request(
@@ -976,25 +985,68 @@ class MainController:
                 # mislabeled envelopes.
                 "attach_adduct_labels": False,
             },
+            on_completion_func=partial(
+                self._on_auto_find_mf_complete, protect_user_choices=False,
+            ),
+        )
+
+    def _handle_auto_find_mf_batch_request(
+        self,
+        ensembles: list,
+    ):
+        """
+        Auto-annotate a set of existing ensembles (e.g. every member of the
+        analytes selected in the Alignment Viewer). Ensembles whose formula
+        the user chose are left alone.
+        """
+        if not ensembles:
+            return
+
+        from core.formula.params import FindMfsParams
+
+        self.process_controller.start_process(
+            module_path="core.cli.auto_find_mfs",
+            function_name="annotate_ensembles_dia",
+            parameters={
+                "ensembles": ensembles,
+                "params": FindMfsParams.from_config(self.config),
+                "keep": self.data_registry.user_chosen_sources(),
+            },
             on_completion_func=self._on_auto_find_mf_complete,
         )
 
     def _on_auto_find_mf_complete(
         self,
         result: 'Optional[BatchAnnotationResult]',
+        protect_user_choices: bool = True,
     ):
         """
         Register each assignment. sigAssignmentAdded then drives the Ensemble
         Viewer's title-strip + adduct-label refresh and the Sample Viewer's
-        overlay label. (Adduct annotations + proposed_formula were already
-        attached to the ensemble in the worker.)
+        overlay label. (Adduct annotations were already attached to the
+        ensemble in the worker.) The run's summary, including what was skipped
+        and why, goes to the status bar.
 
-        The run's summary one-liner goes to the status bar
+        With `protect_user_choices`, an ensemble whose formula the user chose
+        keeps it, even if they chose it while this run was going.
         """
         if result is None:
+            # The run raised; its traceback is in the Process Monitor
+            self.main_view.statusbar.showMessage(
+                "find-mfs failed; see the Process Monitor for details"
+            )
             return
+        registered = []
         for assignment in result.assignments:
+            existing = self.data_registry.get_assignment_for_source(
+                assignment.source_uuid
+            )
+            if protect_user_choices and existing is not None and existing.user_chosen:
+                result.n_user_chosen += 1
+                continue
             self.data_registry.register_assignment(assignment)
+            registered.append(assignment)
+        result.assignments = registered
         self.main_view.statusbar.showMessage(f"find-mfs: {result.summary()}")
 
     def _handle_align_ensembles_request(

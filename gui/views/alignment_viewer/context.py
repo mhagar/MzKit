@@ -81,8 +81,6 @@ class AlignmentContext:
         chosen = assignment.chosen if assignment is not None else None
         if chosen is not None:
             return chosen.formula_str
-        if ensemble.proposed_formula:
-            return str(ensemble.proposed_formula)
         top = assignment.top if assignment is not None else None
         if top is not None:
             return f"{top.formula_str}?"

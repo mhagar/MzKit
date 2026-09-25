@@ -45,6 +45,7 @@ class AlignmentViewer(
     # Actions requested from the plot, wired up by MainController.
     sigViewEnsembleRequested = QtCore.pyqtSignal(object)  # Ensemble
     sigAddSamplesRequested = QtCore.pyqtSignal(object)     # list[SampleUUID]
+    sigAutoFindMfsRequested = QtCore.pyqtSignal(object)    # list[Ensemble]
 
     def __init__(
         self,
@@ -149,6 +150,7 @@ class AlignmentViewer(
         self.data_source.subscribe_to_changes(
             addition_callback=self._on_assignment_changed,
             removal_callback=self._on_assignment_changed,
+            update_callback=self._on_assignment_changed,
             change_type='Assignment',
         )
         self.data_source.subscribe_to_changes(
@@ -408,5 +410,63 @@ class AlignmentViewer(
                 lambda: self.sigAddSamplesRequested.emit([target.sample_uuid])
             )
 
+        self._add_find_mfs_action(menu, target)
+
         if not menu.isEmpty():
             menu.exec_(global_pos)
+
+    def _add_find_mfs_action(
+            self,
+            menu: QtWidgets.QMenu,
+            target: HoverTarget,
+    ):
+        """
+        'Auto find-mfs' on the right-clicked item: an ensemble, or all of an
+        analyte's member ensembles. Right-clicking inside a multi-selection
+        applies it to the whole selection.
+        """
+        targets = (
+            self._selection
+            if len(self._selection) > 1 and target in self._selection
+            else [target]
+        )
+        targets = [t for t in targets if t.kind in ('ensemble', 'analyte')]
+        ensembles = self._ensembles_for(targets)
+        if not ensembles:
+            return
+
+        n = len(ensembles)
+        noun = f"{n} ensemble{'' if n == 1 else 's'}"
+        if len(targets) > 1:
+            label = f"Auto find-mfs on {len(targets)} selected items ({noun})"
+        elif targets[0].kind == 'analyte':
+            label = f"Auto find-mfs on this analyte ({noun})"
+        else:
+            label = "Auto find-mfs on this ensemble"
+
+        if not menu.isEmpty():
+            menu.addSeparator()
+        action = menu.addAction(label)
+        action.setToolTip(
+            "Formulae you picked yourself are kept; everything else is "
+            "(re-)annotated with the saved find-mfs parameters"
+        )
+        action.triggered.connect(
+            lambda: self.sigAutoFindMfsRequested.emit(ensembles)
+        )
+
+    def _ensembles_for(
+            self,
+            targets: list[HoverTarget],
+    ) -> list['Ensemble']:
+        """The ensembles behind `targets` (analytes -> their members), deduplicated."""
+        if self._ctx is None:
+            return []
+        found: dict = {}
+        for t in targets:
+            if t.kind == 'ensemble' and t.ensemble is not None:
+                found.setdefault(t.ensemble.uuid, t.ensemble)
+            elif t.kind == 'analyte' and t.analyte is not None:
+                for ensemble in self._ctx.members(t.analyte).values():
+                    found.setdefault(ensemble.uuid, ensemble)
+        return list(found.values())

@@ -197,9 +197,8 @@ def _ensemble_label_html(
 ) -> str:
     """
     Overlay label for an ensemble: its identity (compound name) on the first
-    line, and its formula on the second (from the FormulaAssignment if one
-    exists, otherwise the free-text proposed_formula). Either line may be
-    absent; returns '' if the ensemble has neither.
+    line, and its accepted formula (from its FormulaAssignment) on the second.
+    Either line may be absent; returns '' if the ensemble has neither.
 
     The formula line is built by the shared `format_assignment_label_html`,
     so this overlay and the EnsembleViewer's title strip stay in agreement.
@@ -209,7 +208,7 @@ def _ensemble_label_html(
     if ensemble.identity:
         parts.append(str(ensemble.identity))
 
-    formula_html = format_assignment_label_html(ensemble, assignment)
+    formula_html = format_assignment_label_html(assignment)
     if formula_html:
         parts.append(formula_html)
 

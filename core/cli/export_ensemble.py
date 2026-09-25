@@ -35,18 +35,21 @@ VALID_FORMATS = ('mgf', 'ms', 'json')
 _RESERVED_META_KEYS = {'charge', 'adduct', 'ionization', 'feature_id'}
 
 
-def _export_metadata(ensemble: 'Ensemble') -> dict[str, str]:
+def _export_metadata(
+    ensemble: 'Ensemble',
+    formula: Optional[str] = None,
+) -> dict[str, str]:
     """
-    Build the MGF metadata tag block from the Ensemble's typed fields and
-    user_metadata (reserved keys handled specially; the rest pass through
-    as uppercased generic tags).
+    Build the MGF metadata tag block from the Ensemble's typed fields, its
+    accepted formula, and user_metadata (reserved keys handled specially; the
+    rest pass through as uppercased generic tags).
     """
     md: dict[str, str] = {}
 
     if ensemble.identity:
         md['NAME'] = ensemble.identity
-    if ensemble.proposed_formula:
-        md['FORMULA'] = ensemble.proposed_formula
+    if formula:
+        md['FORMULA'] = formula
 
     adduct = ensemble.get_meta('adduct') or ensemble.get_meta('ionization')
     if adduct:
@@ -204,6 +207,7 @@ def build_ensemble_export(
     ms2_mode: Optional['MS2Mode'] = None,
     freq_threshold: float = 0.25,
     normalize: bool = True,
+    formula: Optional[str] = None,
 ) -> EnsembleExport:
     """
     Gather MS1 + MS2 spectra + metadata for a single ensemble.
@@ -222,6 +226,8 @@ def build_ensemble_export(
     :param freq_threshold: min relative frequency to keep a consensus bin
         (Bittremieux et al. use 0.25). Ignored for non-consensus spectra.
     :param normalize: normalize each spectrum to 0-100.
+    :param formula: the ensemble's accepted formula (its FormulaAssignment's
+        chosen candidate), written as the FORMULA tag.
     """
     scan_rt = ensemble.peak_rt if rt is None else float(rt)
 
@@ -252,7 +258,7 @@ def build_ensemble_export(
         rt=float(scan_rt),
         ms1_spectrum=ms1,
         ms2_spectra=ms2_spectra,
-        metadata=_export_metadata(ensemble),
+        metadata=_export_metadata(ensemble, formula),
     )
 
 
