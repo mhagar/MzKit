@@ -20,7 +20,7 @@ from typing import Optional, TYPE_CHECKING
 from PyQt5 import QtCore, QtWidgets
 
 from gui.resources.FindMfsParamSheet import Ui_Form
-from core.formula.params import FindMfsParams
+from core.formula.params import FindMfsParams, SECTION as FINDMFS_SECTION
 from core.utils.config import save_config, load_default_config
 
 if TYPE_CHECKING:
@@ -134,7 +134,7 @@ class FindMfsParamWidget(QtWidgets.QWidget, Ui_Form):
     def _save_to_disk(self) -> None:
         self._save_timer.stop()
         if self.config is not None:
-            save_config(self.config)
+            save_config(self.config, [FINDMFS_SECTION])
 
     # -- params -----------------------------------------------------------
 

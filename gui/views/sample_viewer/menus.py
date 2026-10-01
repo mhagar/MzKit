@@ -6,6 +6,7 @@ from typing import Optional, TYPE_CHECKING
 
 from core.data_structs.alignment import AlignmentParams
 from core.cli.align_ensembles import (
+    ALIGNMENT_SECTION,
     alignment_params_from_config,
     alignment_params_to_config,
 )
@@ -110,7 +111,7 @@ class AlignmentParamsDialog(QtWidgets.QDialog):
             case QtWidgets.QDialogButtonBox.StandardButton.Save:
                 if self.config is not None:
                     alignment_params_to_config(self.config, self.params())
-                    save_config(self.config)
+                    save_config(self.config, [ALIGNMENT_SECTION])
             case QtWidgets.QDialogButtonBox.StandardButton.RestoreDefaults:
                 self._apply_params(
                     alignment_params_from_config(load_default_config())

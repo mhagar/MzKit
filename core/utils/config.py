@@ -5,6 +5,7 @@ import os
 import shutil
 import configparser
 from pathlib import Path
+from typing import Iterable
 
 def get_project_root() -> Path:
     """
@@ -93,11 +94,41 @@ def load_default_config() -> configparser.ConfigParser:
     return config
 
 
-def save_config(config: configparser.ConfigParser) -> None:
+def save_config(
+    config: configparser.ConfigParser,
+    sections: Iterable[str],
+) -> None:
     """
-    Saves config to disk
-    :param config:
-    :return:
+    Saves `sections` of `config` to disk, leaving every other section as
+    it currently is on disk.
+
+    Several components hold their own ConfigParser (each loaded at
+    startup), so writing a whole copy would clobber sections saved since
+    by someone else (i.e. stale [alignment] params overwriting fresh ones).
+
+    :param config: the caller's config, holding the sections to save.
+    :param sections: names of the sections the caller owns / changed.
+    """
+    current = load_config()
+    for section in sections:
+        if current.has_section(section):
+            current.remove_section(section)
+        if config.has_section(section):
+            current.add_section(section)
+            for key, value in config.items(section, raw=True):
+                current.set(section, key, value)
+
+    with open(get_config_path(), 'w') as f:
+        current.write(f)
+
+# Fallback when the config has no `[instrument] saturation_threshold`
+DEFAULT_SATURATION_THRESHOLD = 1e10
+
+# (user config mtime, value); see get_saturation_threshold
+_saturation_cache: tuple[float, float] | None = None
+
+
+def get_saturation_threshold() -> float:
     """
     config_path = get_config_path()
 

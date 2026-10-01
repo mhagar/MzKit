@@ -29,11 +29,12 @@ from PyQt5.QtCore import Qt
 from gui.resources.EnsembleExtractionDialog import Ui_Dialog
 from core.utils.config import save_config, load_default_config
 from core.cli.generate_ensemble import (
+    AUTO_ENSEMBLE_SECTION,
     AutoEnsembleParams,
     auto_params_from_config,
     auto_params_to_config,
 )
-from core.cli.auto_find_mfs import EnsembleSelection
+from core.cli.auto_find_mfs import EnsembleSelection, SELECTION_SECTION
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -275,7 +276,7 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
         )
         auto_params_to_config(self.config, merged)
         self.get_findmfs_selection().to_config(self.config)
-        save_config(self.config)
+        save_config(self.config, [AUTO_ENSEMBLE_SECTION, SELECTION_SECTION])
 
     def _select_combo(
         self,

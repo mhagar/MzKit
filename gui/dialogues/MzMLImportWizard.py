@@ -398,7 +398,7 @@ class MzMLImportWizard(
                 value=self._regex_pattern,
             )
 
-            save_config(self.config)
+            save_config(self.config, ['regex'])
 
         super().accept()
 
