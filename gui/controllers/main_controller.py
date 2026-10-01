@@ -284,6 +284,9 @@ class MainController:
         alignment_viewer.sigAutoFindMfsRequested.connect(
             self._handle_auto_find_mf_batch_request
         )
+        alignment_viewer.sigClusterRequested.connect(
+            self._handle_cluster_analytes_request
+        )
 
     def _connect_ensemble_viewer_signals(self) -> None:
         """
@@ -987,6 +990,37 @@ class MainController:
             },
             on_completion_func=partial(
                 self._on_auto_find_mf_complete, protect_user_choices=False,
+            ),
+        )
+
+    def _handle_cluster_analytes_request(
+        self,
+        alignment,  # EnsembleAlignment
+        params,     # ClusterParams
+    ):
+        """
+        Cluster an alignment's analytes by MS2 similarity (Alignment Viewer
+        cluster mode); the result goes back to the viewer.
+        """
+        alignment_viewer = self.subwindow_manager.get_window(
+            'alignment_viewer'
+        )
+        samples = [
+            sample for sample in (
+                self.data_registry.get_sample(u) for u in alignment.sample_uuids
+            )
+            if sample is not None
+        ]
+        self.process_controller.start_process(
+            module_path="core.cli.cluster_analytes",
+            function_name="cluster_analytes",
+            parameters={
+                "alignment": alignment,
+                "samples": samples,
+                "params": params,
+            },
+            on_completion_func=lambda result: alignment_viewer.set_clustering(
+                alignment.uuid, result,
             ),
         )
 

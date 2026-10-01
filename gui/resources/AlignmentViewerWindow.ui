@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>712</width>
+    <width>810</width>
     <height>526</height>
    </rect>
   </property>
@@ -159,6 +159,26 @@
            </widget>
           </item>
           <item>
+           <widget class="QToolButton" name="btnClusterMode">
+            <property name="text">
+             <string>...</string>
+            </property>
+            <property name="checkable">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QToolButton" name="btnClusterParams">
+            <property name="text">
+             <string>...</string>
+            </property>
+            <property name="checkable">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <spacer name="horizontalSpacer">
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
@@ -174,12 +194,25 @@
          </layout>
         </item>
         <item>
+         <widget class="AlignmentDendrogramWidget" name="plotDendrogram" native="true">
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>150</height>
+           </size>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="AlignmentPlotWidget" name="plotAlignment" native="true"/>
         </item>
        </layout>
       </widget>
       <widget class="QWidget" name="verticalLayoutWidget_2">
        <layout class="QVBoxLayout" name="verticalLayout_2">
+        <property name="spacing">
+         <number>0</number>
+        </property>
         <item>
          <widget class="MSPlotWidget" name="plotMS1" native="true"/>
         </item>
@@ -213,6 +246,12 @@
    <class>AlignmentPlotWidget</class>
    <extends>QWidget</extends>
    <header>gui.widgets.AlignmentPlotWidget</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>AlignmentDendrogramWidget</class>
+   <extends>QWidget</extends>
+   <header>gui.widgets.AlignmentDendrogramWidget</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

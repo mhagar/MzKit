@@ -21,6 +21,7 @@ _FIELD_SPECS: dict[str, tuple[str, float, float, int, float]] = {
     'stagger_step':      ("Stagger step (lane)",    0.0, 1.0, 3, 0.01),
     'line_opacity_min':  ("Line opacity min",       0, 255, 0, 5),
     'line_opacity_max':  ("Line opacity max",       0, 255, 0, 5),
+    'cluster_width_scale': ("Cluster-mode width scale", 0.0, 1.0, 4, 0.005),
 }
 
 

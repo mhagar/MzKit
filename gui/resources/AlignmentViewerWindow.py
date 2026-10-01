@@ -14,7 +14,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 class Ui_Form(object):
     def setupUi(self, Form):
         Form.setObjectName("Form")
-        Form.resize(712, 526)
+        Form.resize(810, 526)
         self.verticalLayout_4 = QtWidgets.QVBoxLayout(Form)
         self.verticalLayout_4.setObjectName("verticalLayout_4")
         self.splitter_2 = QtWidgets.QSplitter(Form)
@@ -103,9 +103,21 @@ class Ui_Form(object):
         self.btnRenderParams = QtWidgets.QToolButton(self.verticalLayoutWidget)
         self.btnRenderParams.setObjectName("btnRenderParams")
         self.horizontalLayout.addWidget(self.btnRenderParams)
+        self.btnClusterMode = QtWidgets.QToolButton(self.verticalLayoutWidget)
+        self.btnClusterMode.setCheckable(True)
+        self.btnClusterMode.setObjectName("btnClusterMode")
+        self.horizontalLayout.addWidget(self.btnClusterMode)
+        self.btnClusterParams = QtWidgets.QToolButton(self.verticalLayoutWidget)
+        self.btnClusterParams.setCheckable(False)
+        self.btnClusterParams.setObjectName("btnClusterParams")
+        self.horizontalLayout.addWidget(self.btnClusterParams)
         spacerItem = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         self.horizontalLayout.addItem(spacerItem)
         self.verticalLayout.addLayout(self.horizontalLayout)
+        self.plotDendrogram = AlignmentDendrogramWidget(self.verticalLayoutWidget)
+        self.plotDendrogram.setMaximumSize(QtCore.QSize(16777215, 150))
+        self.plotDendrogram.setObjectName("plotDendrogram")
+        self.verticalLayout.addWidget(self.plotDendrogram)
         self.plotAlignment = AlignmentPlotWidget(self.verticalLayoutWidget)
         self.plotAlignment.setObjectName("plotAlignment")
         self.verticalLayout.addWidget(self.plotAlignment)
@@ -113,6 +125,7 @@ class Ui_Form(object):
         self.verticalLayoutWidget_2.setObjectName("verticalLayoutWidget_2")
         self.verticalLayout_2 = QtWidgets.QVBoxLayout(self.verticalLayoutWidget_2)
         self.verticalLayout_2.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout_2.setSpacing(0)
         self.verticalLayout_2.setObjectName("verticalLayout_2")
         self.plotMS1 = MSPlotWidget(self.verticalLayoutWidget_2)
         self.plotMS1.setObjectName("plotMS1")
@@ -136,6 +149,9 @@ class Ui_Form(object):
         self.labelAlignmentSummary.setText(_translate("Form", "TextLabel"))
         self.btnLinkRT.setText(_translate("Form", "..."))
         self.btnRenderParams.setText(_translate("Form", "..."))
+        self.btnClusterMode.setText(_translate("Form", "..."))
+        self.btnClusterParams.setText(_translate("Form", "..."))
+from gui.widgets.AlignmentDendrogramWidget import AlignmentDendrogramWidget
 from gui.widgets.AlignmentPlotWidget import AlignmentPlotWidget
 from gui.widgets.ChromPlotWidget import ChromPlotWidget
 from gui.widgets.MSPlotWidget import MSPlotWidget

@@ -5,6 +5,11 @@ Each Ensemble is a strip laid out by retention time within a per-sample
 lane; strips of the same AlignedAnalyte share a colour and a connecting
 line (see gui/widgets/AlignmentPlotWidget.py).
 
+Cluster mode instead lays analytes out in the leaf order of a hierarchical
+clustering by MS2 modified cosine (core/cli/cluster_analytes.py), with the
+dendrogram drawn above the map (gui/widgets/AlignmentDendrogramWidget.py).
+Clustering runs in the background via MainController (sigClusterRequested).
+
 The selection on the map drives:
  - the Inspector side panel (properties / members / comparison table),
  - the bottom panel (MS1, MS2, chromatogram; see detail_panel.py),
@@ -17,9 +22,10 @@ from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-from core.data_structs.alignment import DEFAULT_SATURATION_THRESHOLD
+from core.cli.cluster_analytes import ClusterParams, cluster_params_from_config
 from core.utils.config import load_config
 from gui.resources.AlignmentViewerWindow import Ui_Form
+from gui.views.alignment_viewer.cluster_params_dialog import ClusterParamsDialog
 from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
 from gui.views.alignment_viewer.detail_panel import DetailPanel
 from gui.views.alignment_viewer.inspector import Inspector
@@ -29,6 +35,7 @@ from gui.widgets.alignment_plot.params import RenderParams
 
 if TYPE_CHECKING:
     from core.cli.align_ensembles import PairScore
+    from core.cli.cluster_analytes import AnalyteClustering
     from core.data_structs import Ensemble, SampleUUID
     from core.data_structs.alignment import EnsembleAlignment
     from gui.views.alignment_viewer.data_source import AlignmentViewerDataSource
@@ -46,6 +53,7 @@ class AlignmentViewer(
     sigViewEnsembleRequested = QtCore.pyqtSignal(object)  # Ensemble
     sigAddSamplesRequested = QtCore.pyqtSignal(object)     # list[SampleUUID]
     sigAutoFindMfsRequested = QtCore.pyqtSignal(object)    # list[Ensemble]
+    sigClusterRequested = QtCore.pyqtSignal(object, object)  # EnsembleAlignment, ClusterParams
 
     def __init__(
         self,
@@ -68,6 +76,14 @@ class AlignmentViewer(
         self._compare_idx: int = 1
 
         self._params_dialog: Optional[RenderParamsDialog] = None
+
+        # Cluster mode: results for the current alignment, keyed by params
+        self._cluster_params: ClusterParams = cluster_params_from_config(
+            load_config()
+        )
+        self._clusterings: dict[ClusterParams, 'AnalyteClustering'] = {}
+        self._shown_clustering: Optional['AnalyteClustering'] = None
+        self._cluster_dialog: Optional[ClusterParamsDialog] = None
 
         self.plot_item = self.plotAlignment.pi
         self.detail_panel = DetailPanel(
@@ -101,6 +117,8 @@ class AlignmentViewer(
         self.splitter_2.setStretchFactor(1, 1)
         self.splitter_2.setSizes([260, 740])
         self.splitter.setSizes([550, 450])
+        self.plotDendrogram.link_to(self.plot_item)
+        self.plotDendrogram.hide()
 
     def _setup_toolbar(self):
         self.btnLinkRT.setText("Link RT")
@@ -113,6 +131,14 @@ class AlignmentViewer(
         )
         self.btnRenderParams.setText("Display…")
         self.btnRenderParams.setToolTip("Edit strip / line display settings")
+        self.btnClusterMode.setCheckable(True)
+        self.btnClusterMode.setText("Cluster (MS2)")
+        self.btnClusterMode.setToolTip(
+            "Order analytes by hierarchical clustering of their MS2 "
+            "(modified cosine) instead of by retention time"
+        )
+        self.btnClusterParams.setText("Clustering…")
+        self.btnClusterParams.setToolTip("Edit clustering parameters")
 
     def _add_status_bar(self):
         """
@@ -136,8 +162,12 @@ class AlignmentViewer(
             self.sigViewEnsembleRequested
         )
 
-        self.btnLinkRT.toggled.connect(self.detail_panel.set_rt_linked)
+        self.btnLinkRT.toggled.connect(self._update_rt_link)
         self.btnRenderParams.clicked.connect(self._show_params_dialog)
+        self.btnClusterMode.toggled.connect(self._on_cluster_mode_toggled)
+        self.btnClusterParams.clicked.connect(self._show_cluster_dialog)
+        self.plotDendrogram.sigSubtreeClicked.connect(self._on_subtree_clicked)
+        self.plotDendrogram.sigNodeHovered.connect(self._on_node_hovered)
 
         # Formula assignments landing (from EnsembleViewer, auto find-mfs,
         # ...) change what the Inspector shows
@@ -162,8 +192,9 @@ class AlignmentViewer(
         self._alignment = alignment
         self._ctx = AlignmentContext(alignment, self.data_source)
         self._selection = []
+        self._clear_cluster_mode()
         self.detail_panel.reset()
-        self._render(preserve_view=False)
+        self._render()
         self.inspector.show_summary(alignment)
         self.status_bar.showMessage(self._summary_text())
 
@@ -171,6 +202,7 @@ class AlignmentViewer(
         self._alignment = None
         self._ctx = None
         self._selection = []
+        self._clear_cluster_mode()
         self.plot_item.clear_alignment()
         self.detail_panel.reset()
         self.inspector.show_summary(None)
@@ -180,19 +212,45 @@ class AlignmentViewer(
 
     def _render(
         self,
-        preserve_view: bool = False,
+        preserve_range: bool = False,
+        preserve_selection: bool = False,
     ):
         """
-        (Re)draw the current alignment with the current RenderParams.
+        (Re)draw the current alignment with the current RenderParams, laid
+        out by RT or - in cluster mode, once a clustering is available - by
+        leaf order.
         """
         if self._alignment is None:
             return
-        self.plot_item.set_alignment(
-            self._alignment,
-            self.data_source,
-            self._params,
-            preserve_view=preserve_view,
-        )
+
+        clustering = self._active_clustering()
+        if clustering is not self._shown_clustering:
+            if clustering is None:
+                self.plotDendrogram.clear_clustering()
+            else:
+                self.plotDendrogram.set_clustering(clustering)
+            self._shown_clustering = clustering
+        self.plotDendrogram.setVisible(clustering is not None)
+
+        if clustering is None:
+            self.plot_item.set_alignment(
+                self._alignment, self.data_source, self._params,
+                preserve_range=preserve_range,
+                preserve_selection=preserve_selection,
+            )
+        else:
+            slot_of = {u: i for i, u in enumerate(clustering.analyte_uuids)}
+            self.plot_item.set_alignment(
+                self._alignment, self.data_source, self._params,
+                preserve_range=preserve_range,
+                preserve_selection=preserve_selection,
+                x_of=lambda aid, analyte, ens: slot_of.get(analyte.uuid),
+                width_scale=self._params.cluster_width_scale,
+                x_axis_visible=False,
+                stagger=False,   # one analyte per column: nothing to overlap
+            )
+        self._update_rt_link()
+        self.status_bar.showMessage(self._summary_text())
 
     def _show_params_dialog(self):
         if self._params_dialog is None:
@@ -203,7 +261,109 @@ class AlignmentViewer(
 
     def _on_params_changed(self, params: RenderParams):
         self._params = params
-        self._render(preserve_view=True)
+        self._render(preserve_range=True, preserve_selection=True)
+
+    def _update_rt_link(self):
+        """
+        Link the chromatogram's RT axis to the map's - only meaningful when
+        the map's x axis *is* RT, so cluster mode always unlinks it.
+        """
+        rt_layout = self._active_clustering() is None
+        self.btnLinkRT.setEnabled(rt_layout)
+        linked = rt_layout and self.btnLinkRT.isChecked()
+        if linked != self.detail_panel.rt_linked:
+            self.detail_panel.set_rt_linked(linked)
+
+    # -- cluster mode -------------------------------------------------------
+
+    def _active_clustering(self) -> Optional['AnalyteClustering']:
+        """The clustering to lay out by, or None for RT layout."""
+        if not self.btnClusterMode.isChecked():
+            return None
+        return self._clusterings.get(self._cluster_params)
+
+    def _clear_cluster_mode(self):
+        """Drop cached clusterings and fall back to RT mode (no re-render)."""
+        self._clusterings.clear()
+        with QtCore.QSignalBlocker(self.btnClusterMode):
+            self.btnClusterMode.setChecked(False)
+        self._update_rt_link()
+
+    def _on_cluster_mode_toggled(self, checked: bool):
+        if self._alignment is None:
+            with QtCore.QSignalBlocker(self.btnClusterMode):
+                self.btnClusterMode.setChecked(False)
+            return
+        if checked and self._cluster_params not in self._clusterings:
+            self._request_clustering()
+            return
+        # Units change between modes: keep the selection, reset the range
+        self._render(preserve_selection=True)
+
+    def _request_clustering(self):
+        """Ask MainController to cluster; the map stays as is meanwhile."""
+        self.status_bar.showMessage("Clustering analytes by MS2…")
+        self.sigClusterRequested.emit(self._alignment, self._cluster_params)
+
+    def set_clustering(
+        self,
+        alignment_uuid: int,
+        clustering: Optional['AnalyteClustering'],
+    ):
+        """
+        Clustering results landing (from MainController). Ignored if the
+        alignment has changed since; None (cancelled) leaves cluster mode.
+        """
+        if self._alignment is None or alignment_uuid != self._alignment.uuid:
+            return
+        if clustering is None:
+            with QtCore.QSignalBlocker(self.btnClusterMode):
+                self.btnClusterMode.setChecked(False)
+            self.status_bar.showMessage(self._summary_text())
+            return
+        self._clusterings[clustering.params] = clustering
+        if self._active_clustering() is clustering:
+            self._render(preserve_selection=True)
+
+    def _show_cluster_dialog(self):
+        if self._cluster_dialog is None:
+            self._cluster_dialog = ClusterParamsDialog(
+                self._cluster_params, parent=self,
+            )
+            self._cluster_dialog.sigApply.connect(self._on_cluster_params)
+        self._cluster_dialog.show()
+        self._cluster_dialog.raise_()
+
+    def _on_cluster_params(self, params: ClusterParams):
+        self._cluster_params = params
+        if self._alignment is None:
+            return
+        if not self.btnClusterMode.isChecked():
+            self.btnClusterMode.setChecked(True)   # requests / renders
+        elif params in self._clusterings:
+            self._render(preserve_selection=True)
+        else:
+            self._request_clustering()
+
+    def _on_subtree_clicked(self, analyte_uuids: list, additive: bool):
+        targets = self.plot_item.analyte_targets(analyte_uuids)
+        if additive:
+            keys = {t.analyte_id for t in targets}
+            targets = [
+                t for t in self.plot_item.selection
+                if not (t.kind == 'analyte' and t.analyte_id in keys)
+            ] + targets
+        self.plot_item.set_selection(targets)
+
+    def _on_node_hovered(self, info: Optional[tuple[float, int]]):
+        if info is None:
+            self.status_bar.showMessage(self._summary_text())
+            return
+        similarity, n = info
+        self.status_bar.showMessage(
+            f"Merge at similarity {similarity:.2f}  ·  {n} analytes  "
+            f"(click to select, Ctrl+click to add)"
+        )
 
     # -- selection ----------------------------------------------------------
 
@@ -333,12 +493,20 @@ class AlignmentViewer(
         if alignment is None:
             return ""
         multi = sum(1 for a in alignment.analytes if len(a.ensemble_map) > 1)
-        return (
+        text = (
             f"{alignment.analyte_count} analytes across "
             f"{alignment.sample_count} samples "
             f"({multi} matched, "
             f"{alignment.analyte_count - multi} singletons)"
         )
+        clustering = self._active_clustering()
+        if clustering is not None and clustering.n_dropped_no_ms2:
+            n = clustering.n_dropped_no_ms2
+            text += (
+                f"  ·  {n} analyte{'' if n == 1 else 's'} without MS2 "
+                f"not clustered"
+            )
+        return text
 
     # -- registry changes ---------------------------------------------------
 

@@ -22,7 +22,7 @@ core/               # GUI-independent logic (importable by CLI and GUI)
 gui/                # PyQt5 GUI (depends on core/)
   controllers/      # MainController, SampleController, SubWindowManager
   views/            # MDI subwindows (SampleViewer, EnsembleViewer, AlignmentViewer, etc.)
-  widgets/          # Reusable plot widgets (ChromPlotWidget, MSPlotWidget, FPrintWidget)
+  widgets/          # Reusable plot widgets (ChromPlotWidget, MSPlotWidget, FPrintWidget, AlignmentPlotWidget)
   models/           # Qt models (SampleListModel, AlignmentListModel, etc.)
   resources/        # .ui files and their generated Python (via pyuic5)
   dialogues/        # Wizard dialogs (FormulaFinder, AlignmentFilter, FeatureTableImport)

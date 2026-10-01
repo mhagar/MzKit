@@ -245,6 +245,9 @@
       </widget>
       <widget class="QWidget" name="verticalLayoutWidget_2">
        <layout class="QVBoxLayout" name="verticalLayout_2" stretch="0,1,0">
+        <property name="spacing">
+         <number>0</number>
+        </property>
         <property name="topMargin">
          <number>10</number>
         </property>

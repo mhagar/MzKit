@@ -127,6 +127,7 @@ class Ui_Form(object):
         self.verticalLayoutWidget_2.setObjectName("verticalLayoutWidget_2")
         self.verticalLayout_2 = QtWidgets.QVBoxLayout(self.verticalLayoutWidget_2)
         self.verticalLayout_2.setContentsMargins(0, 10, 0, 10)
+        self.verticalLayout_2.setSpacing(0)
         self.verticalLayout_2.setObjectName("verticalLayout_2")
         self.plotEnsembleMS = MSPlotWidget(self.verticalLayoutWidget_2)
         self.plotEnsembleMS.setObjectName("plotEnsembleMS")

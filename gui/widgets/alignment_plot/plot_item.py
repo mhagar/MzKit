@@ -101,18 +101,25 @@ class AlignmentPlotItem(pg.PlotItem):
         alignment: 'EnsembleAlignment',
         data_source: 'SampleDataSource',
         params: 'RenderParams',
-        preserve_view: bool = False,
+        preserve_range: bool = False,
+        preserve_selection: bool = False,
         x_of: XAccessor = ensemble_rt,
+        width_scale: float = 1.0,
+        x_axis_visible: bool = True,
+        stagger: bool = True,
     ):
         """
-        (Re)draw an alignment. With `preserve_view`, the view range and -
-        if it is the same alignment - the selection are kept.
+        (Re)draw an alignment. `preserve_range` keeps the view range;
+        `preserve_selection` keeps the selection if it is the same
+        alignment. `x_of` / `width_scale` place the strips (RT by default);
+        `x_axis_visible` shows/hides the bottom axis + x grid; `stagger`
+        toggles the within-lane vertical stagger of strips.
         """
-        prev_range = self.getViewBox().viewRange() if preserve_view else None
+        prev_range = self.getViewBox().viewRange() if preserve_range else None
         same_alignment = alignment.uuid == self._alignment_uuid
         prev_keys = (
             [target_key(t) for t in self._selection]
-            if preserve_view and same_alignment else []
+            if preserve_selection and same_alignment else []
         )
 
         self.clear()
@@ -134,10 +141,12 @@ class AlignmentPlotItem(pg.PlotItem):
         left = self.getAxis('left')
         left.setWidth(130)
         left.setTicks([ticks])
-        self.showGrid(x=True, y=False, alpha=0.15)
+        self.showAxis('bottom', x_axis_visible)
+        self.showGrid(x=x_axis_visible, y=False, alpha=0.15)
 
         strips = EnsembleStripsItem(
-            alignment, data_source, lane_map, params, x_of,
+            alignment, data_source, lane_map, params, x_of, width_scale,
+            stagger,
         )
         self.addItem(strips)
         self._strips = strips
@@ -183,6 +192,18 @@ class AlignmentPlotItem(pg.PlotItem):
     def clear_selection(self):
         self._set_selection([])
 
+    def set_selection(self, targets: list[HoverTarget]):
+        """Replace the selection with `targets` (the first is the anchor)."""
+        self._set_selection(
+            [t for t in targets if t.kind in ('ensemble', 'analyte')]
+        )
+
+    def analyte_targets(self, analyte_uuids) -> list[HoverTarget]:
+        """Analyte targets for the given AnalyteUUIDs that are on the map."""
+        if self._strips is None:
+            return []
+        return self._strips.analyte_targets(analyte_uuids)
+
     def select(self, target: Optional[HoverTarget], additive: bool = False):
         """
         Select an ensemble / analyte target. `additive` toggles it in or
@@ -215,7 +236,7 @@ class AlignmentPlotItem(pg.PlotItem):
         kind, aid, sample_uuid = key
         if kind == 'ensemble' and self._strips.rect_for(aid, sample_uuid):
             return self._strips.ensemble_target(aid, sample_uuid)
-        if kind == 'analyte' and self._strips.analyte_for(aid) is not None:
+        if kind == 'analyte' and self._strips.rects_for_analyte(aid):
             return self._strips.analyte_target(aid)
         return None
 

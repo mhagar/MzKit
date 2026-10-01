@@ -33,6 +33,9 @@ class RenderParams:
     line_opacity_min: int = 40
     line_opacity_max: int = 220
 
+    # Cluster (dendrogram) mode: strip width (s) -> leaf-slot units
+    cluster_width_scale: float = 0.02
+
     @property
     def stagger_base(self) -> float:
         """Vertical offset that centres the stagger spread on the lane."""

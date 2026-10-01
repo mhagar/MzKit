@@ -103,6 +103,10 @@ class DetailPanel:
             plot.update_bpc_label("")
         self._draw_chroms(None, [], [], "")
 
+    @property
+    def rt_linked(self) -> bool:
+        return self._rt_linked
+
     def set_rt_linked(self, linked: bool):
         self._rt_linked = linked
         self.chrom_plot.setXLink(self.map_plot if linked else None)

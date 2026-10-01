@@ -22,18 +22,25 @@ if TYPE_CHECKING:
     from gui.widgets.alignment_plot.params import RenderParams
 
 
-# Maps an ensemble to its x-coordinate on the feature map.
-XAccessor = Callable[['Ensemble'], float]
+# Maps (analyte index, analyte, member ensemble) to the ensemble's
+# x-coordinate on the feature map; None leaves the ensemble off the map.
+XAccessor = Callable[[int, 'AlignedAnalyte', 'Ensemble'], Optional[float]]
 
 
-def ensemble_rt(ensemble: 'Ensemble') -> float:
+def ensemble_rt(
+    aid: int,
+    analyte: 'AlignedAnalyte',
+    ensemble: 'Ensemble',
+) -> Optional[float]:
     """Default x-coordinate: the ensemble's peak retention time (s)."""
     return float(ensemble.peak_rt)
 
 
-# Colour for singleton analytes (present in a single sample). All other
-# tunable rendering values now live in RenderParams (see params.py).
-SINGLETON_COLOR = QColor(140, 140, 140, 180)
+# Colour for singleton analytes (present in a single sample) - distinct, but
+# not de-emphasised: not aligning with anything doesn't make an ensemble
+# less interesting. All other tunable rendering values live in RenderParams
+# (see params.py).
+SINGLETON_COLOR = QColor(135, 206, 250, 200)
 
 
 class LaneMap(NamedTuple):
@@ -135,25 +142,29 @@ def scale_line_opacity(max_intsy: float, params: 'RenderParams') -> int:
 
 def strip_geometry(
     ensemble: 'Ensemble',
+    cx: float,
     lane_y: float,
     stagger_idx: int,
     params: 'RenderParams',
-    x_of: XAccessor = ensemble_rt,
+    width_scale: float = 1.0,
+    stagger: bool = True,
 ) -> tuple[QRectF, QPointF]:
     """
     Build the strip rect + its centre point for one ensemble.
 
-    X-centre = `x_of(ensemble)` (peak RT by default); both width and height scale with intensity (on their
-    own ranges). The strip is nudged vertically within its lane by
-    ``stagger_idx`` so it stays clickable.
+    X-centre = `cx`; both width and height scale with intensity (on their
+    own ranges). Width is in RT seconds, times `width_scale` for x-axes in
+    other units. With `stagger`, the strip is nudged vertically within its
+    lane by ``stagger_idx`` so overlapping strips stay clickable.
     """
-    width = scale_width(ensemble.base_intsy, params)
+    width = scale_width(ensemble.base_intsy, params) * width_scale
     height = scale_height(ensemble.base_intsy, params)
-    cx = x_of(ensemble)
-    cy = (
-        lane_y + params.stagger_base
-        + (stagger_idx % params.stagger_count) * params.stagger_step
-    )
+    cy = lane_y
+    if stagger:
+        cy += (
+            params.stagger_base
+            + (stagger_idx % params.stagger_count) * params.stagger_step
+        )
 
     rect = QRectF(
         cx - 0.5 * width,
@@ -166,7 +177,7 @@ def strip_geometry(
 
 def analyte_color(analyte_idx: int, is_singleton: bool) -> QColor:
     """
-    Neutral grey for singletons; a stable, distinct colour per multi-sample
+    SINGLETON_COLOR for singletons; a stable, distinct colour per multi-sample
     analyte (keyed by its index in the alignment).
     """
     if is_singleton:

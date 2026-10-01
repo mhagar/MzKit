@@ -55,6 +55,8 @@ class EnsembleStripsItem(pg.GraphicsObject):
         lane_map: LaneMap,
         params: 'RenderParams',
         x_of: XAccessor = ensemble_rt,
+        width_scale: float = 1.0,
+        stagger: bool = True,
     ):
         super().__init__()
         self._alignment = alignment
@@ -62,6 +64,8 @@ class EnsembleStripsItem(pg.GraphicsObject):
         self._lanes = lane_map
         self._params = params
         self._x_of = x_of
+        self._width_scale = width_scale
+        self._stagger = stagger
 
         # Hit-test caches, keyed by analyte index.
         self.rects: dict[int, dict] = {}          # aid -> {sample_uuid: QRectF}
@@ -111,10 +115,14 @@ class EnsembleStripsItem(pg.GraphicsObject):
                 )
                 if ensemble is None:
                     continue
+                cx = self._x_of(aid, analyte, ensemble)
+                if cx is None:
+                    continue
 
                 lane_y = self._lanes.y_of_sample[sample_uuid]
                 rect, center = strip_geometry(
-                    ensemble, lane_y, aid, self._params, self._x_of,
+                    ensemble, cx, lane_y, aid, self._params,
+                    self._width_scale, self._stagger,
                 )
                 painter.drawRect(rect)
 
@@ -279,6 +287,14 @@ class EnsembleStripsItem(pg.GraphicsObject):
             ensemble=self._ensembles.get((aid, sample_uuid)),
             analyte=self._analytes.get(aid),
         )
+
+    def analyte_targets(self, analyte_uuids) -> list[HoverTarget]:
+        """Targets for the given AnalyteUUIDs that have strips drawn."""
+        aid_of = {a.uuid: aid for aid, a in self._analytes.items()}
+        return [
+            self.analyte_target(aid_of[u]) for u in analyte_uuids
+            if u in aid_of and self.rects.get(aid_of[u])
+        ]
 
     def analyte_target(self, aid: int) -> HoverTarget:
         return HoverTarget(
