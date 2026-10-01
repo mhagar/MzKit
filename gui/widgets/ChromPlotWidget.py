@@ -5,12 +5,32 @@ from PyQt5.QtCore import QPointF
 
 from gui.widgets.CustomAxisItems import IntsyAxisItem, TimeAxisItem
 from gui.widgets.TextOverlay import TextOverlay
+from gui.widgets.text_items import center_textitem
 
-from typing import Optional, Literal, TYPE_CHECKING
+from typing import NamedTuple, Optional, Literal, TYPE_CHECKING
 if TYPE_CHECKING:
     from core.data_structs import (
         EnsembleUUID,
     )
+
+
+# Peak-label decluttering (see ChromPlotItem._layout_peak_labels)
+LABEL_CLEARANCE_PX = 2.0        # extra horizontal gap required between labels
+LABEL_LAYOUT_DELAY_MS = 30      # debounce for re-layout on pan / zoom / resize
+GLYPH_SIZE_PX = 7
+GLYPH_OFFSET_PX = 6             # glyph centre height above the apex
+Z_PEAK_LABEL = 50
+Z_PEAK_LABEL_HOVERED = 100      # drawn over everything, with a backing fill
+HOVERED_LABEL_FILL = (0, 0, 0, 210)
+
+
+class _PeakLabelInfo(NamedTuple):
+    """Geometry of one peak label: anchored bottom-centre at its apex."""
+    rt: float
+    intsy: float
+    width_px: float
+    height_px: float
+    brush: QtGui.QBrush     # glyph fill (the peak's colour)
 
 
 class ChromPlotWidget(pg.PlotWidget):
@@ -390,8 +410,24 @@ class ChromPlotItem(pg.PlotItem):
         self._hovered_peak_uuid: Optional['EnsembleUUID'] = None
         self._selected_peak_uuid: Optional['EnsembleUUID'] = None
 
-        # Ensemble peak labels
-        self._peak_labels = {}
+        # Ensemble peak labels. When labels would overlap, the shorter peaks'
+        # labels collapse into glyphs (one ScatterPlotItem for all of them);
+        # re-laid out on every view change (see _layout_peak_labels)
+        self._peak_labels: dict['EnsembleUUID', pg.TextItem] = {}
+        self._peak_label_info: dict['EnsembleUUID', _PeakLabelInfo] = {}
+        self._peak_label_state: dict['EnsembleUUID', str] = {}
+        self._label_glyphs = pg.ScatterPlotItem(
+            pxMode=True, symbol='d', size=GLYPH_SIZE_PX, pen=None,
+        )
+        self._label_glyphs.setZValue(Z_PEAK_LABEL)
+        self.addItem(self._label_glyphs, ignoreBounds=True)
+
+        self._label_layout_timer = QtCore.QTimer()
+        self._label_layout_timer.setSingleShot(True)
+        self._label_layout_timer.setInterval(LABEL_LAYOUT_DELAY_MS)
+        self._label_layout_timer.timeout.connect(self._layout_peak_labels)
+        self.vb.sigRangeChanged.connect(self._schedule_label_layout)
+        self.vb.sigResized.connect(self._schedule_label_layout)
 
     def _connect_scene_signals(self):
         """
@@ -573,9 +609,27 @@ class ChromPlotItem(pg.PlotItem):
             html=html_label,
             anchor=(0.5, 1.0)
         )
+        # Tinted with the peak's colour (TextItem applies no default colour
+        # to HTML), centred over the apex
+        label.setColor(peak_overlay.pen.color())
+        center_textitem(label)
+        label.updateTextPos()   # re-apply the anchor to the new width
         label.setPos(rt, intsy)
+        label.setZValue(Z_PEAK_LABEL)
         self._peak_labels[uuid] = label
         self.addItem(label)
+
+        # TextItems are drawn at a fixed pixel size, so measure once
+        text_rect = label.textItem.boundingRect()
+        self._peak_label_info[uuid] = _PeakLabelInfo(
+            rt=float(rt),
+            intsy=float(intsy),
+            width_px=text_rect.width(),
+            height_px=text_rect.height(),
+            brush=pg.mkBrush(peak_overlay.pen.color()),
+        )
+        self._peak_label_state[uuid] = 'shown'
+        self._schedule_label_layout()
 
     def removePeakLabel(
         self,
@@ -585,8 +639,11 @@ class ChromPlotItem(pg.PlotItem):
         Remove the text label for a single peak overlay, if present.
         """
         label = self._peak_labels.pop(uuid, None)
+        self._peak_label_info.pop(uuid, None)
+        self._peak_label_state.pop(uuid, None)
         if label is not None:
             self.removeItem(label)
+            self._schedule_label_layout()
 
     def clearPeaks(
         self,
@@ -605,6 +662,9 @@ class ChromPlotItem(pg.PlotItem):
             self.removeItem(label)
 
         self._peak_labels.clear()
+        self._peak_label_info.clear()
+        self._peak_label_state.clear()
+        self._label_glyphs.clear()
 
         # Reset interaction state since all peaks are gone
         self._hovered_peak_uuid = None
@@ -720,6 +780,7 @@ class ChromPlotItem(pg.PlotItem):
             item.set_hover_state(True)
 
         self._hovered_peak_uuid = uuid
+        self._layout_peak_labels()
 
     def set_peak_selected(
         self,
@@ -740,6 +801,139 @@ class ChromPlotItem(pg.PlotItem):
             item.set_selected_state(True)
 
         self._selected_peak_uuid = uuid
+        self._layout_peak_labels()
+
+    # -- peak label decluttering --------------------------------------------
+
+    def _schedule_label_layout(self, *_) -> None:
+        """Debounced `_layout_peak_labels` (for pan / zoom / batch adds)."""
+        self._label_layout_timer.start()
+
+    def _layout_peak_labels(self) -> None:
+        """
+        Show peak labels greedily, tallest apex first: a label that would
+        overlap one already shown - or poke out of the top of the view -
+        collapses into a glyph at its apex instead (glyphs may overlap each
+        other). The selected peak's label always gets first pick.
+
+        The hovered peak's label is always shown, drawn on top of the
+        others with a backing fill (nudged into view if it would poke out
+        of it), without displacing them. Hovering / clicking a glyph
+        hovers / selects its peak (it sits within the peak hit-test
+        radius), so collapsed labels stay one hover away.
+
+        Overlap is checked in pixels from cached label sizes; labels whose
+        apex is off-screen are skipped, and Qt items are only touched when
+        their state changes.
+        """
+        self._label_layout_timer.stop()
+        info = self._peak_label_info
+        if not info:
+            self._label_glyphs.clear()
+            return
+
+        px, py = self.vb.viewPixelSize()
+        if not (px > 0 and py > 0 and np.isfinite(px) and np.isfinite(py)):
+            return
+
+        (view_left, view_right), (_, view_top_y) = self.vb.viewRange()
+        view_top = view_top_y / py
+        hovered = self._hovered_peak_uuid
+        selected = self._selected_peak_uuid
+        order = sorted(
+            (
+                u for u in info
+                if u != hovered and view_left <= info[u].rt <= view_right
+            ),
+            key=lambda u: (u != selected, -info[u].intsy),
+        )
+
+        n = len(order)
+        lefts, rights = np.empty(n), np.empty(n)
+        bottoms, tops = np.empty(n), np.empty(n)
+        n_placed = 0
+        states: dict['EnsembleUUID', str] = dict.fromkeys(info, 'hidden')
+        collapsed: list['EnsembleUUID'] = []
+
+        for uuid in order:
+            label_info = info[uuid]
+            cx = label_info.rt / px
+            half_w = 0.5 * label_info.width_px + LABEL_CLEARANCE_PX
+            left, right = cx - half_w, cx + half_w
+            bottom = label_info.intsy / py
+            top = bottom + label_info.height_px
+
+            k = n_placed
+            overlaps = top > view_top or np.any(
+                (lefts[:k] < right) & (rights[:k] > left)
+                & (bottoms[:k] < top) & (tops[:k] > bottom)
+            )
+            if overlaps:
+                collapsed.append(uuid)
+                continue
+
+            states[uuid] = 'shown'
+            lefts[k], rights[k], bottoms[k], tops[k] = left, right, bottom, top
+            n_placed += 1
+
+        if hovered in info:
+            states[hovered] = 'hovered'
+
+        for uuid, state in states.items():
+            self._apply_label_state(uuid, state, px, py, view_left, view_right, view_top)
+
+        if not collapsed:
+            self._label_glyphs.clear()
+            return
+        self._label_glyphs.setData(
+            x=[info[u].rt for u in collapsed],
+            y=[info[u].intsy + GLYPH_OFFSET_PX * py for u in collapsed],
+            brush=[info[u].brush for u in collapsed],
+            data=collapsed,
+        )
+
+    def _apply_label_state(
+        self,
+        uuid: 'EnsembleUUID',
+        state: str,
+        px: float,
+        py: float,
+        view_left: float,
+        view_right: float,
+        view_top: float,
+    ) -> None:
+        """
+        Put a label in `state` ('shown', 'hidden' or 'hovered'), touching
+        its Qt item only on a change. 'hovered' is re-applied every time,
+        since it is positioned relative to the view.
+        """
+        previous = self._peak_label_state.get(uuid, 'shown')
+        if state == previous and state != 'hovered':
+            return
+        self._peak_label_state[uuid] = state
+
+        label = self._peak_labels[uuid]
+        label_info = self._peak_label_info[uuid]
+
+        if previous == 'hovered' and state != 'hovered':
+            label.setZValue(Z_PEAK_LABEL)
+            label.fill = pg.mkBrush(None)
+            label.setPos(label_info.rt, label_info.intsy)
+            label.update()
+
+        if state == 'hovered':
+            half_w = 0.5 * label_info.width_px * px
+            x = label_info.rt
+            if view_right - view_left > 2 * half_w:
+                x = min(max(x, view_left + half_w), view_right - half_w)
+            y = min(label_info.intsy, (view_top - label_info.height_px) * py)
+            label.setPos(x, y)
+            if previous != 'hovered':
+                label.setZValue(Z_PEAK_LABEL_HOVERED)
+                label.fill = pg.mkBrush(HOVERED_LABEL_FILL)
+                label.update()
+
+        label.setVisible(state != 'hidden')
 
     def scaleViewboxToPeakArray(
             self,

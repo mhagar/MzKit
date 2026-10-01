@@ -1,6 +1,7 @@
 
 from gui.widgets.CustomAxisItems import IntsyAxisItem
 from gui.widgets.TextOverlay import TextOverlay
+from gui.widgets.text_items import center_textitem
 from gui.utils.ms_arrays import zero_pad_arrays
 from core.utils.arrays import find_closest_point
 from core.utils.array_types import SpectrumArray
@@ -1738,21 +1739,4 @@ def create_textitem(
         textitem = pg.TextItem(html=text, anchor=anchor)
     textitem.setPos(pos[0], pos[1])
     textitem = center_textitem(textitem)
-    return textitem
-
-
-def center_textitem(
-        textitem: pg.TextItem,
-) -> pg.TextItem:
-    """
-    Bizarre hoops that must be jumped to center-align HTML labels
-    in pyqtgraph.
-    From https://stackoverflow.com/a/62602065
-    """
-    it = textitem.textItem
-    option = it.document().defaultTextOption()
-    option.setAlignment(QtCore.Qt.AlignCenter)
-    it.document().setDefaultTextOption(option)
-    it.setTextWidth(it.boundingRect().width())
-
     return textitem
