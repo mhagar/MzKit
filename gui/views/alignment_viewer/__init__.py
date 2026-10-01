@@ -119,6 +119,7 @@ class AlignmentViewer(
         self.splitter.setSizes([550, 450])
         self.plotDendrogram.link_to(self.plot_item)
         self.plotDendrogram.hide()
+        self.plotMS1.pi.hideAxis('bottom')  # m/z-linked to the MS2 plot below
 
     def _setup_toolbar(self):
         self.btnLinkRT.setText("Link RT")

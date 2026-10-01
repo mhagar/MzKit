@@ -884,10 +884,10 @@ class MSPlotItem(pg.PlotItem):
 
         if active:
             # Dimmed variant of whatever pen the caller set
-            dim_pen = pg.mkPen(self.spectrum_plot.opts['pen'])
-            dim_color = dim_pen.color()
-            dim_color.setAlpha(60)
-            dim_pen.setColor(dim_color)
+            dim_pen = pg.mkPen('red')
+            # dim_color = dim_pen.color()
+            # dim_color.setAlpha(160)
+            # dim_pen.setColor(dim_color)
             self.mirror_dim_plot.setPen(dim_pen)
 
         self.vb.set_symmetric_y(active)
