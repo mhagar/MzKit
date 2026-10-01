@@ -195,6 +195,15 @@ class SampleViewer(
             self.model,
         )
 
+        # 'Samples per window' can't exceed the number of displayed samples
+        for signal in (
+            self.model.itemChanged,
+            self.model.rowsInserted,
+            self.model.rowsRemoved,
+        ):
+            signal.connect(self._update_samples_per_window_max)
+        self._update_samples_per_window_max()
+
         # Configure chrom plot stack view
         self.viewSampleStack.setModel(
             self.model,
@@ -490,6 +499,16 @@ class SampleViewer(
         """
         self.viewSampleStack.sample_wdgt_mgr.set_samples_per_window(num)
 
+    def _update_samples_per_window_max(self, *_):
+        """
+        Caps the 'Samples per window' spinner at the number of checked
+        (displayed) samples. Lowering the max clamps the value, which
+        re-sizes the widgets via `on_samples_per_window_requested`.
+        """
+        self.spinSamplesPerWindow.setMaximum(
+            max(self.model.checkedCount(), 1)
+        )
+
     def update_spectrum_plot(self):
         """
         Updates MS Plot to match whatever is in Spectrum Selection Manager.
@@ -530,20 +549,12 @@ class SampleViewer(
                 visible=visible
             )
 
-        self.spinSamplesPerWindow.setMaximum(
-            self.model.rowCount()
-        )
-
     def remove_samples(
         self,
         uuids: list['SampleUUID'],
     ):
         for uuid in uuids:
             self.model.removeSample(uuid)
-
-        self.spinSamplesPerWindow.setMaximum(
-            self.model.rowCount()
-        )
 
         self.viewSampleStack.rebuild_plots()
 

@@ -130,6 +130,13 @@ class SampleViewerItemModel(
 
         return False
 
+    def checkedCount(self) -> int:
+        """Number of samples checked for display"""
+        return sum(
+            1 for row in range(self.rowCount())
+            if self.item(row).checkState() == Qt.Checked
+        )
+
     def getSampleUuidAtRow(
         self,
         row: int,

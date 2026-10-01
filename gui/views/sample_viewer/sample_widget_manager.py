@@ -33,6 +33,12 @@ class SampleWidgetManager(QtCore.QObject):
         self._model: Optional['SampleViewerItemModel'] = None
         self._uuid_to_widget: dict['SampleUUID', 'SampleWidget'] = {}
         self._samples_per_window: int = 1
+        self._widget_height: Optional[int] = None
+        self._hide_axes_threshold: int = self.config.getint(
+            section='sampleviewer',
+            option='hide_axis_threshold_px',
+            fallback=50,
+        )
 
     def set_model(
         self,
@@ -46,33 +52,36 @@ class SampleWidgetManager(QtCore.QObject):
     ):
         """
         Adjusts widget height so that `num` widgets are shown
-        per window. Does nothing if `num` is already the same as the
-        current value
+        per window
         """
-        if num == self._samples_per_window:
+        self._samples_per_window = max(num, 1)
+        self.apply_heights()
+
+    def apply_heights(self):
+        """
+        Size every widget so that `_samples_per_window` of them fill the
+        viewport. Call whenever the viewport resizes.
+        """
+        height = self._parent.viewport().height() // self._samples_per_window
+        if height == self._widget_height:
             return
 
-        self._samples_per_window = num
-
-        hide_axes_threshold = self.config.getint(
-            section='sampleviewer',
-            option='hide_axis_threshold_px',
-            fallback=50,
-        )
+        self._widget_height = height
         for widget in self.get_all_widgets().values():
-            widget: 'SampleWidget'
+            self._apply_height(widget)
 
-            target_height = self._parent.viewport().height() // max(num, 1)
-            widget.setFixedHeight(target_height)
+    def _apply_height(
+        self,
+        widget: 'SampleWidget',
+    ):
+        if self._widget_height is None:
+            return
 
-            widget.chromPlotWidget.showAxes(  # Hide axes of widget is small
-                target_height > hide_axes_threshold
-            )
+        widget.setFixedHeight(self._widget_height)
 
-            widget.fprintPlotWidget.showAxis(
-                'bottom',
-                target_height > hide_axes_threshold
-            )
+        show_axes = self._widget_height > self._hide_axes_threshold
+        widget.chromPlotWidget.showAxes(show_axes)  # Hide axes if small
+        widget.fprintPlotWidget.showAxis('bottom', show_axes)
 
     def create_widget(
         self,
@@ -87,6 +96,11 @@ class SampleWidgetManager(QtCore.QObject):
 
         position = self._calculate_position_for_row(row_idx)
         self._layout.insertWidget(position, widget)
+
+        self._apply_height(widget)
+        widget.setVisible(
+            self._model.item(row_idx).checkState() == QtCore.Qt.Checked
+        )
 
         self._uuid_to_widget[uuid] = widget
 

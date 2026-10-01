@@ -110,8 +110,20 @@ class SampleStackView(
             widget_manager=self.sample_wdgt_mgr,
         )
 
+        # Debounces widget re-sizing (see resizeEvent)
+        self._resize_timer = QtCore.QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(150)  # ms
+        self._resize_timer.timeout.connect(self.sample_wdgt_mgr.apply_heights)
+
         # For IDE type-checking:
         # self: 'ToolStateListener'
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # e.g. splitter moved: keep `samples per window` filling the viewport,
+        # but only once resizing pauses (re-laying out every plot is slow)
+        self._resize_timer.start()
 
     def setModel(
         self,
