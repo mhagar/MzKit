@@ -54,6 +54,7 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 - `filter_alignment.py` - Filter an EnsembleAlignment by Python expression
 - `import_feature_table.py` - Import external feature coordinates (MZmine CSV) and generate Ensembles + alignment
 - `export_table.py` - Export an EnsembleAlignment as a feature intensity table (CSV/TSV)
+- `cluster_analytes.py` - Hierarchical clustering of an alignment's analytes by MS2 modified cosine (Alignment Viewer cluster mode)
 - `find_cofeatures.py` - Core cofeature detection (Pearson correlation of extracted ion chromatograms)
 - `segment_chromatogram.py` - Peak boundary detection
 - `export_bpcs.py` - Export base peak chromatograms for all samples in an .mzk file (JSON)
