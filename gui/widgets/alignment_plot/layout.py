@@ -82,16 +82,10 @@ def resolve_ensemble(
     data_source: 'SampleDataSource',
 ) -> Optional['Ensemble']:
     """
-    Look up the concrete Ensemble an analyte points at in a given sample.
-    Mirrors the old ``AlignmentTableModel._get_ensemble`` resolution.
+    Look up the concrete Ensemble an analyte points at in a given sample
+    (see `AlignedAnalyte.resolve_member`).
     """
-    ens_uuid = analyte.ensemble_map.get(sample_uuid)
-    if ens_uuid is None:
-        return None
-    sample = data_source.get_sample(sample_uuid)
-    if not sample or not sample.injection:
-        return None
-    return sample.injection.ensembles.get(ens_uuid)
+    return analyte.resolve_member(sample_uuid, data_source.get_sample)
 
 
 def _interp_log(

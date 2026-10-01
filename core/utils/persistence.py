@@ -378,6 +378,7 @@ def serialize_injection_ensembles(
             # DDA precursor info
             'precursor_mz': ensemble.precursor_mz,
             'precursor_charge': ensemble.precursor_charge,
+            'saturation_threshold': ensemble.saturation_threshold,
             # Injection reference not serialized - will be assigned on loading
         }
 
@@ -693,6 +694,9 @@ def deserialize_injection_ensembles(
             precursor_mz=e_dict.get('precursor_mz'),
             precursor_charge=e_dict.get('precursor_charge'),
         )
+        # Pre-saturation .mzk files keep the config default
+        if 'saturation_threshold' in e_dict:
+            ensemble.saturation_threshold = e_dict['saturation_threshold']
 
         # This will call ensemble.set_injection():
         injection.add_ensemble(ensemble)

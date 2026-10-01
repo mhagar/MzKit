@@ -1,7 +1,7 @@
 """
 Resolution helpers for the AlignmentViewer: turns plot targets (ensemble /
 analyte HoverTargets) into the domain data the panels display - member
-ensembles, consensus spectra, formulae and pairwise scores.
+ensembles, representative spectra, formulae and pairwise scores.
 
 No widgets here; one AlignmentContext exists per displayed alignment.
 """
@@ -10,8 +10,7 @@ from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 from core.cli.align_ensembles import PairScore, score_spectrum_pair
-from core.data_structs.alignment import ConsensusSpectrum
-from gui.widgets.alignment_plot.layout import resolve_ensemble
+from core.data_structs.alignment import RepresentativeSpectrum
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble, SampleUUID
@@ -39,11 +38,9 @@ class AlignmentContext:
         self,
         alignment: 'EnsembleAlignment',
         data_source: 'AlignmentViewerDataSource',
-        saturation_threshold: float,
     ):
         self.alignment = alignment
         self.data_source = data_source
-        self.saturation_threshold = saturation_threshold
 
     # -- lookups ------------------------------------------------------------
 
@@ -56,20 +53,13 @@ class AlignmentContext:
         analyte: 'AlignedAnalyte',
     ) -> dict['SampleUUID', 'Ensemble']:
         """The analyte's resolvable member ensembles, keyed by sample uuid."""
-        out = {}
-        for sample_uuid in analyte.ensemble_map:
-            ensemble = resolve_ensemble(analyte, sample_uuid, self.data_source)
-            if ensemble is not None:
-                out[sample_uuid] = ensemble
-        return out
+        return analyte.resolve_members(self.data_source.get_sample)
 
-    def consensus(
+    def representative(
         self,
         analyte: 'AlignedAnalyte',
-    ) -> Optional[ConsensusSpectrum]:
-        return analyte.consensus_spectrum(
-            self.members(analyte), self.saturation_threshold,
-        )
+    ) -> Optional[RepresentativeSpectrum]:
+        return analyte.representative_spectrum(self.members(analyte))
 
     def formula(self, ensemble: 'Ensemble') -> str:
         """
@@ -121,8 +111,8 @@ class AlignmentContext:
 
         if target.kind == 'analyte' and target.analyte is not None:
             analyte = target.analyte
-            consensus = self.consensus(analyte)
-            if consensus is None:
+            rep = self.representative(analyte)
+            if rep is None:
                 return None
             return ItemSpectra(
                 label=(
@@ -130,10 +120,10 @@ class AlignmentContext:
                     f"{analyte.consensus_rt:.1f}s "
                     f"({len(analyte.ensemble_map)}/{self.alignment.sample_count})"
                 ),
-                ms1=consensus.composite.ms1,
-                ms2=consensus.composite.ms2,
+                ms1=rep.composite.ms1,
+                ms2=rep.composite.ms2,
                 rt=float(analyte.consensus_rt),
-                base_mz=consensus.base_mz,
+                base_mz=rep.base_mz,
             )
 
         return None

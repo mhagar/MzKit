@@ -182,19 +182,19 @@ class Inspector(QtCore.QObject):
     ):
         self.stack.setCurrentIndex(self.PAGE_ANALYTE)
         members = ctx.members(analyte)
-        consensus = ctx.consensus(analyte)
+        rep = ctx.representative(analyte)
         n, total = len(analyte.ensemble_map), ctx.alignment.sample_count
         self.title_label.setText(f"<b>Analyte</b> · {n}/{total} samples")
 
         agreement = ctx.formula_agreement(analyte)
         props = [
             ["Consensus RT (s)", f"{analyte.consensus_rt:.2f}"],
-            ["Consensus base m/z",
-             f"{consensus.base_mz:.4f}" if consensus else "n/a"],
+            ["Representative base m/z",
+             f"{rep.base_mz:.4f}" if rep else "n/a"],
             ["Mean base m/z", f"{analyte.consensus_mz:.4f}"],
             ["Detected in", f"{n}/{total} samples"],
-            ["Consensus from",
-             ctx.sample_name(consensus.sample_uuid) if consensus else "n/a"],
+            ["Representative from",
+             ctx.sample_name(rep.sample_uuid) if rep else "n/a"],
             ["Formula",
              f"{agreement[0]} ({agreement[1]}/{agreement[2]})" if agreement else ""],
         ]

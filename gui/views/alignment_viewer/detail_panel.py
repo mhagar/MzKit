@@ -3,7 +3,7 @@ Drives the AlignmentViewer's bottom panel (MS1, MS2 and chromatogram plots)
 for the current selection:
 
  - Ensemble: composite MS1/MS2; its sample's BPC + the ensemble's XIC.
- - Analyte:  consensus MS1/MS2; member samples' BPCs + every member's XIC.
+ - Analyte:  representative MS1/MS2; member samples' BPCs + every member's XIC.
  - Compare:  mirror plots (anchor vs one other item); BPCs + XICs of all
              selected items.
 
@@ -132,22 +132,22 @@ class DetailPanel:
         analyte: 'AlignedAnalyte',
     ):
         members = ctx.members(analyte)
-        consensus = ctx.consensus(analyte)
-        if consensus is None:
+        rep = ctx.representative(analyte)
+        if rep is None:
             self.clear()
             return
 
-        source = ctx.sample_name(consensus.sample_uuid)
+        source = ctx.sample_name(rep.sample_uuid)
         ms_x = self._ms_x_range
         self._show_single(
-            self.ms1_plot, consensus.composite.ms1,
-            f"Consensus MS1 · from {source}",
+            self.ms1_plot, rep.composite.ms1,
+            f"Representative MS1 · from {source}",
         )
         self._show_single(
-            self.ms2_plot, consensus.composite.ms2,
-            f"Consensus MS2 · from {source}",
+            self.ms2_plot, rep.composite.ms2,
+            f"Representative MS2 · from {source}",
         )
-        self._frame_ms([consensus.composite.ms1, consensus.composite.ms2], ms_x)
+        self._frame_ms([rep.composite.ms1, rep.composite.ms2], ms_x)
         self._draw_chroms(
             ctx, list(members), list(members.values()),
             f"BPC · {len(members)} samples",

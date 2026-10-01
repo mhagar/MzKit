@@ -56,12 +56,6 @@ class AlignmentViewer(
         self.setupUi(self)
         self.data_source = data_source
 
-        config = load_config()
-        self._saturation_threshold = config.getfloat(
-            'alignment', 'saturation_threshold',
-            fallback=DEFAULT_SATURATION_THRESHOLD,
-        )
-
         self._params = RenderParams()
         self._alignment: Optional['EnsembleAlignment'] = None
         self._ctx: Optional[AlignmentContext] = None
@@ -166,9 +160,7 @@ class AlignmentViewer(
         alignment: 'EnsembleAlignment',
     ):
         self._alignment = alignment
-        self._ctx = AlignmentContext(
-            alignment, self.data_source, self._saturation_threshold,
-        )
+        self._ctx = AlignmentContext(alignment, self.data_source)
         self._selection = []
         self.detail_panel.reset()
         self._render(preserve_view=False)
@@ -317,12 +309,12 @@ class AlignmentViewer(
 
         elif target.kind == 'analyte' and target.analyte is not None:
             analyte = target.analyte
-            consensus = ctx.consensus(analyte)
+            rep = ctx.representative(analyte)
             parts = [
                 "Analyte",
                 f"consensus RT {analyte.consensus_rt:.2f} s",
-                "consensus base m/z "
-                + (f"{consensus.base_mz:.4f}" if consensus else "n/a"),
+                "representative base m/z "
+                + (f"{rep.base_mz:.4f}" if rep else "n/a"),
                 f"{len(analyte.ensemble_map)}/{ctx.alignment.sample_count} samples",
             ]
             agreement = ctx.formula_agreement(analyte)

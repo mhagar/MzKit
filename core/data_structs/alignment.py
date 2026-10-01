@@ -11,26 +11,20 @@ to Sample, Injection, Ensemble) is what lets ``data_registry`` and
 ``persistence`` depend on them without reaching into ``core/cli``.
 """
 from dataclasses import dataclass, field
-from typing import Mapping, NamedTuple, Optional, TYPE_CHECKING
+from typing import Callable, Mapping, NamedTuple, Optional, TYPE_CHECKING
 
 import uuid as _uuid
 
 if TYPE_CHECKING:
     from core.data_structs import (
-        SampleUUID, EnsembleUUID, AnalyteUUID, AlignmentUUID, Ensemble,
+        SampleUUID, EnsembleUUID, AnalyteUUID, AlignmentUUID, Ensemble, Sample,
     )
     from core.data_structs.composite_spectrum import CompositeSpectrum
 
 
-# Default intensity above which an ensemble is considered saturated, and
-# so avoided as the source of an AlignedAnalyte's consensus spectrum.
-# Overridable via `[alignment] saturation_threshold` in the config.
-DEFAULT_SATURATION_THRESHOLD = 1e10
-
-
-class ConsensusSpectrum(NamedTuple):
+class RepresentativeSpectrum(NamedTuple):
     """
-    An AlignedAnalyte's representative spectrum, plus which member
+    An AlignedAnalyte's representative (MS1, MS2) pair, plus which member
     ensemble it was taken from.
     """
     composite: 'CompositeSpectrum'
@@ -39,7 +33,7 @@ class ConsensusSpectrum(NamedTuple):
 
     @property
     def base_mz(self) -> float:
-        """m/z of the most intense peak in the consensus MS1."""
+        """m/z of the most intense peak in the representative MS1."""
         ms1 = self.composite.ms1
         return float(ms1['mz'][ms1['intsy'].argmax()]) if ms1.size else 0.0
 
@@ -83,52 +77,76 @@ class AlignedAnalyte:
     consensus_mz: float = 0.0
     uuid: 'AnalyteUUID' = field(default_factory=lambda: _uuid.uuid4().int)
 
-    # Not persisted; see `consensus_spectrum`
-    _consensus: Optional[tuple[float, Optional[ConsensusSpectrum]]] = field(
+    # Not persisted; see `representative_spectrum`
+    _representative: Optional[RepresentativeSpectrum] = field(
         default=None, init=False, repr=False, compare=False,
     )
 
-    def consensus_spectrum(
+    def resolve_member(
+        self,
+        sample_uuid: 'SampleUUID',
+        get_sample: Callable[['SampleUUID'], Optional['Sample']],
+    ) -> Optional['Ensemble']:
+        """
+        The concrete Ensemble this analyte points at in `sample_uuid`, or
+        None if it isn't present / can't be resolved.
+
+        :param get_sample: sample lookup, e.g. `DataRegistry.get_sample`
+        """
+        ens_uuid = self.ensemble_map.get(sample_uuid)
+        if ens_uuid is None:
+            return None
+        sample = get_sample(sample_uuid)
+        if not sample or not sample.injection:
+            return None
+        return sample.injection.ensembles.get(ens_uuid)
+
+    def resolve_members(
+        self,
+        get_sample: Callable[['SampleUUID'], Optional['Sample']],
+    ) -> dict['SampleUUID', 'Ensemble']:
+        """This analyte's resolvable member ensembles, keyed by sample uuid."""
+        out = {}
+        for sample_uuid in self.ensemble_map:
+            ensemble = self.resolve_member(sample_uuid, get_sample)
+            if ensemble is not None:
+                out[sample_uuid] = ensemble
+        return out
+
+    def representative_spectrum(
         self,
         ensembles: Mapping['SampleUUID', 'Ensemble'],
-        saturation_threshold: float = DEFAULT_SATURATION_THRESHOLD,
-    ) -> Optional[ConsensusSpectrum]:
+    ) -> Optional[RepresentativeSpectrum]:
         """
-        The analyte's representative spectrum: the composite spectrum of
-        its tallest member ensemble whose base intensity is below
-        `saturation_threshold` (lets users avoid saturated spectra).
-        Falls back to the tallest member if every member is saturated.
+        The analyte's representative (MS1, MS2) pair: the composite
+        spectrum of its tallest member ensemble (by base intensity).
+        Saturation is handled within each ensemble's composite spectrum.
 
         :param ensembles: this analyte's resolved member ensembles, keyed
             by sample uuid (members that can't be resolved may be omitted).
         :return: None when no member ensemble is given.
 
-        Cached per `saturation_threshold`; the analyte's membership is
-        immutable, so the cache never goes stale.
+        Cached; the analyte's membership is immutable, so the cache never
+        goes stale.
         """
-        if self._consensus is not None and self._consensus[0] == saturation_threshold:
-            return self._consensus[1]
+        if self._representative is not None:
+            return self._representative
 
         members = [
             (sample_uuid, ens) for sample_uuid, ens in ensembles.items()
             if sample_uuid in self.ensemble_map
         ]
-        result = None
-        if members:
-            unsaturated = [
-                m for m in members if m[1].base_intsy < saturation_threshold
-            ]
-            sample_uuid, ens = max(
-                unsaturated or members, key=lambda m: m[1].base_intsy,
-            )
-            result = ConsensusSpectrum(
-                composite=ens.composite_spectrum,
-                sample_uuid=sample_uuid,
-                ensemble_uuid=ens.uuid,
-            )
+        if not members:
+            return None
 
-        self._consensus = (saturation_threshold, result)
-        return result
+        sample_uuid, ens = max(members, key=lambda m: m[1].base_intsy)
+        self._representative = RepresentativeSpectrum(
+            composite=ens.composite_spectrum,
+            sample_uuid=sample_uuid,
+            ensemble_uuid=ens.uuid,
+        )
+        return self._representative
+
 
 @dataclass
 class EnsembleAlignment:

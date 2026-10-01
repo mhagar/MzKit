@@ -120,3 +120,94 @@ def test_composite_spectrum_dda_placeholder(ensemble: 'Ensemble', monkeypatch):
 
 
 
+
+
+def test_composite_ms1_avoids_saturated_scans(ensemble: 'Ensemble'):
+    # With the apex counted as saturated, the composite MS1 comes from the
+    # tallest scan still below the threshold.
+    ensemble.saturation_threshold = ensemble.base_intsy
+    scan_num = ensemble.composite_ms1_scan_num()
+    assert scan_num != ensemble.base_scan_num
+
+    composite = ensemble.composite_spectrum
+    assert 0 < composite.ms1['intsy'].max() < ensemble.saturation_threshold
+    expected = ensemble.get_spectrum(ms_level=1, scan_num=scan_num)
+    np.testing.assert_array_equal(composite.ms1['intsy'], expected['intsy'])
+
+
+def test_composite_ms1_falls_back_to_apex_when_all_saturated(
+    ensemble: 'Ensemble',
+):
+    ensemble.saturation_threshold = 1.0
+    assert ensemble.composite_ms1_scan_num() == ensemble.base_scan_num
+
+
+def test_composite_ms2_dda_merges_tallest_precursor_scans(
+    ensemble: 'Ensemble',
+    monkeypatch,
+):
+    from core.data_structs.ensemble import MS2Spectrum
+    from core.utils.array_types import to_spec_arr
+
+    def spec(mzs, intsys):
+        return to_spec_arr(
+            mz_arr=np.asarray(mzs, dtype=float),
+            intsy_arr=np.asarray(intsys, dtype=float),
+        )
+
+    precursor = float(ensemble.base_mz)
+    rt = float(ensemble.peak_rt)
+    scans = [
+        # Two fragmentations of the base (tallest) precursor
+        MS2Spectrum(spec([100.0, 150.0], [10.0, 5.0]), precursor, 1, rt),
+        MS2Spectrum(spec([100.0, 175.0], [8.0, 4.0]), precursor + 0.001, 1, rt),
+        # A precursor matching no MS1 lane
+        MS2Spectrum(spec([300.0], [1e6]), precursor + 300.0, 1, rt),
+    ]
+    monkeypatch.setattr(ensemble.injection, 'acquisition_mode', 'dda')
+    monkeypatch.setattr(ensemble, '_iter_ms2_scan_spectra', lambda: scans)
+
+    ms2 = ensemble.composite_spectrum.ms2
+    assert 'freq' in ms2.dtype.names  # merged consensus
+    assert np.any(np.isclose(ms2['mz'], 150.0, atol=0.02))
+    assert np.any(np.isclose(ms2['mz'], 175.0, atol=0.02))
+    assert not np.any(np.isclose(ms2['mz'], 300.0, atol=0.02))
+
+
+def test_saturation_threshold_persists(ensemble: 'Ensemble', tmp_path):
+    import pickle
+    import zipfile
+    from core.utils.persistence import (
+        serialize_injection_ensembles, deserialize_injection_ensembles,
+    )
+    from core.utils.config import get_saturation_threshold
+
+    injection = ensemble.injection
+    injection.ensembles.clear()
+    injection.add_ensemble(ensemble)
+    ensemble.saturation_threshold = 1234.0
+    sample = type('S', (), {'injection': injection})()
+
+    path = tmp_path / 'ens.zip'
+    with zipfile.ZipFile(path, 'w') as zf:
+        serialize_injection_ensembles(sample, 's', zf)
+
+    injection.ensembles.clear()
+    with zipfile.ZipFile(path) as zf:
+        deserialize_injection_ensembles(injection, 's', zf)
+        data = pickle.loads(zf.read('s/ensembles.pkl'))
+    assert injection.ensembles[ensemble.uuid].saturation_threshold == 1234.0
+
+    # Pre-saturation files fall back to the config default
+    for e_dict in data:
+        del e_dict['saturation_threshold']
+    old = tmp_path / 'old.zip'
+    with zipfile.ZipFile(old, 'w') as zf:
+        zf.writestr('s/ensembles.pkl', pickle.dumps(data))
+    injection.ensembles.clear()
+    with zipfile.ZipFile(old) as zf:
+        deserialize_injection_ensembles(injection, 's', zf)
+    assert (
+        injection.ensembles[ensemble.uuid].saturation_threshold
+        == get_saturation_threshold()
+    )

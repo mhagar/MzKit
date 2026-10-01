@@ -130,7 +130,18 @@ _saturation_cache: tuple[float, float] | None = None
 
 def get_saturation_threshold() -> float:
     """
-    config_path = get_config_path()
+    The detector saturation intensity, `[instrument] saturation_threshold`.
 
-    with open(config_path, 'w') as f:
-        config.write(f)
+    Called once per Ensemble construction, so it's cached; the cache is
+    invalidated whenever the user config file changes on disk.
+    """
+    global _saturation_cache
+    config_path = get_config_path()
+    mtime = config_path.stat().st_mtime if config_path.exists() else 0.0
+    if _saturation_cache is None or _saturation_cache[0] != mtime:
+        value = load_config().getfloat(
+            'instrument', 'saturation_threshold',
+            fallback=DEFAULT_SATURATION_THRESHOLD,
+        )
+        _saturation_cache = (mtime, value)
+    return _saturation_cache[1]

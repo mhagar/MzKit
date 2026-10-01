@@ -16,6 +16,7 @@ from core.utils.array_types import (
     SpectrumArray, ConsensusSpectrumArray
 )
 from core.data_structs.composite_spectrum import CompositeSpectrum
+from core.utils.config import get_saturation_threshold
 from core.utils.formula_formatting import format_formula_obj_to_html
 from core.utils.spectra import merge_spectra, normalize_spectrum
 
@@ -98,8 +99,7 @@ class Ensemble:
         default_factory=dict, repr=False
     )
 
-    # User-editable properties. (The formula lives in the ensemble's
-    # FormulaAssignment, in the DataRegistry.)
+    # User-editable properties. (Except formula, see FormulaAssignment)
     identity: Optional[str] = None
     user_metadata: dict[str, str] = field(
         default_factory=dict, repr=False
@@ -109,6 +109,13 @@ class Ensemble:
     # ensembles; None for MS1-only / DIA.
     precursor_mz: Optional[float] = None
     precursor_charge: Optional[int] = None
+
+    # Detector saturation intensity; scans at/above it are avoided when
+    # picking the composite MS1. Taken from the config when the Ensemble is
+    # formed (`[instrument] saturation_threshold`)
+    saturation_threshold: float = field(
+        default_factory=get_saturation_threshold, repr=False,
+    )
 
     def __repr__(self):
         return (f"Ensemble({len(self.ms1_cofeatures)} ms1, "
@@ -269,11 +276,9 @@ class Ensemble:
         The ensemble's representative (MS1, MS2) pair
         i.e. for use with find-mfs or showing by default in EnsembleViewer
 
-        MS1 is the apex scan for all acquisition modes.
-        MS2: DIA / MS1-only uses the tallest MS2 scan; DDA uses the matched
-        MS2 scan with the tallest precursor (see `_dda_tallest_precursor_ms2`)
-
-        TODO: The DDA behaviour is a placeholder until precursor stitching lands
+        MS1: the most intense unsaturated scan (see `composite_ms1_scan_num`)
+        MS2: DIA / MS1-only uses the tallest MS2 scan; DDA uses the MS2 of
+        the tallest precursor (see `_dda_tallest_precursor_ms2`)
 
         Computed lazily
         """
@@ -286,7 +291,7 @@ class Ensemble:
 
             self._composite = CompositeSpectrum(
                 ms1=self.get_spectrum(
-                    ms_level=1, scan_num=self.base_scan_num
+                    ms_level=1, scan_num=self.composite_ms1_scan_num()
                 ),
                 ms2=ms2,
                 precursor_mz=self.resolved_precursor_mz,
@@ -295,10 +300,36 @@ class Ensemble:
 
         return self._composite
 
+    def composite_ms1_scan_num(self) -> int:
+        """
+        The scan the composite MS1 is taken from: within the base
+        cofeature's scan range, the scan whose tallest ensemble ion is most
+        intense while still below `saturation_threshold`.
+
+        Falls back to the apex (`base_scan_num`) if every scan is saturated.
+        """
+        scan_idxs = self.base_cofeature.scan_idxs
+        lane_idxs = self._get_mz_lane_idxs(1)
+        if scan_idxs.size == 0 or lane_idxs.size == 0:
+            return self.base_scan_num
+
+        s0, s1 = int(scan_idxs[0]), int(scan_idxs[-1])
+        intsys = self.injection.scan_array_ms1.intsy_arr[
+            lane_idxs, s0:s1 + 1
+        ].toarray().max(axis=0)
+
+        intsys[intsys >= self.saturation_threshold] = -np.inf
+        i = int(intsys.argmax())
+        if intsys[i] == -np.inf:
+            return self.base_scan_num
+        return s0 + i
+
     def _dda_tallest_precursor_ms2(self) -> Optional[SpectrumArray]:
         """
-        Placeholder DDA composite MS2: the matched MS2 scan whose precursor
-        was most intense in the MS1 scan nearest to it.
+        DDA composite MS2: the MS2 of the precursor that was most intense
+        in MS1 (each scan's precursor intensity is read in the MS1 scan
+        nearest to it). If that precursor was fragmented several times, its
+        scans are merged into one consensus (see `reduce_ms2_spectra`).
 
         Each scan's precursor is matched to the closest MS1 cofeature lane
         (by m/z); falls back to the tallest MS2 scan when no MS1 cofeature
@@ -324,11 +355,19 @@ class Ensemble:
             scan_num = ms1_arr.rt_to_scan_num(spec.rt)
             return float(ms1_arr.intsy_arr[cofeature.mz_lane_idx, scan_num])
 
-        intsys = [precursor_intsy(s) for s in scan_specs]
-        if max(intsys) == -np.inf:
+        groups = _group_by_precursor(scan_specs, precursor_tol=0.5)
+        group_intsys = [
+            max(precursor_intsy(s) for s in group) for group in groups
+        ]
+        if max(group_intsys) == -np.inf:
             return max(scan_specs, key=_max_intsy).spectrum
 
-        return scan_specs[int(np.argmax(intsys))].spectrum
+        best = groups[int(np.argmax(group_intsys))]
+        if len(best) == 1:
+            return best[0].spectrum
+        return reduce_ms2_spectra(
+            best, 'consensus', group_by_precursor=False,
+        )[0].spectrum
 
     # ------------------------------------------------------------------
     # MS2 spectrum production
