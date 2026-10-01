@@ -58,6 +58,9 @@ class SampleViewer(
     sigViewEnsembleRequested = QtCore.pyqtSignal(
         object,  # Ensemble
     )
+    sigAutoFindMfsRequested = QtCore.pyqtSignal(
+        object,  # list[Ensemble]
+    )
 
     def __init__(
         self,
@@ -732,12 +735,30 @@ class SampleViewer(
         """Show right-click context menu for ensemble"""
         from PyQt5.QtGui import QCursor
         menu = QtWidgets.QMenu(self)
+        menu.setToolTipsVisible(True)
+
+        injection = self.model.getInjection(sample_uuid)
+        ensemble = injection.ensembles.get(ensemble_uuid) if injection else None
 
         action_open = menu.addAction("Open in Ensemble Viewer")
         action_review = menu.addAction("Review Formula Assignment...")
         action_review.setEnabled(
             self.data_source.get_assignment_for_source(ensemble_uuid) is not None
         )
+        action_find_mfs = menu.addAction("Auto find-mfs")
+        if ensemble is not None and ensemble.is_dda:
+            # The batch find-mfs path is DIA / MS1-only
+            action_find_mfs.setEnabled(False)
+            action_find_mfs.setToolTip(
+                "Not available for DDA yet; use Auto find-MF in the "
+                "Ensemble Viewer"
+            )
+        else:
+            action_find_mfs.setEnabled(ensemble is not None)
+            action_find_mfs.setToolTip(
+                "A formula you picked yourself is kept; otherwise the "
+                "ensemble is (re-)annotated with the saved find-mfs parameters"
+            )
         action_export = menu.addAction("Export...")
         menu.addSeparator()
         action_delete = menu.addAction("Delete Ensemble")
@@ -748,6 +769,8 @@ class SampleViewer(
             self._open_ensemble_in_viewer(sample_uuid, ensemble_uuid)
         elif action == action_review:
             self._review_formula_assignment(sample_uuid, ensemble_uuid)
+        elif action == action_find_mfs:
+            self.sigAutoFindMfsRequested.emit([ensemble])
         elif action == action_delete:
             self._delete_ensemble(sample_uuid, ensemble_uuid)
         # elif action == action_export: ...

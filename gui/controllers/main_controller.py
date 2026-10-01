@@ -266,6 +266,10 @@ class MainController:
             self._handle_view_ensemble_request
         )
 
+        sample_viewer.sigAutoFindMfsRequested.connect(
+            self._handle_auto_find_mf_batch_request
+        )
+
     def _connect_alignment_viewer_signals(self) -> None:
         """
         Wire the Alignment Viewer's action signals. Safe to call at init:
