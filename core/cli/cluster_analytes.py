@@ -128,24 +128,15 @@ def cluster_analytes(
 
     ProcessController-compatible. Returns None if cancelled.
     """
-    sample_of = {s.uuid: s for s in samples}
+    analytes, spectra = analyte_ms2_spectra(alignment, samples)
+    n_dropped = len(alignment.analytes) - len(analytes)
 
-    analytes: list['AlignedAnalyte'] = []
-    spectra: list[Spectrum] = []
-    n_dropped = 0
-    for analyte in alignment.analytes:
-        spectrum = _ms2_spectrum(analyte, sample_of.get)
-        if spectrum is None:
-            n_dropped += 1
-            continue
-        analytes.append(analyte)
-        spectra.append(spectrum)
-
-    similarity = _similarity_matrix(
+    scored = similarity_matrix(
         spectra, params, progress_callback, cancel_event,
     )
-    if similarity is None:
+    if scored is None:
         return None
+    similarity, _matches = scored
 
     rts = np.array([a.consensus_rt for a in analytes], dtype=float)
     order, nodes = _order_and_nodes(similarity, rts, params.linkage_method)
@@ -157,6 +148,25 @@ def cluster_analytes(
         n_dropped_no_ms2=n_dropped,
         params=params,
     )
+
+
+def analyte_ms2_spectra(
+    alignment: 'EnsembleAlignment',
+    samples: list['Sample'],
+) -> tuple[list['AlignedAnalyte'], list[Spectrum]]:
+    """
+    `alignment`'s analytes that have a representative MS2, and those MS2s
+    as matchms Spectra (parallel lists, in alignment order).
+    """
+    sample_of = {s.uuid: s for s in samples}
+    analytes: list['AlignedAnalyte'] = []
+    spectra: list[Spectrum] = []
+    for analyte in alignment.analytes:
+        spectrum = _ms2_spectrum(analyte, sample_of.get)
+        if spectrum is not None:
+            analytes.append(analyte)
+            spectra.append(spectrum)
+    return analytes, spectra
 
 
 def _ms2_spectrum(
@@ -175,18 +185,20 @@ def _ms2_spectrum(
     return spectrum
 
 
-def _similarity_matrix(
+def similarity_matrix(
     spectra: list[Spectrum],
     params: ClusterParams,
     progress_callback=None,
     cancel_event=None,
-) -> Optional[np.ndarray]:
+) -> Optional[tuple[np.ndarray, np.ndarray]]:
     """
-    Symmetric modified-cosine matrix (diagonal 1). Scores from fewer than
-    `min_matched_peaks` matched peaks are zeroed. None if cancelled.
+    Symmetric modified-cosine matrix (diagonal 1), and the matched-peak
+    count of each pair. Scores from fewer than `min_matched_peaks` matched
+    peaks are zeroed. None if cancelled.
     """
     n = len(spectra)
     similarity = np.eye(n)
+    matches = np.zeros((n, n), dtype=int)
     cosine = ModifiedCosine(
         tolerance=params.tolerance,
         mz_power=params.mz_power,
@@ -200,7 +212,9 @@ def _similarity_matrix(
             return None
         for j in range(i + 1, n):
             result = cosine.pair(spectra[i], spectra[j])
-            if int(result['matches']) >= params.min_matched_peaks:
+            n_matched = int(result['matches'])
+            matches[i, j] = matches[j, i] = n_matched
+            if n_matched >= params.min_matched_peaks:
                 similarity[i, j] = similarity[j, i] = float(result['score'])
         done += n - 1 - i
         if progress_callback is not None and (i % 20 == 0 or i == n - 1):
@@ -209,7 +223,7 @@ def _similarity_matrix(
                 f"Scored {done}/{n_pairs} analyte pairs",
             )
 
-    return similarity
+    return similarity, matches
 
 
 def _order_and_nodes(

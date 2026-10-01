@@ -8,7 +8,7 @@ Usage:
     mzkit align            - Align ensembles across samples by spectral similarity
     mzkit merge-alignments - Merge existing alignments by matching analytes
     mzkit filter           - Filter an alignment by expression
-    mzkit export-table     - Export alignment as a feature table
+    mzkit export-table     - Export alignment as feature tables (+ .mgf, .graphml)
     mzkit export-bpcs      - Export base peak chromatograms
     mzkit export-compound  - Export XIC + spectra for a single analyte
 """
@@ -603,6 +603,9 @@ def cmd_filter(args: argparse.Namespace) -> None:
 
 
 def cmd_export_table(args: argparse.Namespace) -> None:
+    from core.cli.cluster_analytes import cluster_params_from_config
+    from core.utils.config import load_config
+
     registry = _load_registry(Path(args.mzk))
     alignment = _get_alignment(registry, args.alignment_name)
 
@@ -620,6 +623,9 @@ def cmd_export_table(args: argparse.Namespace) -> None:
         write_mgf=args.mgf,
         mgf_mode='per_sample' if args.mgf_mode == 'per-sample' else 'consensus',
         formulas=registry.chosen_formulas(),
+        write_graphml=args.graphml,
+        min_edge_cosine=args.min_edge_cosine,
+        network_params=cluster_params_from_config(load_config()),
     )
 
 
@@ -1084,7 +1090,8 @@ def build_parser() -> argparse.ArgumentParser:
     # --- export-table ---
     p_export = subparsers.add_parser(
         'export-table',
-        help='Export alignment as a feature table',
+        help='Export alignment as abundance + formula tables '
+             '(+ .mgf, .graphml)',
     )
     p_export.add_argument(
         'mzk',
@@ -1093,7 +1100,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument(
         '-o', '--output',
         required=True,
-        help='Output CSV/TSV file',
+        help='Output path; e.g. features.tsv writes features_abundance.tsv, '
+             'features_formulas.tsv, features.mgf, features.graphml',
     )
     p_export.add_argument(
         '-f', '--format',
@@ -1117,8 +1125,23 @@ def build_parser() -> argparse.ArgumentParser:
         '--mgf-mode',
         choices=['consensus', 'per-sample'],
         default='consensus',
-        help='consensus: best (most-intense) ensemble per analyte; '
+        help='consensus: representative spectrum per analyte; '
              'per-sample: every aligned ensemble (default: consensus)',
+    )
+    p_export.add_argument(
+        '--graphml',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Also write a .graphml MS2 modified-cosine network, scored per '
+             'the [analyte_clustering] config (default: on; disable with '
+             '--no-graphml)',
+    )
+    p_export.add_argument(
+        '--min-edge-cosine',
+        type=float,
+        default=0.7,
+        help='Drop network edges with modified cosine below this '
+             '(default: 0.7)',
     )
     p_export.set_defaults(func=cmd_export_table)
 

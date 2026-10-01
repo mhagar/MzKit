@@ -1,15 +1,13 @@
 """
 Cross-sample alignment domain types.
 
-An ``EnsembleAlignment`` groups Ensembles that represent the same chemical
+An `EnsembleAlignment` groups Ensembles that represent the same chemical
 entity across multiple Samples. It is the cross-sample analogue of an
 Ensemble (which groups coeluting ions within a single sample).
 
-These are *data* types only — the alignment *algorithm* that produces them
-lives in ``core/cli/align_ensembles.py``. Keeping the dataclasses here (next
-to Sample, Injection, Ensemble) is what lets ``data_registry`` and
-``persistence`` depend on them without reaching into ``core/cli``.
+The alignment algorithm that produces them: `core/cli/align_ensembles.py`
 """
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Mapping, NamedTuple, Optional, TYPE_CHECKING
 
@@ -36,6 +34,19 @@ class RepresentativeSpectrum(NamedTuple):
         """m/z of the most intense peak in the representative MS1."""
         ms1 = self.composite.ms1
         return float(ms1['mz'][ms1['intsy'].argmax()]) if ms1.size else 0.0
+
+
+class ConsensusFormula(NamedTuple):
+    """
+    An AlignedAnalyte's majority-vote formula across its members.
+
+    formula: the most common accepted formula, or None if no member has one.
+    count: how many members carry `formula`.
+    total: how many members were polled (including those without a formula).
+    """
+    formula: Optional[str]
+    count: int
+    total: int
 
 
 class AlignmentParams(NamedTuple):
@@ -146,6 +157,41 @@ class AlignedAnalyte:
             ensemble_uuid=ens.uuid,
         )
         return self._representative
+
+    def consensus_formula(
+        self,
+        ensembles: Mapping['SampleUUID', 'Ensemble'],
+        formulas: Mapping['EnsembleUUID', str],
+    ) -> ConsensusFormula:
+        """
+        Majority vote over the members' accepted formulas.
+
+        Ties go to the representative ensemble's formula (if it's among the
+        tied), otherwise to the alphabetically first.
+
+        :param ensembles: this analyte's resolved member ensembles, keyed
+            by sample uuid; `total` counts these.
+        :param formulas: accepted formula per ensemble
+            (e.g. `DataRegistry.chosen_formulas()`).
+        """
+        members = {
+            sample_uuid: ens for sample_uuid, ens in ensembles.items()
+            if sample_uuid in self.ensemble_map
+        }
+        votes = Counter(
+            formulas[ens.uuid] for ens in members.values()
+            if ens.uuid in formulas
+        )
+        if not votes:
+            return ConsensusFormula(None, 0, len(members))
+
+        top = max(votes.values())
+        tied = sorted(f for f, n in votes.items() if n == top)
+        winner = tied[0]
+        rep = self.representative_spectrum(members)
+        if rep is not None and formulas.get(rep.ensemble_uuid) in tied:
+            winner = formulas[rep.ensemble_uuid]
+        return ConsensusFormula(winner, top, len(members))
 
 
 @dataclass

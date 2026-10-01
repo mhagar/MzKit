@@ -22,6 +22,7 @@ from core.utils.spectrum_export import to_mgf, to_sirius_ms
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
+    from core.data_structs.composite_spectrum import CompositeSpectrum
     from core.data_structs.ensemble import MS2Mode
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,7 @@ class EnsembleExport:
 def build_ensemble_export(
     ensemble: 'Ensemble',
     *,
+    composite: Optional['CompositeSpectrum'] = None,
     rt: Optional[float] = None,
     ms2_mode: Optional['MS2Mode'] = None,
     freq_threshold: float = 0.25,
@@ -212,13 +214,17 @@ def build_ensemble_export(
     """
     Gather MS1 + MS2 spectra + metadata for a single ensemble.
 
-    MS2 selection is governed by `ms2_mode` (delegated to
-    Ensemble.get_ms2_spectra); `rt` only governs the MS1 spectrum.
+    Spectra come from `composite` if given (one MS1 + at most one MS2;
+    `rt` and `ms2_mode` are then ignored). Otherwise MS2 selection is
+    governed by `ms2_mode` (delegated to Ensemble.get_ms2_spectra) and
+    `rt` only governs the MS1 spectrum.
 
     Export is the "print" boundary of the BIN strategy: consensus MS2
     spectra (which retain per-bin frequency) are thresholded here, keeping
     only bins present in at least `freq_threshold` of the merged scans.
 
+    :param composite: export this (MS1, MS2) pair, e.g. the ensemble's
+        `composite_spectrum` or an analyte's RepresentativeSpectrum.
     :param rt: scan retention time to pull the MS1 spectrum from. If None,
         the ensemble apex (peak_rt) is used.
     :param ms2_mode: 'tallest' | 'all' | 'consensus'. None (default) uses
@@ -229,16 +235,29 @@ def build_ensemble_export(
     :param formula: the ensemble's accepted formula (its FormulaAssignment's
         chosen candidate), written as the FORMULA tag.
     """
-    scan_rt = ensemble.peak_rt if rt is None else float(rt)
+    if composite is not None:
+        scan_rt = ensemble.peak_rt
+        ms1 = composite.ms1
+        raw_ms2 = [] if composite.ms2 is None else [
+            MS2Spectrum(
+                spectrum=composite.ms2,
+                precursor_mz=composite.precursor_mz,
+                charge=composite.charge,
+                rt=scan_rt,
+            )
+        ]
+    else:
+        scan_rt = ensemble.peak_rt if rt is None else float(rt)
+        ms1 = ensemble.get_spectrum(ms_level=1, scan_rt=scan_rt)
+        raw_ms2 = ensemble.get_ms2_spectra(mode=ms2_mode)
 
-    ms1 = ensemble.get_spectrum(ms_level=1, scan_rt=scan_rt)
     if normalize:
         ms1 = normalize_spectrum(ms1, max_range=100.0)
 
     # Flatten each MS2 spectrum to plain (mz, intsy), thresholding consensus
     # spectra by frequency first (a no-op for single-scan tallest/all).
     ms2_spectra: list[MS2Spectrum] = []
-    for s in ensemble.get_ms2_spectra(mode=ms2_mode):
+    for s in raw_ms2:
         spectrum = threshold_consensus(s.spectrum, min_freq=freq_threshold)
         if normalize:
             spectrum = normalize_spectrum(spectrum, max_range=100.0)

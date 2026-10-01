@@ -53,7 +53,8 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 - `align_ensembles.py` - Cross-sample alignment by spectral cosine similarity
 - `filter_alignment.py` - Filter an EnsembleAlignment by Python expression
 - `import_feature_table.py` - Import external feature coordinates (MZmine CSV) and generate Ensembles + alignment
-- `export_table.py` - Export an EnsembleAlignment as a feature intensity table (CSV/TSV)
+- `export_table.py` - Export an EnsembleAlignment as abundance + formula tables (CSV/TSV), plus companion .mgf and .graphml
+- `export_network.py` - MS2 modified-cosine network of an alignment's analytes as GraphML (scored via `cluster_analytes.py`)
 - `cluster_analytes.py` - Hierarchical clustering of an alignment's analytes by MS2 modified cosine (Alignment Viewer cluster mode)
 - `find_cofeatures.py` - Core cofeature detection (Pearson correlation of extracted ion chromatograms)
 - `segment_chromatogram.py` - Peak boundary detection

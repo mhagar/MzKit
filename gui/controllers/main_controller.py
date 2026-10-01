@@ -586,7 +586,8 @@ class MainController:
             return
 
         from pathlib import Path
-        from core.cli.export_table import export_feature_table_to_file
+        from core.cli.cluster_analytes import cluster_params_from_config
+        from core.utils.config import load_config
 
         path = Path(filepath)
         separator = ',' if path.suffix.lower() == '.csv' else '\t'
@@ -601,15 +602,23 @@ class MainController:
             else:
                 sample_names[uuid] = str(uuid)
 
-        export_feature_table_to_file(
-            alignment=alignment,
-            samples=sample_lookup,
-            sample_names=sample_names,
-            output=path,
-            separator=separator,
-            formulas=self.data_registry.chosen_formulas(),
+        # Background: the .graphml's pairwise MS2 scoring can take a while
+        self.process_controller.start_process(
+            module_path="core.cli.export_table",
+            function_name="export_feature_table_to_file",
+            parameters={
+                "alignment": alignment,
+                "samples": sample_lookup,
+                "sample_names": sample_names,
+                "output": path,
+                "separator": separator,
+                "formulas": self.data_registry.chosen_formulas(),
+                "network_params": cluster_params_from_config(load_config()),
+            },
+            on_completion_func=lambda written: print(
+                "Exported:\n" + "\n".join(f"  - {p}" for p in written or [])
+            ),
         )
-        print(f"Exported to {path}")
 
     def _handle_merge_alignments_request(
         self,

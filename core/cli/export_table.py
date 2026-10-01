@@ -1,30 +1,45 @@
 """
-Export an EnsembleAlignment as a feature table (CSV/TSV), optionally with
-a companion .mgf of the aligned spectra.
+Export an EnsembleAlignment as feature tables (CSV/TSV), with a companion
+.mgf of the aligned spectra and a .graphml MS2 similarity network.
 
-Rows are analytes, columns are samples, values are base intensity.
+From an output path like `features.tsv`, this writes:
+- `features_abundance.tsv`:
+    rows = analytes
+    cols = samples
+    vals = base intensity
+        ('0' = not detected; empty = detected, but its ensemble
+                couldn't be resolved).
 
-The MGF is built via the shared, Qt-free `core.cli.export_ensemble` machinery
-(same code path as the single-compound / SIRIUS exports), so ensemble metadata
-(identity -> NAME, formula -> FORMULA, adduct/charge, and any user_metadata)
-comes along for free. Two modes:
+- `features_formulas.tsv`:
+    each analyte's consensus formula (highest `count` of `total`)
+    and per-sample columns w/ accepted formula,
+        '0' if present without one, empty if absent.
 
-- ``consensus`` (default): one MGF entry per analyte, using the most-intense
-  ensemble (highest base intensity) across all samples it was detected in.
-- ``per_sample``: one MGF entry per (analyte, sample) it was detected in, i.e.
-  every ensemble participating in the alignment.
+- `features.mgf`: see below
+- `features.graphml`: see `core.cli.export_network`.
 
-In both modes each entry is stamped with ``FEATURE_ID`` = the analyte's row id,
-so the table's ``analyte_id`` column cross-references the MGF (GNPS-FBMN style).
+The MGF is built via `core.cli.export_ensemble` (same as single cmpd exports)
+Two modes:
+- `consensus` (default):
+    one MGF entry per analyte: its RepresentativeSpectrum (see alignment.py),
+     with theconsensus formula as FORMULA
+
+- `per_sample`: one entry per analyte per sample it was detected in
+
+Each analyte's row id is recorded as `FEATURE_ID` to cross-reference the MGF
+(GNPS-FBMN style)
 """
 import logging
+import threading
 from pathlib import Path
-from typing import Literal, Mapping, Optional, TYPE_CHECKING
+from typing import Callable, Literal, Mapping, Optional, TYPE_CHECKING
 
+from core.cli.cluster_analytes import ClusterParams
 from core.cli.export_ensemble import build_ensemble_export
+from core.cli.export_network import build_network_graphml
 
 if TYPE_CHECKING:
-    from core.data_structs import Sample, SampleUUID, Ensemble
+    from core.data_structs import Sample, SampleUUID
     from core.data_structs.uuid_types import EnsembleUUID
     from core.data_structs.alignment import EnsembleAlignment
 
@@ -33,78 +48,93 @@ logger = logging.getLogger(__name__)
 MgfMode = Literal['consensus', 'per_sample']
 
 
-def export_feature_table(
+def _ordered_samples(
+    alignment: 'EnsembleAlignment',
+    sample_names: dict['SampleUUID', str],
+) -> tuple[list['SampleUUID'], list[str]]:
+    """The alignment's sample uuids that have a name, and those names."""
+    uuids = [u for u in alignment.sample_uuids if u in sample_names]
+    return uuids, [sample_names[u] for u in uuids]
+
+
+def export_abundance_table(
     alignment: 'EnsembleAlignment',
     samples: dict['SampleUUID', 'Sample'],
     sample_names: dict['SampleUUID', str],
     separator: str = '\t',
 ) -> str:
     """
-    Build a feature table string from an alignment and samples.
+    Analyte x sample table of base intensities.
 
-    :param alignment: The EnsembleAlignment to export
     :param samples: Mapping of SampleUUID -> Sample (with Injections)
     :param sample_names: Mapping of SampleUUID -> display name
     :param separator: Column separator (tab or comma)
-    :return: The table as a string
     """
-    ordered_uuids = [
-        uuid for uuid in alignment.sample_uuids
-        if uuid in sample_names
-    ]
-    ordered_names = [sample_names[uuid] for uuid in ordered_uuids]
+    ordered_uuids, ordered_names = _ordered_samples(alignment, sample_names)
 
-    lines = []
-    header = ['analyte_id', 'consensus_mz', 'consensus_rt'] + ordered_names
-    lines.append(separator.join(header))
-
+    lines = [separator.join(
+        ['analyte_id', 'consensus_mz', 'consensus_rt'] + ordered_names
+    )]
     for i, analyte in enumerate(alignment.analytes):
+        members = analyte.resolve_members(samples.get)
         row = [
             str(i),
             f"{analyte.consensus_mz:.5f}",
             f"{analyte.consensus_rt:.1f}",
         ]
         for uuid in ordered_uuids:
-            ens_uuid = analyte.ensemble_map.get(uuid)
-            if ens_uuid is None:
+            if uuid not in analyte.ensemble_map:
                 row.append('0')
+            elif uuid in members:
+                row.append(f"{members[uuid].base_intsy:.1f}")
             else:
-                sample = samples.get(uuid)
-                if sample and sample.injection:
-                    ensemble = sample.injection.ensembles.get(ens_uuid)
-                    if ensemble:
-                        row.append(f"{ensemble.base_intsy:.1f}")
-                    else:
-                        row.append('0')
-                else:
-                    row.append('0')
-
+                row.append('')
         lines.append(separator.join(row))
 
     return '\n'.join(lines) + '\n'
 
 
-def _best_ensemble(
-    analyte,
+def export_formula_table(
+    alignment: 'EnsembleAlignment',
     samples: dict['SampleUUID', 'Sample'],
-) -> Optional['Ensemble']:
+    sample_names: dict['SampleUUID', str],
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
+    separator: str = '\t',
+) -> str:
     """
-    Most-intense ensemble (by base intensity) across every sample the
-    analyte was detected in, or None.
+    Analyte x sample table of accepted formulas, led by each analyte's
+    consensus formula (see `AlignedAnalyte.consensus_formula`).
+
+    :param formulas: accepted formula per ensemble
+        (e.g. DataRegistry.chosen_formulas()).
     """
-    best_ensemble = None
-    best_intsy = -1.0
-    for sample_uuid, ens_uuid in analyte.ensemble_map.items():
-        sample = samples.get(sample_uuid)
-        if not sample or not sample.injection:
-            continue
-        ensemble = sample.injection.ensembles.get(ens_uuid)
-        if not ensemble:
-            continue
-        if ensemble.base_intsy > best_intsy:
-            best_intsy = ensemble.base_intsy
-            best_ensemble = ensemble
-    return best_ensemble
+    formulas = formulas or {}
+    ordered_uuids, ordered_names = _ordered_samples(alignment, sample_names)
+
+    lines = [separator.join(
+        ['analyte_id', 'consensus_mz', 'consensus_rt',
+         'consensus_formula', 'count', 'total'] + ordered_names
+    )]
+    for i, analyte in enumerate(alignment.analytes):
+        members = analyte.resolve_members(samples.get)
+        consensus = analyte.consensus_formula(members, formulas)
+        row = [
+            str(i),
+            f"{analyte.consensus_mz:.5f}",
+            f"{analyte.consensus_rt:.1f}",
+            consensus.formula or '',
+            str(consensus.count),
+            str(consensus.total),
+        ]
+        for uuid in ordered_uuids:
+            ensemble = members.get(uuid)
+            if ensemble is None:
+                row.append('')
+            else:
+                row.append(formulas.get(ensemble.uuid, '0'))
+        lines.append(separator.join(row))
+
+    return '\n'.join(lines) + '\n'
 
 
 def export_feature_mgf(
@@ -117,44 +147,43 @@ def export_feature_mgf(
     """
     Build an MGF string for an alignment's aligned spectra.
 
-    :param mode: ``'consensus'`` for one entry per analyte (best ensemble
-        across samples) or ``'per_sample'`` for one entry per aligned
-        (analyte, sample).
+    :param mode: ``'consensus'`` for one entry per analyte (its
+        RepresentativeSpectrum) or ``'per_sample'`` for one entry per
+        aligned (analyte, sample).
     :param normalize: normalize spectra to 0-100.
     :param formulas: accepted formula per ensemble (e.g.
-        DataRegistry.chosen_formulas()), written as FORMULA tags.
+        DataRegistry.chosen_formulas()), written as FORMULA tags (the
+        consensus formula in consensus mode).
     :return: MGF text (empty string if nothing exportable).
     """
     blocks: list[str] = []
     formulas = formulas or {}
 
     for i, analyte in enumerate(alignment.analytes):
+        members = analyte.resolve_members(samples.get)
+
         if mode == 'consensus':
-            ensemble = _best_ensemble(analyte, samples)
-            if ensemble is None:
+            rep = analyte.representative_spectrum(members)
+            if rep is None:
                 continue
             export = build_ensemble_export(
-                ensemble, rt=None, normalize=normalize,
-                formula=formulas.get(ensemble.uuid),
+                members[rep.sample_uuid],
+                composite=rep.composite,
+                normalize=normalize,
+                formula=analyte.consensus_formula(members, formulas).formula,
             )
             export.metadata['FEATURE_ID'] = str(i)
             text = export.to_mgf_text()
             if text:
                 blocks.append(text)
         else:  # per_sample
-            for sample_uuid, ens_uuid in analyte.ensemble_map.items():
-                sample = samples.get(sample_uuid)
-                if not sample or not sample.injection:
-                    continue
-                ensemble = sample.injection.ensembles.get(ens_uuid)
-                if not ensemble:
-                    continue
+            for sample_uuid, ensemble in members.items():
                 export = build_ensemble_export(
                     ensemble, rt=None, normalize=normalize,
                     formula=formulas.get(ensemble.uuid),
                 )
                 export.metadata['FEATURE_ID'] = str(i)
-                export.metadata['SAMPLE'] = sample.name
+                export.metadata['SAMPLE'] = samples[sample_uuid].name
                 text = export.to_mgf_text()
                 if text:
                     blocks.append(text)
@@ -172,50 +201,79 @@ def export_feature_table_to_file(
     mgf_mode: MgfMode = 'consensus',
     normalize: bool = True,
     formulas: Optional[Mapping['EnsembleUUID', str]] = None,
-) -> Optional[Path]:
+    write_graphml: bool = True,
+    network_params: ClusterParams = ClusterParams(),
+    min_edge_cosine: float = 0.7,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event: Optional[threading.Event] = None,
+) -> list[Path]:
     """
-    Export a feature table to a file, and (by default) a companion .mgf.
+    Export the abundance + formula tables, and (by default) the companion
+    .mgf and .graphml, all named after ``output``
+    (``features.tsv`` -> ``features_abundance.tsv``,
+    ``features_formulas.tsv``, ``features.mgf``, ``features.graphml``).
 
-    The MGF is written as a sibling of ``output`` with a ``.mgf`` suffix
-    (``features.tsv`` -> ``features.mgf``).
+    ProcessController-compatible (the network scoring is the slow part).
 
+    :param separator: ``','`` writes .csv tables, anything else .tsv.
     :param write_mgf: also write the companion MGF.
-    :param mgf_mode: ``'consensus'`` (best ensemble per analyte) or
-        ``'per_sample'`` (every aligned ensemble).
+    :param mgf_mode: ``'consensus'`` (RepresentativeSpectrum per analyte)
+        or ``'per_sample'`` (every aligned ensemble).
     :param normalize: normalize MGF spectra to 0-100.
-    :return: the MGF path if one was written, else None.
+    :param write_graphml: also write the MS2 similarity network.
+    :param network_params: network scoring parameters
+        (see `cluster_params_from_config`).
+    :param min_edge_cosine: network edges scoring below this are dropped.
+    :return: the written paths (the .graphml is skipped if cancelled).
     """
-    table = export_feature_table(
-        alignment=alignment,
-        samples=samples,
-        sample_names=sample_names,
-        separator=separator,
-    )
-    output.write_text(table)
+    stem = output.with_suffix('').name
+    suffix = '.csv' if separator == ',' else '.tsv'
+    written: list[Path] = []
 
-    n_analytes = len(alignment.analytes)
-    n_samples = len([
-        uuid for uuid in alignment.sample_uuids
-        if uuid in sample_names
-    ])
-    logger.info(
-        f"Exported {n_analytes} analytes x "
-        f"{n_samples} samples to {output}"
+    def sibling(name: str) -> Path:
+        return output.with_name(f"{stem}{name}")
+
+    def write(path: Path, text: str) -> None:
+        path.write_text(text)
+        written.append(path)
+        logger.info(f"Exported {path}")
+
+    write(
+        sibling(f"_abundance{suffix}"),
+        export_abundance_table(alignment, samples, sample_names, separator),
+    )
+    write(
+        sibling(f"_formulas{suffix}"),
+        export_formula_table(
+            alignment, samples, sample_names, formulas, separator,
+        ),
     )
 
-    if not write_mgf:
-        return None
+    if write_mgf:
+        write(
+            sibling('.mgf'),
+            export_feature_mgf(
+                alignment=alignment,
+                samples=samples,
+                mode=mgf_mode,
+                normalize=normalize,
+                formulas=formulas,
+            ),
+        )
 
-    mgf_text = export_feature_mgf(
-        alignment=alignment,
-        samples=samples,
-        mode=mgf_mode,
-        normalize=normalize,
-        formulas=formulas,
-    )
-    mgf_path = output.with_suffix('.mgf')
-    mgf_path.write_text(mgf_text)
-    logger.info(
-        f"Exported {mgf_mode} MGF to {mgf_path}"
-    )
-    return mgf_path
+    if write_graphml:
+        graphml = build_network_graphml(
+            alignment,
+            list(samples.values()),
+            params=network_params,
+            formulas=formulas,
+            min_edge_cosine=min_edge_cosine,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+        )
+        if graphml is None:
+            logger.info("Cancelled; skipped the .graphml")
+        else:
+            write(sibling('.graphml'), graphml)
+
+    return written
