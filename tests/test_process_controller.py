@@ -70,3 +70,24 @@ def test_failed_process_completes_with_none(qapp):
     pc.start_process(TASKS, "fail", {}, on_completion_func=done.append)
     _pump(qapp, lambda: done)
     assert done == [None]
+
+
+def test_model_reports_only_real_updates(qapp):
+    """sigProcessUpdated (mirrored to the status bar) skips no-op re-polls."""
+    pc = ProcessController(main_controller=None)
+    updates = []
+    pc.model.sigProcessUpdated.connect(
+        lambda pid, name, status, progress: updates.append((status, progress))
+    )
+    done = []
+    pc.start_process(TASKS, "report_progress", on_completion_func=done.append)
+    _pump(qapp, lambda: done)
+
+    assert done == ["done"]
+    # Many polls happened, but each distinct row state is reported once
+    assert len(updates) == len(set(updates))
+    statuses = [s for s, _ in updates]
+    assert statuses[-1] == "completed"
+    assert "running" in statuses
+    progresses = [p for _, p in updates]
+    assert "25% ; step 25" in progresses and "75% ; step 75" in progresses

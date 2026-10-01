@@ -455,7 +455,14 @@ class ProcessController:
 class ProcessTableModel(QAbstractTableModel):
     """
     Model for storing information about running processes
+
+    `sigProcessUpdated` fires whenever a process is added or its row
+    actually changes (i.e. for mirroring updates elsewhere, like the main
+    window's status bar).
     """
+    # process_id, name, status, progress
+    sigProcessUpdated = pyqtSignal(str, str, str, str)
+
     def __init__(
             self,
             parent=None,
@@ -553,16 +560,16 @@ class ProcessTableModel(QAbstractTableModel):
             len(self.processes),
         )
 
-        self.processes.append(
-            [
-                str(process_id),
-                process_name,
-                process_status,
-                process_progress,
-            ]
-        )
+        row = [
+            str(process_id),
+            process_name,
+            process_status,
+            process_progress,
+        ]
+        self.processes.append(row)
 
         self.endInsertRows()
+        self.sigProcessUpdated.emit(*row)
 
         return True
 
@@ -583,11 +590,16 @@ class ProcessTableModel(QAbstractTableModel):
 
         for row, process in enumerate(self.processes):
             if process[0] == str(process_id):
+                old = list(process)
                 if status:
                     process[2] = status
 
                 if progress:
                     process[3] = progress
+
+                # Progress is re-polled every 100 ms; skip no-op updates
+                if process == old:
+                    return True
 
                 # Emit data changed signal
                 top_left = self.index(row, 0)
@@ -600,6 +612,7 @@ class ProcessTableModel(QAbstractTableModel):
                     top_left,
                     bottom_right,
                 )
+                self.sigProcessUpdated.emit(*process)
 
                 return True
 

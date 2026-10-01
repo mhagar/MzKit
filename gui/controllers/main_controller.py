@@ -69,6 +69,9 @@ class MainController:
         self.subwindow_manager.initialize_all_windows()
 
         # Connect QSignals
+        self.process_controller.model.sigProcessUpdated.connect(
+            self._show_process_status
+        )
         self._connect_view_signals()
         self._connect_sample_controller_signals()
         self._connect_sample_viewer_signals()
@@ -1082,6 +1085,27 @@ class MainController:
             registered.append(assignment)
         result.assignments = registered
         self.main_view.statusbar.showMessage(f"find-mfs: {result.summary()}")
+
+    def _show_process_status(
+        self,
+        process_id: str,
+        name: str,
+        status: str,
+        progress: str,
+    ):
+        """
+        Mirror a Process Monitor update in the main window's status bar.
+        Completion handlers may follow up with their own (more specific)
+        message, i.e. find-mfs' run summary.
+        """
+        # `name` is a module path ('core.cli.foo') or a file path ('.../foo.py')
+        short = Path(name).stem if name.endswith('.py') else name.rsplit('.', 1)[-1]
+        parts = [f"[{process_id}] {short}", status]
+        if status in ('failed', 'error'):
+            parts.append("see the Process Monitor for details")
+        elif progress:
+            parts.append(progress)
+        self.main_view.statusbar.showMessage("\t|\t".join(parts))
 
     def _handle_align_ensembles_request(
         self,
