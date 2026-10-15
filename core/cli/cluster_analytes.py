@@ -1,12 +1,15 @@
 """
-Hierarchical clustering of an EnsembleAlignment's AlignedAnalytes by MS2
-similarity ("which analytes are structurally related").
+Hierarchical clustering of an EnsembleAlignment's AlignedAnalytes.
 
+By default, this uses modified cosine scores:
 1. Each analyte's representative MS2 (`AlignedAnalyte.representative_spectrum`)
    is converted to a matchms Spectrum; analytes without MS2 are dropped.
 2. All pairs are scored by modified cosine (`matchms.similarity.ModifiedCosine`,
    the greedy implementation).
 3. Average-linkage (by default) clustering on distance = 1 - similarity.
+
+Steps 1-2 can instead come from an imported similarity matrix
+(`core.cli.import_similarity`); step 3 is `cluster_from_similarity`.
 
 Leaf order
 ----------
@@ -18,7 +21,7 @@ form an RT-sorted comb, and every subtree's leaves are contiguous.
 """
 from dataclasses import dataclass
 import threading
-from typing import Callable, NamedTuple, Optional, TYPE_CHECKING
+from typing import Callable, Hashable, NamedTuple, Optional, TYPE_CHECKING
 
 import numpy as np
 from matchms import Spectrum
@@ -53,6 +56,8 @@ class ClusterParams(NamedTuple):
     min_matched_peaks: int = 3
     linkage_method: str = 'average'
 
+    source_name = "MS2 modified cosine"
+
 
 # One row per (sub-1.0) merge, for drawing / hit-testing the dendrogram.
 # x_left / x_right: x of the two children (leaf slot, or a merge's midpoint);
@@ -70,15 +75,18 @@ NODE_DTYPE = np.dtype([
 class AnalyteClustering:
     """
     analyte_uuids: clustered analytes in leaf order (leaf slot = index).
-    similarity: NxN modified-cosine similarity, in leaf order.
+    similarity: NxN similarity, in leaf order.
     nodes: dendrogram merges below distance 1.0 (see NODE_DTYPE).
-    n_dropped_no_ms2: analytes left out for lack of a representative MS2.
+    n_dropped: analytes left out (see `dropped_reason`).
+    params: what produced this clustering - ClusterParams, or an
+        `import_similarity.ImportedClusterSpec`. Hashable (a cache key).
     """
     analyte_uuids: list['AnalyteUUID']
     similarity: np.ndarray
     nodes: np.ndarray
-    n_dropped_no_ms2: int
-    params: ClusterParams
+    n_dropped: int
+    params: Hashable
+    dropped_reason: str = "without MS2"
 
 
 def cluster_params_from_config(config: 'ConfigParser') -> ClusterParams:
@@ -138,15 +146,34 @@ def cluster_analytes(
         return None
     similarity, _matches = scored
 
+    return cluster_from_similarity(
+        analytes, similarity, params.linkage_method,
+        n_dropped=n_dropped, params=params,
+    )
+
+
+def cluster_from_similarity(
+    analytes: list['AlignedAnalyte'],
+    similarity: np.ndarray,
+    linkage_method: str,
+    n_dropped: int,
+    params: Hashable,
+    dropped_reason: str = "without MS2",
+) -> AnalyteClustering:
+    """
+    Cluster `analytes` by a precomputed NxN `similarity` (parallel to
+    `analytes`, in [0, 1], 0 = unrelated).
+    """
     rts = np.array([a.consensus_rt for a in analytes], dtype=float)
-    order, nodes = _order_and_nodes(similarity, rts, params.linkage_method)
+    order, nodes = _order_and_nodes(similarity, rts, linkage_method)
 
     return AnalyteClustering(
         analyte_uuids=[analytes[i].uuid for i in order],
         similarity=similarity[np.ix_(order, order)],
         nodes=nodes,
-        n_dropped_no_ms2=n_dropped,
+        n_dropped=n_dropped,
         params=params,
+        dropped_reason=dropped_reason,
     )
 
 

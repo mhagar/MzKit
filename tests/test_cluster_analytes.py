@@ -62,7 +62,7 @@ def test_related_analytes_cluster_and_no_ms2_dropped():
     ])
     result = cluster_analytes(alignment, samples, ClusterParams())
 
-    assert result.n_dropped_no_ms2 == 1
+    assert result.n_dropped == 1
     assert analytes[3].uuid not in result.analyte_uuids
     assert len(result.analyte_uuids) == 3
 

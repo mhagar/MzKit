@@ -6,7 +6,8 @@ lane; strips of the same AlignedAnalyte share a colour and a connecting
 line (see gui/widgets/AlignmentPlotWidget.py).
 
 Cluster mode instead lays analytes out in the leaf order of a hierarchical
-clustering by MS2 modified cosine (core/cli/cluster_analytes.py), with the
+clustering by MS2 modified cosine (core/cli/cluster_analytes.py) or by an
+imported similarity matrix (core/cli/import_similarity.py), with the
 dendrogram drawn above the map (gui/widgets/AlignmentDendrogramWidget.py).
 Clustering runs in the background via MainController (sigClusterRequested).
 
@@ -36,6 +37,7 @@ from gui.widgets.alignment_plot.params import RenderParams
 if TYPE_CHECKING:
     from core.cli.align_ensembles import PairScore
     from core.cli.cluster_analytes import AnalyteClustering
+    from core.cli.import_similarity import ImportedClusterSpec, RawMatrix
     from core.data_structs import Ensemble, SampleUUID
     from core.data_structs.alignment import EnsembleAlignment
     from gui.views.alignment_viewer.data_source import AlignmentViewerDataSource
@@ -53,7 +55,8 @@ class AlignmentViewer(
     sigViewEnsembleRequested = QtCore.pyqtSignal(object)  # Ensemble
     sigAddSamplesRequested = QtCore.pyqtSignal(object)     # list[SampleUUID]
     sigAutoFindMfsRequested = QtCore.pyqtSignal(object)    # list[Ensemble]
-    sigClusterRequested = QtCore.pyqtSignal(object, object)  # EnsembleAlignment, ClusterParams
+    # EnsembleAlignment, ClusterParams | ImportedClusterSpec, RawMatrix | None
+    sigClusterRequested = QtCore.pyqtSignal(object, object, object)
 
     def __init__(
         self,
@@ -77,11 +80,13 @@ class AlignmentViewer(
 
         self._params_dialog: Optional[RenderParamsDialog] = None
 
-        # Cluster mode: results for the current alignment, keyed by params
-        self._cluster_params: ClusterParams = cluster_params_from_config(
-            load_config()
+        # Cluster mode: results for the current alignment, keyed by what
+        # produced them (ClusterParams, or ImportedClusterSpec + its matrix)
+        self._cluster_params: 'ClusterParams | ImportedClusterSpec' = (
+            cluster_params_from_config(load_config())
         )
-        self._clusterings: dict[ClusterParams, 'AnalyteClustering'] = {}
+        self._cluster_matrix: Optional['RawMatrix'] = None
+        self._clusterings: dict[object, 'AnalyteClustering'] = {}
         self._shown_clustering: Optional['AnalyteClustering'] = None
         self._cluster_dialog: Optional[ClusterParamsDialog] = None
 
@@ -194,6 +199,8 @@ class AlignmentViewer(
         self._ctx = AlignmentContext(alignment, self.data_source)
         self._selection = []
         self._clear_cluster_mode()
+        if self._cluster_dialog is not None:
+            self._cluster_dialog.set_alignment(alignment)
         self.detail_panel.reset()
         self._render()
         self.inspector.show_summary(alignment)
@@ -204,6 +211,8 @@ class AlignmentViewer(
         self._ctx = None
         self._selection = []
         self._clear_cluster_mode()
+        if self._cluster_dialog is not None:
+            self._cluster_dialog.set_alignment(None)
         self.plot_item.clear_alignment()
         self.detail_panel.reset()
         self.inspector.show_summary(None)
@@ -303,8 +312,12 @@ class AlignmentViewer(
 
     def _request_clustering(self):
         """Ask MainController to cluster; the map stays as is meanwhile."""
-        self.status_bar.showMessage("Clustering analytes by MS2…")
-        self.sigClusterRequested.emit(self._alignment, self._cluster_params)
+        self.status_bar.showMessage(
+            f"Clustering analytes by {self._cluster_params.source_name}…"
+        )
+        self.sigClusterRequested.emit(
+            self._alignment, self._cluster_params, self._cluster_matrix,
+        )
 
     def set_clustering(
         self,
@@ -329,14 +342,20 @@ class AlignmentViewer(
     def _show_cluster_dialog(self):
         if self._cluster_dialog is None:
             self._cluster_dialog = ClusterParamsDialog(
-                self._cluster_params, parent=self,
+                cluster_params_from_config(load_config()), parent=self,
             )
             self._cluster_dialog.sigApply.connect(self._on_cluster_params)
+            self._cluster_dialog.set_alignment(self._alignment)
         self._cluster_dialog.show()
         self._cluster_dialog.raise_()
 
-    def _on_cluster_params(self, params: ClusterParams):
+    def _on_cluster_params(
+        self,
+        params: 'ClusterParams | ImportedClusterSpec',
+        matrix: Optional['RawMatrix'],
+    ):
         self._cluster_params = params
+        self._cluster_matrix = matrix
         if self._alignment is None:
             return
         if not self.btnClusterMode.isChecked():
@@ -501,12 +520,14 @@ class AlignmentViewer(
             f"{alignment.analyte_count - multi} singletons)"
         )
         clustering = self._active_clustering()
-        if clustering is not None and clustering.n_dropped_no_ms2:
-            n = clustering.n_dropped_no_ms2
-            text += (
-                f"  ·  {n} analyte{'' if n == 1 else 's'} without MS2 "
-                f"not clustered"
-            )
+        if clustering is not None:
+            text += f"  ·  clustered by {self._cluster_params.source_name}"
+            if clustering.n_dropped:
+                n = clustering.n_dropped
+                text += (
+                    f"  ·  {n} analyte{'' if n == 1 else 's'} "
+                    f"{clustering.dropped_reason} not clustered"
+                )
         return text
 
     # -- registry changes ---------------------------------------------------

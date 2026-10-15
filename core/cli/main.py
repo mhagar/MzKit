@@ -11,6 +11,7 @@ Usage:
     mzkit export-table     - Export alignment as feature tables (+ .mgf, .graphml)
     mzkit export-bpcs      - Export base peak chromatograms
     mzkit export-compound  - Export XIC + spectra for a single analyte
+    mzkit import-similarity  - Import an external similarity matrix
 """
 import argparse
 import csv
@@ -667,6 +668,35 @@ def cmd_export_compound(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_import_similarity(args: argparse.Namespace) -> None:
+    from core.cli.import_similarity import (
+        ImportParams, read_similarity_csv, transform, write_similarity_csv,
+    )
+
+    registry = _load_registry(Path(args.mzk))
+    alignment = _get_alignment(registry, args.alignment_name)
+
+    raw = read_similarity_csv(Path(args.matrix))
+    params = ImportParams(
+        is_distance=args.distance,
+        clip_min=args.clip_min,
+        clip_max=args.clip_max,
+        bidirectional=args.bidirectional is not None,
+        bidirectional_threshold=(
+            args.bidirectional if args.bidirectional is not None else 0.7
+        ),
+        floor=args.floor,
+    )
+    analytes, similarity, report = transform(raw, alignment, params)
+    print(report.format_text())
+
+    if args.output:
+        write_similarity_csv(
+            Path(args.output), [str(a.uuid) for a in analytes], similarity,
+        )
+        print(f"Wrote transformed matrix to {args.output}")
+
+
 # --- Argument parser ---
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1204,6 +1234,48 @@ def build_parser() -> argparse.ArgumentParser:
         help='Name of alignment to use (required if multiple exist)',
     )
     p_compound.set_defaults(func=cmd_export_compound)
+
+    # --- import-similarity ---
+    p_sim = subparsers.add_parser(
+        'import-similarity',
+        help='Match an external similarity matrix (CSV/TSV, labelled by the '
+             'MZKIT_ANALYTE ids of the export-table .mgf) to an alignment and '
+             'report; optionally write the transformed matrix',
+    )
+    p_sim.add_argument('mzk', help='.mzk file containing the alignment')
+    p_sim.add_argument('matrix', help='Square matrix (.csv, else tab-separated)')
+    p_sim.add_argument(
+        '--alignment-name',
+        default=None,
+        help='Name of alignment (required if multiple exist)',
+    )
+    p_sim.add_argument(
+        '--distance', action='store_true',
+        help='Values are distances (larger = less similar)',
+    )
+    p_sim.add_argument(
+        '--clip-min', type=float, default=0.0,
+        help='Clip values below this, then rescale to [0, 1] (default: 0)',
+    )
+    p_sim.add_argument(
+        '--clip-max', type=float, default=1.0,
+        help='Clip values above this (for distances: the fully-unrelated '
+             'distance) (default: 1)',
+    )
+    p_sim.add_argument(
+        '--bidirectional', type=float, default=None, metavar='THRESHOLD',
+        help='Keep a pair only if both directions score at least THRESHOLD '
+             '(taking the smaller); default: average both directions',
+    )
+    p_sim.add_argument(
+        '--floor', type=float, default=0.6,
+        help='Scores below this become 0 / unrelated (default: 0.6)',
+    )
+    p_sim.add_argument(
+        '-o', '--output', default=None,
+        help='Write the transformed similarity matrix here',
+    )
+    p_sim.set_defaults(func=cmd_import_similarity)
 
     return parser
 

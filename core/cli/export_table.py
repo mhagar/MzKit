@@ -27,7 +27,7 @@ Two modes:
 - `per_sample`: one entry per analyte per sample it was detected in
 
 Each analyte's row id is recorded as `FEATURE_ID` to cross-reference the MGF
-(GNPS-FBMN style)
+(GNPS-FBMN style), and its UUID as `MZKIT_ANALYTE`
 """
 import logging
 import threading
@@ -37,6 +37,7 @@ from typing import Callable, Literal, Mapping, Optional, TYPE_CHECKING
 from core.cli.cluster_analytes import ClusterParams
 from core.cli.export_ensemble import build_ensemble_export
 from core.cli.export_network import build_network_graphml
+from core.cli.import_similarity import ANALYTE_ID_TAG
 
 if TYPE_CHECKING:
     from core.data_structs import Sample, SampleUUID
@@ -173,6 +174,7 @@ def export_feature_mgf(
                 formula=analyte.consensus_formula(members, formulas).formula,
             )
             export.metadata['FEATURE_ID'] = str(i)
+            export.metadata[ANALYTE_ID_TAG] = str(analyte.uuid)
             text = export.to_mgf_text()
             if text:
                 blocks.append(text)
@@ -183,6 +185,7 @@ def export_feature_mgf(
                     formula=formulas.get(ensemble.uuid),
                 )
                 export.metadata['FEATURE_ID'] = str(i)
+                export.metadata[ANALYTE_ID_TAG] = str(analyte.uuid)
                 export.metadata['SAMPLE'] = samples[sample_uuid].name
                 text = export.to_mgf_text()
                 if text:

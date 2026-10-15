@@ -1012,7 +1012,8 @@ class MainController:
     def _handle_cluster_analytes_request(
         self,
         alignment,  # EnsembleAlignment
-        params,     # ClusterParams
+        params,     # ClusterParams | ImportedClusterSpec
+        matrix,     # RawMatrix (imported similarity) | None (modified cosine)
     ):
         """
         Cluster an alignment's analytes by MS2 similarity (Alignment Viewer
@@ -1021,6 +1022,23 @@ class MainController:
         alignment_viewer = self.subwindow_manager.get_window(
             'alignment_viewer'
         )
+
+        def on_done(result):
+            alignment_viewer.set_clustering(alignment.uuid, result)
+
+        if matrix is not None:
+            self.process_controller.start_process(
+                module_path="core.cli.import_similarity",
+                function_name="cluster_imported",
+                parameters={
+                    "alignment": alignment,
+                    "raw": matrix,
+                    "spec": params,
+                },
+                on_completion_func=on_done,
+            )
+            return
+
         samples = [
             sample for sample in (
                 self.data_registry.get_sample(u) for u in alignment.sample_uuids
@@ -1035,9 +1053,7 @@ class MainController:
                 "samples": samples,
                 "params": params,
             },
-            on_completion_func=lambda result: alignment_viewer.set_clustering(
-                alignment.uuid, result,
-            ),
+            on_completion_func=on_done,
         )
 
     def _handle_auto_find_mf_batch_request(
