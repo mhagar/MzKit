@@ -5,30 +5,50 @@ read-only table model.
 """
 from typing import Any, Optional, TYPE_CHECKING
 
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QAbstractTableModel, QModelIndex, Qt
 
+from core.formula import delta_formula
+from gui.widgets.alignment_plot.layout import ANCHOR_COLOR, CURRENT_COLOR
+
 if TYPE_CHECKING:
-    from core.cli.align_ensembles import PairScore
     from core.data_structs import Ensemble, SampleUUID
     from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
     from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
 
 
 class ReadOnlyTableModel(QAbstractTableModel):
-    """A plain headers + rows table. Row payloads are kept for lookups."""
+    """
+    A plain headers + rows table. Row payloads are kept for lookups.
+    """
 
     def __init__(self, headers: list[str], parent=None):
         super().__init__(parent)
         self._headers = headers
         self._rows: list[list[Any]] = []
         self._payloads: list[Any] = []
+        self._marks: dict[int, QtGui.QColor] = {}
 
-    def set_rows(self, rows: list[list[Any]], payloads: Optional[list] = None):
+    def set_rows(
+        self,
+        rows: list[list[Any]],
+        payloads: Optional[list] = None,
+        marks: Optional[dict[int, QtGui.QColor]] = None,
+    ):
+        """:param marks: see `set_marks`."""
         self.beginResetModel()
         self._rows = rows
         self._payloads = payloads if payloads is not None else [None] * len(rows)
+        self._marks = marks or {}
         self.endResetModel()
+
+    def set_marks(self, marks: dict[int, QtGui.QColor]):
+        """Rows whose first cell shows a ● in the given colour (no model reset)."""
+        self._marks = marks
+        if self._rows:
+            self.dataChanged.emit(
+                self.index(0, 0), self.index(len(self._rows) - 1, 0),
+            )
 
     def payload(self, row: int) -> Any:
         return self._payloads[row] if 0 <= row < len(self._payloads) else None
@@ -40,7 +60,14 @@ class ReadOnlyTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._headers)
 
     def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid() or role != Qt.DisplayRole:
+        if not index.isValid():
+            return None
+        if index.column() == 0 and index.row() in self._marks:
+            if role == Qt.ForegroundRole:
+                return self._marks[index.row()]
+            if role == Qt.DisplayRole:
+                return "●"
+        if role != Qt.DisplayRole:
             return None
         value = self._rows[index.row()][index.column()]
         return "" if value is None else str(value)
@@ -49,6 +76,24 @@ class ReadOnlyTableModel(QAbstractTableModel):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
             return self._headers[section]
         return None
+
+
+def _copy_selection(table: QtWidgets.QTableView):
+    """Copy the selected cells as TSV (a column -> one value per line)."""
+    indexes = table.selectionModel().selectedIndexes()
+    if not indexes:
+        return
+    rows: dict[int, dict[int, str]] = {}
+    for index in indexes:
+        rows.setdefault(index.row(), {})[index.column()] = index.data() or ""
+    cols = sorted({c for row in rows.values() for c in row})
+    QtWidgets.QApplication.clipboard().setText('\n'.join(
+        '\t'.join(rows[r].get(c, "") for c in cols) for r in sorted(rows)
+    ))
+
+
+def _compare_marks(current_row: int) -> dict[int, QtGui.QColor]:
+    return {0: ANCHOR_COLOR, current_row: CURRENT_COLOR}
 
 
 def _fmt_intsy(value: float) -> str:
@@ -67,6 +112,8 @@ class Inspector(QtCore.QObject):
     # Emitted when the user picks a compare-table row: the row's index
     # into the selection (never the anchor, row 0).
     sigCompareRowSelected = QtCore.pyqtSignal(int)
+    # Emitted when a compare-table row is double-clicked: make it the anchor.
+    sigAnchorRequested = QtCore.pyqtSignal(int)
     # Emitted when a member ensemble row is double-clicked.
     sigMemberActivated = QtCore.pyqtSignal(object)  # Ensemble
 
@@ -95,8 +142,7 @@ class Inspector(QtCore.QObject):
             ["Sample", "RT (s)", "Base m/z", "Intensity", "Formula"]
         )
         self.compare_model = ReadOnlyTableModel(
-            ["Item", "ΔRT (s)", "Δ ppm", "MS1 cos", "MS2 cos",
-             "MS1 matched", "MS2 matched"]
+            ["", "Item", "Formula", "Count", "Similarity", "Δm/z", "ΔFmla"]
         )
 
         for table, model in (
@@ -107,14 +153,22 @@ class Inspector(QtCore.QObject):
         ):
             table.setModel(model)
             table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-            table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
             table.horizontalHeader().setStretchLastSection(True)
             table.verticalHeader().setVisible(False)
             table.verticalHeader().setStretchLastSection(False)
+            copy = QtWidgets.QAction(table)
+            copy.setShortcut(QtGui.QKeySequence.Copy)
+            copy.setShortcutContext(Qt.WidgetShortcut)
+            copy.triggered.connect(lambda _, t=table: _copy_selection(t))
+            table.addAction(copy)
 
         self.table_compare = table_compare
         table_compare.selectionModel().currentRowChanged.connect(
             self._on_compare_row_changed
+        )
+        table_compare.doubleClicked.connect(
+            lambda index: index.row() > 0
+            and self.sigAnchorRequested.emit(index.row())
         )
         table_analyte_members.doubleClicked.connect(
             lambda index: self._emit_member(index.row())
@@ -136,7 +190,7 @@ class Inspector(QtCore.QObject):
             f"{alignment.analyte_count} analytes across "
             f"{alignment.sample_count} samples\n"
             f"{multi} matched, {alignment.analyte_count - multi} singletons\n\n"
-            f"Parameters:\n"
+            f"Alignment Parameters:\n"
             f"  RT tolerance: {p.rt_tolerance} s\n"
             f"  m/z tolerance: {p.mz_tolerance}\n"
             f"  MS1 / MS2 thresholds: "
@@ -186,7 +240,6 @@ class Inspector(QtCore.QObject):
         n, total = len(analyte.ensemble_map), ctx.alignment.sample_count
         self.title_label.setText(f"<b>Analyte</b> · {n}/{total} samples")
 
-        agreement = ctx.formula_agreement(analyte)
         props = [
             ["Consensus RT (s)", f"{analyte.consensus_rt:.2f}"],
             ["Representative base m/z",
@@ -195,8 +248,7 @@ class Inspector(QtCore.QObject):
             ["Detected in", f"{n}/{total} samples"],
             ["Representative from",
              ctx.sample_name(rep.sample_uuid) if rep else "n/a"],
-            ["Formula",
-             f"{agreement[0]} ({agreement[1]}/{agreement[2]})" if agreement else ""],
+            ["Formula", ctx.formula_label(analyte)],
         ]
         self.analyte_props_model.set_rows(props)
 
@@ -218,44 +270,50 @@ class Inspector(QtCore.QObject):
     def show_compare(
         self,
         items: list['ItemSpectra'],
-        scores: list[Optional['PairScore']],
+        similarities: list[Optional[float]],
         current_row: int,
     ):
         """
         :param items: selected items; items[0] is the anchor.
-        :param scores: scores[i] is items[i] vs the anchor (None for the anchor).
+        :param similarities: similarities[i] is items[i] vs the anchor
+            (None where unavailable).
         :param current_row: the row whose pair is on the mirror plots.
         """
         self.stack.setCurrentIndex(self.PAGE_COMPARE)
         self.title_label.setText(f"<b>Compare</b> · {len(items)} items")
 
         anchor = items[0]
-        rows = [[f"{anchor.label} (anchor)", "—", "—", "—", "—", "—", "—"]]
-        for item, score in zip(items[1:], scores[1:]):
-            d_ppm = (
-                1e6 * (item.base_mz - anchor.base_mz) / anchor.base_mz
-                if anchor.base_mz else None
-            )
+        rows = [[
+            "", anchor.label, anchor.formula_label, anchor.formula_count,
+            "—", "—", "—",
+        ]]
+        for item, similarity in zip(items[1:], similarities[1:]):
             rows.append([
+                "",
                 item.label,
-                f"{item.rt - anchor.rt:+.2f}",
-                _fmt_opt(d_ppm, "+.1f"),
-                f"{score.ms1:.3f}",
-                _fmt_opt(score.ms2, ".3f"),
-                len(score.ms1_matches),
-                len(score.ms2_matches) if score.ms2 is not None else "n/a",
+                item.formula_label,
+                item.formula_count,
+                _fmt_opt(similarity, ".3f"),
+                f"{item.base_mz - anchor.base_mz:+.4f}",
+                delta_formula(anchor.formula, item.formula),
             ])
 
-        blocker = QtCore.QSignalBlocker(self.table_compare.selectionModel())
-        self.compare_model.set_rows(rows)
-        self.table_compare.selectRow(current_row)
-        del blocker
+        self.compare_model.set_rows(rows, marks=_compare_marks(current_row))
+        self.set_current_compare_row(current_row)
         self.table_compare.resizeColumnsToContents()
+
+    def set_current_compare_row(self, row: int):
+        """Mark `row` as the one on the mirror plots and make it current, silently."""
+        self.compare_model.set_marks(_compare_marks(row))
+        blocker = QtCore.QSignalBlocker(self.table_compare.selectionModel())
+        self.table_compare.setCurrentIndex(self.compare_model.index(row, 2))
+        del blocker
 
     # -- signals ------------------------------------------------------------
 
     def _on_compare_row_changed(self, current: QModelIndex, _previous):
         if current.isValid() and current.row() > 0:
+            self.compare_model.set_marks(_compare_marks(current.row()))
             self.sigCompareRowSelected.emit(current.row())
 
     def _emit_member(self, row: int):

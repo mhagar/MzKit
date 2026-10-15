@@ -34,7 +34,7 @@
        <item>
         <widget class="QStackedWidget" name="stackedWidget">
          <property name="currentIndex">
-          <number>0</number>
+          <number>2</number>
          </property>
          <widget class="QWidget" name="pageEmpty">
           <layout class="QVBoxLayout" name="verticalLayout_5">
@@ -75,8 +75,11 @@
               <property name="editTriggers">
                <set>QAbstractItemView::NoEditTriggers</set>
               </property>
+              <property name="selectionMode">
+               <enum>QAbstractItemView::ContiguousSelection</enum>
+              </property>
               <property name="selectionBehavior">
-               <enum>QAbstractItemView::SelectRows</enum>
+               <enum>QAbstractItemView::SelectItems</enum>
               </property>
               <attribute name="verticalHeaderVisible">
                <bool>false</bool>
@@ -89,8 +92,11 @@
               <property name="editTriggers">
                <set>QAbstractItemView::NoEditTriggers</set>
               </property>
+              <property name="selectionMode">
+               <enum>QAbstractItemView::ContiguousSelection</enum>
+              </property>
               <property name="selectionBehavior">
-               <enum>QAbstractItemView::SelectRows</enum>
+               <enum>QAbstractItemView::SelectItems</enum>
               </property>
               <attribute name="verticalHeaderVisible">
                <bool>false</bool>
@@ -110,8 +116,11 @@
              <property name="editTriggers">
               <set>QAbstractItemView::NoEditTriggers</set>
              </property>
+             <property name="selectionMode">
+              <enum>QAbstractItemView::ContiguousSelection</enum>
+             </property>
              <property name="selectionBehavior">
-              <enum>QAbstractItemView::SelectRows</enum>
+              <enum>QAbstractItemView::SelectItems</enum>
              </property>
              <attribute name="verticalHeaderVisible">
               <bool>false</bool>

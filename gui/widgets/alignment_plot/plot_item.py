@@ -17,6 +17,8 @@ from PyQt5 import QtCore
 from PyQt5.QtGui import QColor, QPen, QBrush
 
 from gui.widgets.alignment_plot.layout import (
+    ANCHOR_COLOR,
+    CURRENT_COLOR,
     HoverTarget,
     XAccessor,
     build_lane_map,
@@ -93,6 +95,14 @@ class AlignmentPlotItem(pg.PlotItem):
         self._sel_outline = OutlineIndicator(
             _cosmetic_pen(QColor(255, 255, 255, 255), 3), z_value=100,
         )
+        # Compare mode: anchor + the item on the mirror plots (target keys)
+        self._anchor_outline = OutlineIndicator(
+            _cosmetic_pen(ANCHOR_COLOR, 3), z_value=101,
+        )
+        self._current_outline = OutlineIndicator(
+            _cosmetic_pen(CURRENT_COLOR, 3), z_value=102,
+        )
+        self._compare_keys: tuple[Optional[tuple], Optional[tuple]] = (None, None)
 
     # -- population ---------------------------------------------------------
 
@@ -154,6 +164,7 @@ class AlignmentPlotItem(pg.PlotItem):
         for item in (
             self._hover_lane,                      # behind strips
             self._hover_outline, self._sel_outline,
+            self._anchor_outline, self._current_outline,
         ):
             self.addItem(item)
 
@@ -225,8 +236,33 @@ class AlignmentPlotItem(pg.PlotItem):
             kept.append(target)
         self._set_selection(kept)
 
+    def reveal(self, kind: str, aid: int, sample_uuid=None) -> bool:
+        """Select the target with this key and pan it into view; False if it isn't drawn."""
+        target = self._target_from_key((kind, aid, sample_uuid))
+        if target is None:
+            return False
+        self.select(target)
+        self._ensure_visible(target)
+        return True
+
+    def ensemble_target(self, aid: int, sample_uuid) -> Optional[HoverTarget]:
+        """The ensemble target for this analyte row + sample, if it's drawn."""
+        return self._target_from_key(('ensemble', aid, sample_uuid))
+
+    def set_compare_highlight(
+        self,
+        anchor: Optional[HoverTarget],
+        current: Optional[HoverTarget],
+    ):
+        """Outline the compare anchor / current item in their own colours."""
+        self._compare_keys = tuple(
+            None if t is None else target_key(t) for t in (anchor, current)
+        )
+        self._update_selection_indicator()
+
     def _set_selection(self, targets: list[HoverTarget]):
         self._selection = list(targets)
+        self._compare_keys = (None, None)
         self._update_selection_indicator()
         self.sigSelectionChanged.emit(list(self._selection))
 
@@ -277,10 +313,16 @@ class AlignmentPlotItem(pg.PlotItem):
         return polylines, rects
 
     def _update_selection_indicator(self):
+        outlines = (self._anchor_outline, self._current_outline)
         if self._strips is None:
             self._sel_outline.clear()
+            for outline in outlines:
+                outline.clear()
             return
         self._sel_outline.set_shapes(*self._shapes_for(self._selection))
+        for outline, key in zip(outlines, self._compare_keys):
+            target = None if key is None else self._target_from_key(key)
+            outline.set_shapes(*self._shapes_for([target] if target else []))
 
     # -- keyboard navigation ------------------------------------------------
 

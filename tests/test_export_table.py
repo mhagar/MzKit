@@ -14,7 +14,10 @@ import numpy as np
 import pytest
 
 from core.cli.cluster_analytes import ClusterParams
-from core.cli.export_network import build_network_graphml
+from core.cli.export_network import (
+    build_imported_network_graphml, build_network_graphml,
+)
+from core.cli.import_similarity import ImportParams, RawMatrix
 from core.cli.export_table import (
     export_abundance_table,
     export_feature_mgf,
@@ -168,6 +171,31 @@ def test_graphml_network():
     edge = {d.get('key'): d.text for d in edges[0].findall('g:data', ns)}
     assert float(edge['cosine']) > 0.9
     assert float(edge['mz_delta']) == pytest.approx(14.0)
+
+
+def test_graphml_imported_network(stubbed):
+    alignment, samples, _names, formulas = stubbed
+    a0, a1, a2 = (str(a.uuid) for a in alignment.analytes)
+    # a2 is left out of the matrix; a0-a1 is a distance of 0.1
+    raw = RawMatrix(
+        name='simba', ids=(a0, a1), values=np.array([[0.0, 0.1], [0.1, 0.0]]),
+    )
+    text = build_imported_network_graphml(
+        alignment, list(samples.values()), raw,
+        ImportParams(is_distance=True), formulas,
+    )
+    ns = {'g': 'http://graphml.graphdrawing.org/xmlns'}
+    graph = ET.fromstring(text).find('g:graph', ns)
+
+    flags = [
+        {d.get('key'): d.text for d in n.findall('g:data', ns)}['in_matrix']
+        for n in graph.findall('g:node', ns)
+    ]
+    assert flags == ['true', 'true', 'false']
+    edges = graph.findall('g:edge', ns)
+    assert [(e.get('source'), e.get('target')) for e in edges] == [('0', '1')]
+    edge = {d.get('key'): d.text for d in edges[0].findall('g:data', ns)}
+    assert float(edge['similarity']) == pytest.approx(0.9)
 
 
 # --- integration (needs the alignment fixture) ------------------------------

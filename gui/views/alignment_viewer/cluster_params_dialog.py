@@ -168,6 +168,10 @@ class ClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
             floor=self.spinFloor.value(),
         )
 
+    def matrices(self) -> list[RawMatrix]:
+        """The matrices imported this session."""
+        return list(self._matrices.values())
+
     def _current_matrix(self) -> Optional[RawMatrix]:
         uid = self.comboSource.currentData()
         return None if uid is None else self._matrices.get(uid)

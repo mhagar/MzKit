@@ -61,6 +61,11 @@ class SampleViewer(
     sigAutoFindMfsRequested = QtCore.pyqtSignal(
         object,  # list[Ensemble]
     )
+    sigSelectInAlignmentRequested = QtCore.pyqtSignal(
+        object,  # SampleUUID
+        object,  # EnsembleUUID
+        bool,    # select the whole analyte rather than the ensemble
+    )
 
     def __init__(
         self,
@@ -752,6 +757,12 @@ class SampleViewer(
         ensemble = injection.ensembles.get(ensemble_uuid) if injection else None
 
         action_open = menu.addAction("Open in Ensemble Viewer")
+        action_align_ens = menu.addAction(
+            "Select in Alignment Viewer (Ensemble)"
+        )
+        action_align_analyte = menu.addAction(
+            "Select in Alignment Viewer (Analyte)"
+        )
         action_review = menu.addAction("Review Formula Assignment...")
         action_review.setEnabled(
             self.data_source.get_assignment_for_source(ensemble_uuid) is not None
@@ -778,6 +789,10 @@ class SampleViewer(
 
         if action == action_open:
             self._open_ensemble_in_viewer(sample_uuid, ensemble_uuid)
+        elif action in (action_align_ens, action_align_analyte):
+            self.sigSelectInAlignmentRequested.emit(
+                sample_uuid, ensemble_uuid, action == action_align_analyte,
+            )
         elif action == action_review:
             self._review_formula_assignment(sample_uuid, ensemble_uuid)
         elif action == action_find_mfs:

@@ -17,6 +17,7 @@ From an output path like `features.tsv`, this writes:
 
 - `features.mgf`: see below
 - `features.graphml`: see `core.cli.export_network`.
+- `features_<matrix>.graphml`: one per imported similarity matrix passed in.
 
 The MGF is built via `core.cli.export_ensemble` (same as single cmpd exports)
 Two modes:
@@ -32,14 +33,17 @@ Each analyte's row id is recorded as `FEATURE_ID` to cross-reference the MGF
 import logging
 import threading
 from pathlib import Path
-from typing import Callable, Literal, Mapping, Optional, TYPE_CHECKING
+from typing import Callable, Literal, Mapping, Optional, Sequence, TYPE_CHECKING
 
 from core.cli.cluster_analytes import ClusterParams
 from core.cli.export_ensemble import build_ensemble_export
-from core.cli.export_network import build_network_graphml
+from core.cli.export_network import (
+    build_imported_network_graphml, build_network_graphml,
+)
 from core.cli.import_similarity import ANALYTE_ID_TAG
 
 if TYPE_CHECKING:
+    from core.cli.import_similarity import ImportParams, RawMatrix
     from core.data_structs import Sample, SampleUUID
     from core.data_structs.uuid_types import EnsembleUUID
     from core.data_structs.alignment import EnsembleAlignment
@@ -207,6 +211,7 @@ def export_feature_table_to_file(
     write_graphml: bool = True,
     network_params: ClusterParams = ClusterParams(),
     min_edge_cosine: float = 0.7,
+    imported_similarities: Sequence[tuple['RawMatrix', 'ImportParams']] = (),
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
 ) -> list[Path]:
@@ -227,6 +232,8 @@ def export_feature_table_to_file(
     :param network_params: network scoring parameters
         (see `cluster_params_from_config`).
     :param min_edge_cosine: network edges scoring below this are dropped.
+    :param imported_similarities: (matrix, transform params) to also write
+        a network for each, as ``features_<matrix name>.graphml``.
     :return: the written paths (the .graphml is skipped if cancelled).
     """
     stem = output.with_suffix('').name
@@ -278,5 +285,15 @@ def export_feature_table_to_file(
             logger.info("Cancelled; skipped the .graphml")
         else:
             write(sibling('.graphml'), graphml)
+
+    for raw, import_params in imported_similarities:
+        path = sibling(f"_{raw.name}.graphml")
+        n = 2
+        while path in written:  # two matrices with the same file name
+            path = sibling(f"_{raw.name}_{n}.graphml")
+            n += 1
+        write(path, build_imported_network_graphml(
+            alignment, list(samples.values()), raw, import_params, formulas,
+        ))
 
     return written

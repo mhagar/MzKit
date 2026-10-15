@@ -270,6 +270,10 @@ class MainController:
             self._handle_auto_find_mf_batch_request
         )
 
+        sample_viewer.sigSelectInAlignmentRequested.connect(
+            self._handle_select_in_alignment_request
+        )
+
     def _connect_alignment_viewer_signals(self) -> None:
         """
         Wire the Alignment Viewer's action signals. Safe to call at init:
@@ -614,6 +618,10 @@ class MainController:
                 "separator": separator,
                 "formulas": self.data_registry.chosen_formulas(),
                 "network_params": cluster_params_from_config(load_config()),
+                # TODO: imported-matrix networks disabled until reworked
+                # "imported_similarities": self.subwindow_manager.get_window(
+                #     'alignment_viewer'
+                # ).imported_similarities(),
             },
             on_completion_func=lambda written: print(
                 "Exported:\n" + "\n".join(f"  - {p}" for p in written or [])
@@ -1200,6 +1208,24 @@ class MainController:
 
         ensemble_viewer.set_ensemble(ensemble)
         self.subwindow_manager.show_window('ensemble_viewer')
+
+    def _handle_select_in_alignment_request(
+        self,
+        sample_uuid: 'data_structs.SampleUUID',
+        ensemble_uuid: 'data_structs.EnsembleUUID',
+        as_analyte: bool,
+    ):
+        alignment_viewer: 'AlignmentViewer' = self.subwindow_manager.get_window(
+            'alignment_viewer'
+        )
+        if not alignment_viewer.select_ensemble(
+            sample_uuid, ensemble_uuid, as_analyte
+        ):
+            self.main_view.statusbar.showMessage(
+                "This ensemble isn't part of any alignment", 5000
+            )
+            return
+        self.subwindow_manager.show_window('alignment_viewer')
 
 
 

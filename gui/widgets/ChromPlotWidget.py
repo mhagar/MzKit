@@ -45,6 +45,7 @@ class ChromPlotWidget(pg.PlotWidget):
     sigEnsemblePeakHovered = QtCore.pyqtSignal(object, QPointF)  # EnsembleUUID, pos
     sigEnsemblePeakLeaved = QtCore.pyqtSignal()
     sigEnsemblePeakClicked = QtCore.pyqtSignal(object, int)  # EnsembleUUID, button
+    sigEnsemblePeakDoubleClicked = QtCore.pyqtSignal(object)  # EnsembleUUID
 
     # Cross-bar seed tool: emitted on drag-release with (rt_start, rt_end, intsy)
     sigSeedBarDrawn = QtCore.pyqtSignal(float, float, float)
@@ -1121,10 +1122,20 @@ class ChromViewBox(pg.ViewBox):
         # pyqtgraph's generic autoRange(), which mis-behaves for LC/MS
         # (see ChromPlotItem.autoScale).
         plot_item = getattr(self, '_plot_item', None)
-        if plot_item is not None:
-            plot_item.autoScale()
-        else:
+        if plot_item is None:
             self.autoRange()
+            return
+
+        # A double-click on a peak goes to whoever listens for it instead
+        widget = plot_item.plot_widget
+        signal = widget.sigEnsemblePeakDoubleClicked
+        if widget.receivers(signal) > 0:
+            nearest = plot_item._find_nearest_peak_from_scene_pos(ev.scenePos())
+            if nearest is not None:
+                signal.emit(nearest[0])
+                ev.accept()
+                return
+        plot_item.autoScale()
 
     def mouseDragEvent(self, ev, axis=None):
         # Cross-bar seed tool: intercept left-drag to draw a |---| bar

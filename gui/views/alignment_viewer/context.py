@@ -31,6 +31,10 @@ class ItemSpectra:
     ms2: Optional['SpectrumArray']
     rt: float
     base_mz: float
+    formula_label: str = ""   # for display, e.g. "C10H12O" or "C10H12O?"
+    formula_count: str = ""   # analytes: members agreeing, e.g. "3/4"
+    formula: str = ""         # bare, for arithmetic
+    analyte_uuid: Optional[int] = None
 
 
 class AlignmentContext:
@@ -95,18 +99,26 @@ class AlignmentContext:
         formula, count = Counter(formulas).most_common(1)[0]
         return formula, count, len(members)
 
+    def formula_label(self, analyte: 'AlignedAnalyte') -> str:
+        """`formula_agreement` as "C10H12O (3/4)"; empty if no formula."""
+        agreement = self.formula_agreement(analyte)
+        return f"{agreement[0]} ({agreement[1]}/{agreement[2]})" if agreement else ""
+
     # -- comparison ---------------------------------------------------------
 
     def item_spectra(self, target: 'HoverTarget') -> Optional[ItemSpectra]:
         if target.kind == 'ensemble' and target.ensemble is not None:
             ensemble = target.ensemble
             composite = ensemble.composite_spectrum
+            formula = self.formula(ensemble)
             return ItemSpectra(
                 label=self.sample_name(target.sample_uuid),
                 ms1=composite.ms1,
                 ms2=composite.ms2,
                 rt=float(ensemble.peak_rt),
                 base_mz=float(ensemble.base_mz),
+                formula_label=formula,
+                formula=formula.rstrip('?'),
             )
 
         if target.kind == 'analyte' and target.analyte is not None:
@@ -114,6 +126,7 @@ class AlignmentContext:
             rep = self.representative(analyte)
             if rep is None:
                 return None
+            agreement = self.formula_agreement(analyte)
             return ItemSpectra(
                 label=(
                     f"Analyte {analyte.consensus_mz:.4f} @ "
@@ -124,6 +137,12 @@ class AlignmentContext:
                 ms2=rep.composite.ms2,
                 rt=float(analyte.consensus_rt),
                 base_mz=rep.base_mz,
+                formula_label=agreement[0] if agreement else "",
+                formula_count=(
+                    f"{agreement[1]}/{agreement[2]}" if agreement else ""
+                ),
+                formula=agreement[0] if agreement else "",
+                analyte_uuid=analyte.uuid,
             )
 
         return None

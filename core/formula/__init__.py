@@ -17,6 +17,7 @@ from core.formula.params import FindMfsParams
 from core.formula.query import FormulaQuery
 from core.formula.extract import query_from_ensemble, query_from_signals
 from core.formula.assign_formula import assign_formula
+from core.formula.delta import delta_formula
 
 __all__ = [
     "FindMfsParams",
@@ -24,4 +25,5 @@ __all__ = [
     "query_from_ensemble",
     "query_from_signals",
     "assign_formula",
+    "delta_formula",
 ]

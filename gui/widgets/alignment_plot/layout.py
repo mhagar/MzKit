@@ -41,6 +41,10 @@ def ensemble_rt(
 # less interesting. All other tunable rendering values live in RenderParams
 # (see params.py).
 SINGLETON_COLOR = QColor(135, 206, 250, 200)
+# Compare mode: the anchor and the item on the mirror plots, marked the same
+# way on the map, the chromatogram and the Inspector's compare table.
+ANCHOR_COLOR = QColor(255, 165, 0)
+CURRENT_COLOR = QColor(0, 200, 255)
 
 
 class LaneMap(NamedTuple):

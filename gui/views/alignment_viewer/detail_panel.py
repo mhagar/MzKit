@@ -165,7 +165,9 @@ class DetailPanel:
         score: 'PairScore',
         sample_uuids: list['SampleUUID'],
         ensembles: list['Ensemble'],
+        colors: Optional[list] = None,
     ):
+        """:param colors: XIC colour per ensemble (default XIC_COLOR)."""
         ms_x = self._ms_x_range
         self.ms1_plot.set_mirror_spectra(
             top.ms1, bottom.ms1, top.label, bottom.label,
@@ -191,6 +193,7 @@ class DetailPanel:
         self._draw_chroms(
             ctx, sample_uuids, ensembles,
             f"BPC · {len(set(sample_uuids))} samples",
+            colors,
         )
 
     # -- spectra ------------------------------------------------------------
@@ -259,10 +262,12 @@ class DetailPanel:
         sample_uuids: list['SampleUUID'],
         ensembles: list['Ensemble'],
         label: str,
+        colors: Optional[list] = None,
     ):
         """
         Overlay the samples' BPCs (opacity max(1/n, BPC_MIN_OPACITY)) and
-        the ensembles' base XICs (full opacity).
+        the ensembles' base XICs (full opacity; `colors` parallel to
+        `ensembles`, default XIC_COLOR - non-default ones drawn on top).
         """
         pi = self.chrom_plot.pi
         pi.clear_plots()
@@ -283,10 +288,13 @@ class DetailPanel:
                 replace=True,
             )
 
+        colors = colors or [XIC_COLOR] * len(ensembles)
         xics = []
-        for ensemble in ensembles:
+        for ensemble, color in sorted(
+            zip(ensembles, colors), key=lambda ec: ec[1] is not XIC_COLOR,
+        ):
             xic = ensemble.get_base_chromatogram(ms_level=1)
-            self.chrom_plot.addPeak(xic, uuid=ensemble.uuid, color=XIC_COLOR)
+            self.chrom_plot.addPeak(xic, uuid=ensemble.uuid, color=color)
             xics.append(xic)
 
         self._chroms = bpcs + xics

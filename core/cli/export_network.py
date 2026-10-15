@@ -9,6 +9,9 @@ mode (`core.cli.cluster_analytes`, same ClusterParams / config section).
 Only pairs scoring at least `min_edge_cosine` get an edge (pairs under
 `min_matched_peaks` score 0).
 
+`build_imported_network_graphml` does the same for an imported similarity
+matrix (see `core.cli.import_similarity`).
+
 Node ids are the analyte row ids used by the feature tables / MGF
 (`analyte_id` / `FEATURE_ID`).
 """
@@ -16,13 +19,17 @@ import threading
 from typing import Callable, Mapping, Optional, TYPE_CHECKING
 from xml.sax.saxutils import escape, quoteattr
 
+import numpy as np
+
 from core.cli.cluster_analytes import (
     ClusterParams, analyte_ms2_spectra, similarity_matrix,
 )
+from core.cli.import_similarity import transform
 
 if TYPE_CHECKING:
+    from core.cli.import_similarity import ImportParams, RawMatrix
     from core.data_structs import Sample
-    from core.data_structs.alignment import EnsembleAlignment
+    from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
     from core.data_structs.uuid_types import EnsembleUUID
 
 
@@ -35,11 +42,14 @@ _NODE_KEYS = [
     ('formula_count', 'int'),
     ('formula_total', 'int'),
     ('n_samples', 'int'),
-    ('has_ms2', 'boolean'),
 ]
-_EDGE_KEYS = [
+_COSINE_EDGE_KEYS = [
     ('cosine', 'double'),
     ('matched_peaks', 'int'),
+    ('mz_delta', 'double'),
+]
+_IMPORTED_EDGE_KEYS = [
+    ('similarity', 'double'),
     ('mz_delta', 'double'),
 ]
 
@@ -64,9 +74,6 @@ def build_network_graphml(
         0.7). Must be > 0; unscored pairs are 0.
     :return: None if cancelled.
     """
-    formulas = formulas or {}
-    sample_of = {s.uuid: s for s in samples}
-
     ms2_analytes, spectra = analyte_ms2_spectra(alignment, samples)
     scored = similarity_matrix(
         spectra, params, progress_callback, cancel_event,
@@ -75,14 +82,75 @@ def build_network_graphml(
         return None
     similarity, matches = scored
 
+    edges = [
+        (ms2_analytes[a], ms2_analytes[b], {
+            'cosine': f"{similarity[a, b]:.4f}",
+            'matched_peaks': int(matches[a, b]),
+        })
+        for a, b in _pairs_above(similarity, min_edge_cosine)
+    ]
+    return _graphml(
+        alignment, samples, formulas, 'has_ms2',
+        {a.uuid for a in ms2_analytes}, _COSINE_EDGE_KEYS, edges,
+    )
+
+
+def build_imported_network_graphml(
+    alignment: 'EnsembleAlignment',
+    samples: list['Sample'],
+    raw: 'RawMatrix',
+    import_params: 'ImportParams',
+    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
+) -> str:
+    """
+    GraphML text for `alignment`'s network by an imported similarity
+    matrix, transformed under `import_params` (its floor is the edge
+    threshold). Node attributes are as in `build_network_graphml`, with
+    `in_matrix` in place of `has_ms2`.
+    """
+    analytes, similarity, _report = transform(raw, alignment, import_params)
+    edges = [
+        (analytes[a], analytes[b], {'similarity': f"{similarity[a, b]:.4f}"})
+        for a, b in _pairs_above(similarity, 0.0)
+    ]
+    return _graphml(
+        alignment, samples, formulas, 'in_matrix',
+        {a.uuid for a in analytes}, _IMPORTED_EDGE_KEYS, edges,
+    )
+
+
+def _pairs_above(similarity: np.ndarray, threshold: float):
+    """Upper-triangle (a, b) index pairs scoring > 0 and >= `threshold`."""
+    a_idx, b_idx = np.triu_indices(len(similarity), k=1)
+    scores = similarity[a_idx, b_idx]
+    keep = (scores > 0) & (scores >= threshold)
+    return zip(a_idx[keep].tolist(), b_idx[keep].tolist())
+
+
+def _graphml(
+    alignment: 'EnsembleAlignment',
+    samples: list['Sample'],
+    formulas: Optional[Mapping['EnsembleUUID', str]],
+    flag_key: str,
+    flagged: set,
+    edge_keys: list[tuple[str, str]],
+    edges: list[tuple['AlignedAnalyte', 'AlignedAnalyte', dict]],
+) -> str:
+    """
+    GraphML with a node per analyte (`flag_key` true for those in
+    `flagged`) and the given (source, target, data) edges; each edge also
+    gets `mz_delta`.
+    """
+    formulas = formulas or {}
+    sample_of = {s.uuid: s for s in samples}
     row_of = {a.uuid: i for i, a in enumerate(alignment.analytes)}
-    has_ms2 = {a.uuid for a in ms2_analytes}
 
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
     ]
-    for owner, keys in (('node', _NODE_KEYS), ('edge', _EDGE_KEYS)):
+    node_keys = _NODE_KEYS + [(flag_key, 'boolean')]
+    for owner, keys in (('node', node_keys), ('edge', edge_keys)):
         for name, attr_type in keys:
             lines.append(
                 f'  <key id="{name}" for="{owner}" '
@@ -101,30 +169,23 @@ def build_network_graphml(
             'formula_count': consensus.count,
             'formula_total': consensus.total,
             'n_samples': len(analyte.ensemble_map),
-            'has_ms2': 'true' if analyte.uuid in has_ms2 else 'false',
+            flag_key: 'true' if analyte.uuid in flagged else 'false',
         }
         lines.append(f'    <node id="{i}">')
         lines.extend(_data_lines(data))
         lines.append('    </node>')
 
-    n = len(ms2_analytes)
-    for a in range(n):
-        for b in range(a + 1, n):
-            score = similarity[a, b]
-            if score <= 0 or score < min_edge_cosine:
-                continue
-            src, dst = ms2_analytes[a], ms2_analytes[b]
-            data = {
-                'cosine': f"{score:.4f}",
-                'matched_peaks': int(matches[a, b]),
-                'mz_delta': f"{abs(src.consensus_mz - dst.consensus_mz):.5f}",
-            }
-            lines.append(
-                f'    <edge source="{row_of[src.uuid]}" '
-                f'target="{row_of[dst.uuid]}">'
-            )
-            lines.extend(_data_lines(data))
-            lines.append('    </edge>')
+    for src, dst, data in edges:
+        data = {
+            **data,
+            'mz_delta': f"{abs(src.consensus_mz - dst.consensus_mz):.5f}",
+        }
+        lines.append(
+            f'    <edge source="{row_of[src.uuid]}" '
+            f'target="{row_of[dst.uuid]}">'
+        )
+        lines.extend(_data_lines(data))
+        lines.append('    </edge>')
 
     lines += ['  </graph>', '</graphml>']
     return '\n'.join(lines) + '\n'

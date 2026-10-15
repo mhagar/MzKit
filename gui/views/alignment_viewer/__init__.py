@@ -24,14 +24,17 @@ from typing import Optional, TYPE_CHECKING
 from PyQt5 import QtWidgets, QtCore, QtGui
 
 from core.cli.cluster_analytes import ClusterParams, cluster_params_from_config
+from core.cli.import_similarity import ImportParams
 from core.utils.config import load_config
 from gui.resources.AlignmentViewerWindow import Ui_Form
 from gui.views.alignment_viewer.cluster_params_dialog import ClusterParamsDialog
 from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
-from gui.views.alignment_viewer.detail_panel import DetailPanel
+from gui.views.alignment_viewer.detail_panel import DetailPanel, XIC_COLOR
 from gui.views.alignment_viewer.inspector import Inspector
 from gui.views.alignment_viewer.render_params_dialog import RenderParamsDialog
-from gui.widgets.alignment_plot.layout import HoverTarget
+from gui.widgets.alignment_plot.layout import (
+    ANCHOR_COLOR, CURRENT_COLOR, HoverTarget,
+)
 from gui.widgets.alignment_plot.params import RenderParams
 
 if TYPE_CHECKING:
@@ -75,6 +78,7 @@ class AlignmentViewer(
         # Compare mode: the selected items, their scores vs the anchor, and
         # which one is on the mirror plots
         self._compare_items: list[ItemSpectra] = []
+        self._compare_targets: list[HoverTarget] = []   # parallel to items
         self._compare_scores: list[Optional['PairScore']] = []
         self._compare_idx: int = 1
 
@@ -86,6 +90,8 @@ class AlignmentViewer(
             cluster_params_from_config(load_config())
         )
         self._cluster_matrix: Optional['RawMatrix'] = None
+        # Transform params each imported matrix was last clustered with
+        self._import_params: dict[int, ImportParams] = {}
         self._clusterings: dict[object, 'AnalyteClustering'] = {}
         self._shown_clustering: Optional['AnalyteClustering'] = None
         self._cluster_dialog: Optional[ClusterParamsDialog] = None
@@ -162,8 +168,13 @@ class AlignmentViewer(
             self.sigViewEnsembleRequested
         )
         self.plot_item.sigContextRequested.connect(self._show_context_menu)
+        self.plotChrom.sigEnsemblePeakClicked.connect(self._on_xic_clicked)
+        self.plotChrom.sigEnsemblePeakDoubleClicked.connect(
+            self._on_xic_double_clicked
+        )
 
         self.inspector.sigCompareRowSelected.connect(self._on_compare_row)
+        self.inspector.sigAnchorRequested.connect(self._on_anchor_requested)
         self.inspector.sigMemberActivated.connect(
             self.sigViewEnsembleRequested
         )
@@ -205,6 +216,48 @@ class AlignmentViewer(
         self._render()
         self.inspector.show_summary(alignment)
         self.status_bar.showMessage(self._summary_text())
+
+    def select_ensemble(
+        self,
+        sample_uuid: 'SampleUUID',
+        ensemble_uuid: 'EnsembleUUID',
+        as_analyte: bool = False,
+    ) -> bool:
+        """
+        Select an ensemble (or the analyte it belongs to) on the map and pan
+        to it. Prefers the shown alignment; otherwise switches to the most
+        recent alignment containing the ensemble. False if none does.
+        """
+        candidates = [self._alignment] if self._alignment else []
+        candidates += [
+            self.data_source.get_alignment(u)
+            for u in reversed(self.data_source.get_all_alignment_uuids())
+        ]
+        for alignment in candidates:
+            if alignment is None:
+                continue
+            found = _locate_ensemble(alignment, ensemble_uuid)
+            if found is None or found[1] != sample_uuid:
+                continue
+            aid = found[0]
+            if alignment is not self._alignment:
+                self.set_alignment(alignment)
+            if as_analyte:
+                return self.plot_item.reveal('analyte', aid)
+            return self.plot_item.reveal('ensemble', aid, sample_uuid)
+        return False
+
+    def imported_similarities(self) -> list[tuple['RawMatrix', ImportParams]]:
+        """
+        The similarity matrices imported this session, each with the
+        transform params it was last clustered with (defaults if never).
+        """
+        if self._cluster_dialog is None:
+            return []
+        return [
+            (m, self._import_params.get(m.uid, ImportParams()))
+            for m in self._cluster_dialog.matrices()
+        ]
 
     def reset_for_new_project(self):
         self._alignment = None
@@ -338,6 +391,7 @@ class AlignmentViewer(
         self._clusterings[clustering.params] = clustering
         if self._active_clustering() is clustering:
             self._render(preserve_selection=True)
+        self._refresh_compare()
 
     def _show_cluster_dialog(self):
         if self._cluster_dialog is None:
@@ -356,12 +410,15 @@ class AlignmentViewer(
     ):
         self._cluster_params = params
         self._cluster_matrix = matrix
+        if matrix is not None:
+            self._import_params[matrix.uid] = params.params
         if self._alignment is None:
             return
         if not self.btnClusterMode.isChecked():
             self.btnClusterMode.setChecked(True)   # requests / renders
         elif params in self._clusterings:
             self._render(preserve_selection=True)
+            self._refresh_compare()
         else:
             self._request_clustering()
 
@@ -394,6 +451,9 @@ class AlignmentViewer(
 
     def _show_selection(self):
         ctx, targets = self._ctx, self._selection
+        # Compare mode only while a comparison is shown (see below)
+        self._compare_items, self._compare_targets = [], []
+        self.plot_item.set_compare_highlight(None, None)
         if ctx is None or not targets:
             self.inspector.show_summary(self._alignment)
             self.detail_panel.clear()
@@ -404,23 +464,31 @@ class AlignmentViewer(
             return
 
         items: list[ItemSpectra] = []
+        item_targets: list[HoverTarget] = []
         for target in targets:
             item = ctx.item_spectra(target)
             if item is not None:
                 items.append(item)
+                item_targets.append(target)
         if len(items) < 2:
             self._show_single(ctx, targets[0])
             return
 
         self._compare_items = items
+        self._compare_targets = item_targets
         self._compare_scores = [None] + [
             ctx.score(items[0], item) for item in items[1:]
         ]
         self._compare_idx = min(self._compare_idx, len(items) - 1)
         self.inspector.show_compare(
-            items, self._compare_scores, self._compare_idx,
+            items, self._anchor_similarities(items), self._compare_idx,
         )
         self._show_compare_plots()
+
+    def _refresh_compare(self):
+        """Re-show a multi-selection (e.g. so Similarity picks up a new clustering)."""
+        if len(self._selection) > 1:
+            self._show_selection()
 
     def _show_single(self, ctx: AlignmentContext, target: HoverTarget):
         if target.kind == 'ensemble':
@@ -434,6 +502,37 @@ class AlignmentViewer(
             self.inspector.show_analyte(ctx, target.analyte)
             self.detail_panel.show_analyte(ctx, target.analyte)
 
+    def _anchor_similarities(
+        self,
+        items: list[ItemSpectra],
+    ) -> list[Optional[float]]:
+        """
+        Each item's similarity to the anchor, from the cached clustering for
+        the current cluster settings (modified cosine or imported matrix).
+        None where unavailable: no clustering yet, or an item that isn't an
+        analyte in it.
+        """
+        clustering = self._clusterings.get(self._cluster_params)
+        if clustering is None:
+            return [None] * len(items)
+        slot = {u: i for i, u in enumerate(clustering.analyte_uuids)}
+        anchor = slot.get(items[0].analyte_uuid)
+        if anchor is None:
+            return [None] * len(items)
+        return [
+            None if (i := slot.get(item.analyte_uuid)) is None
+            else float(clustering.similarity[anchor, i])
+            for item in items
+        ]
+
+    def _on_anchor_requested(self, row: int):
+        if row <= 0 or row >= len(self._compare_targets):
+            return
+        target = self._compare_targets[row]
+        self._selection = [target] + [t for t in self._selection if t is not target]
+        self._compare_idx = 1
+        self._show_selection()
+
     def _on_compare_row(self, row: int):
         if row == self._compare_idx or row >= len(self._compare_items):
             return
@@ -441,8 +540,22 @@ class AlignmentViewer(
         self._show_compare_plots()
 
     def _show_compare_plots(self):
-        sample_uuids, ensembles = self._selected_member_ensembles()
         idx = self._compare_idx
+        anchor, current = self._compare_targets[0], self._compare_targets[idx]
+        self.plot_item.set_compare_highlight(anchor, current)
+
+        sample_uuids, ensembles, colors = [], [], []
+        for target in self._selection:
+            color = (
+                ANCHOR_COLOR if target is anchor
+                else CURRENT_COLOR if target is current
+                else XIC_COLOR
+            )
+            for sample_uuid, ens in self._target_members(target):
+                sample_uuids.append(sample_uuid)
+                ensembles.append(ens)
+                colors.append(color)
+
         self.detail_panel.show_compare(
             self._ctx,
             self._compare_items[0],
@@ -450,22 +563,63 @@ class AlignmentViewer(
             self._compare_scores[idx],
             sample_uuids,
             ensembles,
+            colors,
         )
 
-    def _selected_member_ensembles(
+    def _target_members(
         self,
-    ) -> tuple[list['SampleUUID'], list['Ensemble']]:
-        """Every ensemble in the selection (analytes expand to members)."""
-        sample_uuids, ensembles = [], []
-        for target in self._selection:
-            if target.kind == 'ensemble' and target.ensemble is not None:
-                sample_uuids.append(target.sample_uuid)
-                ensembles.append(target.ensemble)
-            elif target.kind == 'analyte' and target.analyte is not None:
-                for sample_uuid, ens in self._ctx.members(target.analyte).items():
-                    sample_uuids.append(sample_uuid)
-                    ensembles.append(ens)
-        return sample_uuids, ensembles
+        target: HoverTarget,
+    ) -> list[tuple['SampleUUID', 'Ensemble']]:
+        """The ensemble(s) behind a target (an analyte expands to its members)."""
+        if target.kind == 'ensemble' and target.ensemble is not None:
+            return [(target.sample_uuid, target.ensemble)]
+        if target.kind == 'analyte' and target.analyte is not None:
+            return list(self._ctx.members(target.analyte).items())
+        return []
+
+    # -- chromatogram clicks ------------------------------------------------
+
+    def _compare_row_of(self, ensemble_uuid) -> Optional[int]:
+        """The compare row whose item contains this ensemble."""
+        for row, target in enumerate(self._compare_targets):
+            if any(e.uuid == ensemble_uuid for _, e in self._target_members(target)):
+                return row
+        return None
+
+    def _xic_target(self, ensemble_uuid) -> Optional[HoverTarget]:
+        if self._alignment is None:
+            return None
+        found = _locate_ensemble(self._alignment, ensemble_uuid)
+        return None if found is None else self.plot_item.ensemble_target(*found)
+
+    def _on_xic_clicked(self, ensemble_uuid, button: int):
+        """Compare mode: like clicking its compare row. Otherwise: like the map."""
+        if button != QtCore.Qt.LeftButton:
+            return
+        if self._compare_targets:
+            row = self._compare_row_of(ensemble_uuid)
+            if row:  # not the anchor
+                self.inspector.set_current_compare_row(row)
+                self._on_compare_row(row)
+            return
+        target = self._xic_target(ensemble_uuid)
+        if target is not None:
+            additive = bool(
+                QtWidgets.QApplication.keyboardModifiers()
+                & QtCore.Qt.ControlModifier
+            )
+            self.plot_item.select(target, additive)
+
+    def _on_xic_double_clicked(self, ensemble_uuid):
+        """Compare mode: make its item the anchor. Otherwise: open it."""
+        if self._compare_targets:
+            row = self._compare_row_of(ensemble_uuid)
+            if row:
+                self._on_anchor_requested(row)
+            return
+        target = self._xic_target(ensemble_uuid)
+        if target is not None and target.ensemble is not None:
+            self.sigViewEnsembleRequested.emit(target.ensemble)
 
     # -- hover --------------------------------------------------------------
 
@@ -497,9 +651,8 @@ class AlignmentViewer(
                 + (f"{rep.base_mz:.4f}" if rep else "n/a"),
                 f"{len(analyte.ensemble_map)}/{ctx.alignment.sample_count} samples",
             ]
-            agreement = ctx.formula_agreement(analyte)
-            if agreement:
-                parts.append(f"{agreement[0]} ({agreement[1]}/{agreement[2]})")
+            if label := ctx.formula_label(analyte):
+                parts.append(label)
 
         elif target.kind == 'sample':
             parts = [ctx.sample_name(target.sample_uuid)]
@@ -652,3 +805,15 @@ class AlignmentViewer(
                 for ensemble in self._ctx.members(t.analyte).values():
                     found.setdefault(ensemble.uuid, ensemble)
         return list(found.values())
+
+
+def _locate_ensemble(
+    alignment: 'EnsembleAlignment',
+    ensemble_uuid,
+) -> Optional[tuple[int, 'SampleUUID']]:
+    """(analyte row, sample) of an ensemble in `alignment`, or None."""
+    for aid, analyte in enumerate(alignment.analytes):
+        for sample_uuid, ens_uuid in analyte.ensemble_map.items():
+            if ens_uuid == ensemble_uuid:
+                return aid, sample_uuid
+    return None
