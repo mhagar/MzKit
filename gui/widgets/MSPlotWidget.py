@@ -5,6 +5,7 @@ from gui.widgets.text_items import center_textitem
 from gui.utils.ms_arrays import zero_pad_arrays
 from core.utils.arrays import find_closest_point
 from core.utils.array_types import SpectrumArray
+from core.utils.spectrum_export import mgf_block
 from gui.views.sample_viewer.tools import (
     ToolType, ToolStage, XICMode,
 )
@@ -15,7 +16,7 @@ import pyqtgraph as pg
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QRectF
 
-from typing import Optional
+from typing import Callable, Optional
 import uuid
 
 
@@ -298,6 +299,33 @@ class MSPlotWidget(pg.PlotWidget):
 
         # Hovered MS signal
         self.hovered_ms_signal: Optional[tuple[int, float]] = None
+
+        # Optional, set by the owning view: returns MGF headers (PEPMASS,
+        # RTINSECONDS, ...) for the displayed spectrum.
+        # Called lazily from the context menu, so it costs nothing while
+        # spectra update.
+        self.mgf_headers_provider: Optional[Callable[[], dict[str, str]]] = None
+
+    def show_context_menu(
+        self,
+        pos: QtCore.QPoint,
+    ) -> None:
+        menu = QtWidgets.QMenu(self)
+        copy_action = menu.addAction("Copy spectrum to clipboard (MGF format)")
+        # Mirror mode's spectrum_array is two normalised spectra concatenated
+        copy_action.setEnabled(
+            self.pi.mirror is None and self.pi.spectrum_array['mz'].size > 0
+        )
+        copy_action.triggered.connect(self.copy_spectrum_mgf)
+        menu.exec_(pos)
+
+    def copy_spectrum_mgf(self) -> None:
+        headers = self.mgf_headers_provider() if self.mgf_headers_provider else None
+        spec = self.pi.spectrum_array
+        # Scan spectra are dense over all mass lanes (and in lane order):
+        # drop the empty lanes, sort by m/z
+        spec = np.sort(spec[spec['intsy'] > 0], order='mz')
+        QtWidgets.QApplication.clipboard().setText(mgf_block(spec, headers))
 
     def update_label(
         self,
@@ -1153,6 +1181,12 @@ class MSViewBox(
                 y_max = max(abs(yRange[0]), abs(yRange[1]))
                 yRange = (-y_max, y_max)
         super().setRange(rect, xRange, yRange, *args, **kwargs)
+
+    def raiseContextMenu(self, ev):
+        # Replaces pyqtgraph's default ViewBox menu
+        plot_item = getattr(self, '_plot_item', None)
+        if plot_item is not None:
+            plot_item.plot_widget.show_context_menu(ev.screenPos().toPoint())
 
     def mouseDoubleClickEvent(self, ev):
         # Delegate to the PlotItem's data-driven auto-scale rather than

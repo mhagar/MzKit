@@ -451,6 +451,9 @@ class SpectrumPlotManager(QtCore.QObject):
         self._current_ms1: Optional[NDArray] = None
         self._current_ms2: Optional[NDArray] = None
 
+        self.ms1_plot.mgf_headers_provider = lambda: self._mgf_headers(1)
+        self.ms2_plot.mgf_headers_provider = lambda: self._mgf_headers(2)
+
         # Connect internal signal forwarding
         self.ms1_plot.sigMSSignalClicked.connect(
             self._on_ms1_clicked
@@ -472,6 +475,23 @@ class SpectrumPlotManager(QtCore.QObject):
         ensemble: 'Ensemble',
     ):
         self.ensemble = ensemble
+
+    def _mgf_headers(
+        self,
+        ms_level: Literal[1, 2],
+    ) -> dict[str, str]:
+        """
+        MGF headers for the spectrum on screen (plot context-menu copy).
+        Same PEPMASS/CHARGE convention as the ensemble MGF export.
+        """
+        if self.ensemble is None:
+            return {}
+        return {
+            "PEPMASS": f"{self.ensemble.resolved_precursor_mz:.5f}",
+            "CHARGE": f"{self.ensemble.resolved_charge}+",
+            "MSLEVEL": str(ms_level),
+            "RTINSECONDS": f"{self.selected_rt:.3f}",
+        }
 
     def clear(self):
         """

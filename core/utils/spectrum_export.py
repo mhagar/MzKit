@@ -47,23 +47,25 @@ def to_mgf(
     Returns:
         MGF format string
     """
-    output = [
-        "BEGIN IONS",
-        f"PEPMASS={pepmass}",
-        f"CHARGE={charge}+",
-        f"MSLEVEL={mslevel}",
-    ]
+    headers = {
+        "PEPMASS": pepmass,
+        "CHARGE": f"{charge}+",
+        "MSLEVEL": mslevel,
+    }
+    headers.update(metadata or {})
+    return mgf_block(spec_arr, headers)
 
-    # Add optional metadata fields if provided
-    if metadata:
-        for key, value in metadata.items():
-            output.append(f"{key}={value}")
-
-    # Add spectrum peaks
+def mgf_block(
+    spec_arr: np.ndarray,
+    headers: dict[str, str] | None = None,
+) -> str:
+    """
+    A single BEGIN IONS ... END IONS block with arbitrary KEY=value headers
+    """
+    output = ["BEGIN IONS"]
+    output += [f"{key}={value}" for key, value in (headers or {}).items()]
     output += _format_spectrum_array(arr=spec_arr)
-
     output.append("END IONS")
-
     return "\n".join(output)
 
 def _format_spectrum_array(

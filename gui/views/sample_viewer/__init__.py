@@ -1,6 +1,7 @@
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt, QPointF
 import pyqtgraph as pg
+import numpy as np
 
 from core.utils.config import load_config
 from gui.views.sample_viewer.dda_overlays import DDAOverlayManager
@@ -158,6 +159,8 @@ class SampleViewer(
             data_source=self.data_source,
             tool_mgr=self.tool_mgr,
         )
+
+        self.plotMS.mgf_headers_provider = self._selected_scan_mgf_headers
 
         # Ensemble peak interaction state
         self._selected_ensemble: Optional[tuple['SampleUUID', 'EnsembleUUID']] = None
@@ -513,6 +516,30 @@ class SampleViewer(
         self.spinSamplesPerWindow.setMaximum(
             max(self.model.checkedCount(), 1)
         )
+
+    def _selected_scan_mgf_headers(self) -> dict[str, str]:
+        """
+        MGF headers for the scan shown in plotMS (context-menu copy)
+        """
+        scan_arr = self.selection_mgr.get_selected_scan_array()
+        idx = self.selection_mgr.get_selected_scan_num()
+        if scan_arr is None or idx is None:
+            return {}
+
+        headers = {
+            "MSLEVEL": str(self.selection_mgr.selected_ms_level),
+            "RTINSECONDS": f"{scan_arr.rt_arr[idx]:.3f}",
+            "SCANS": str(int(scan_arr.scan_num_arr[idx])),
+        }
+        if scan_arr.precursor_mz_arr is not None:
+            prec_mz = float(scan_arr.precursor_mz_arr[idx])
+            if np.isfinite(prec_mz):
+                headers["PEPMASS"] = f"{prec_mz:.5f}"
+        if scan_arr.precursor_charge_arr is not None:
+            charge = int(scan_arr.precursor_charge_arr[idx])
+            if charge:  # 0 = unknown
+                headers["CHARGE"] = f"{abs(charge)}{'-' if charge < 0 else '+'}"
+        return headers
 
     def update_spectrum_plot(self):
         """
