@@ -27,3 +27,6 @@ trash
 /tests/test_files/
 
 /pubchem.bio/
+
+# MS2DeepScore weights (see tools/ms2deepscore/)
+/models/

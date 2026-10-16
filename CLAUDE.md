@@ -55,12 +55,17 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 - `import_feature_table.py` - Import external feature coordinates (MZmine CSV) and generate Ensembles + alignment
 - `export_table.py` - Export an EnsembleAlignment as abundance + formula tables (CSV/TSV), plus companion .mgf and .graphml
 - `export_network.py` - MS2 modified-cosine network of an alignment's analytes as GraphML (scored via `cluster_analytes.py`)
-- `cluster_analytes.py` - Hierarchical clustering of an alignment's analytes by MS2 modified cosine (Alignment Viewer cluster mode)
+- `cluster_analytes.py` - Hierarchical clustering of an alignment's analytes by MS2 modified cosine or MS2DeepScore (Alignment Viewer cluster mode)
 - `find_cofeatures.py` - Core cofeature detection (Pearson correlation of extracted ion chromatograms)
 - `segment_chromatogram.py` - Peak boundary detection
 - `export_bpcs.py` - Export base peak chromatograms for all samples in an .mzk file (JSON)
 - `export_compound.py` - Export XIC + MS1/MS2 spectra for a single analyte (JSON)
 - `main.py` - Unified CLI entry point (`mzkit import-features`, `mzkit align`, `mzkit filter`, `mzkit export-table`, `mzkit export-bpcs`, `mzkit export-compound`)
+
+## MS2DeepScore
+
+- NumPy-only inference in `core/utils/ms2deepscore.py`; weights are `.npz` files in the gitignored `models/` folder
+- `tools/ms2deepscore/export_weights.py` (dev tool, own locked torch env): `uv run --script tools/ms2deepscore/export_weights.py` dumps the official weights, checks parity, writes `tests/ms2deepscore_parity.npz`
 
 ## GUI resources
 

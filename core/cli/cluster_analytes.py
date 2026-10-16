@@ -5,7 +5,9 @@ By default, this uses modified cosine scores:
 1. Each analyte's representative MS2 (`AlignedAnalyte.representative_spectrum`)
    is converted to a matchms Spectrum; analytes without MS2 are dropped.
 2. All pairs are scored by modified cosine (`matchms.similarity.ModifiedCosine`,
-   the greedy implementation).
+   the greedy implementation), or by MS2DeepScore (`core.utils.ms2deepscore`,
+   positive mode assumed, scores clipped to [0, 1]) if `ClusterParams.scoring`
+   says so.
 3. Average-linkage (by default) clustering on distance = 1 - similarity.
 
 Steps 1-2 can instead come from an imported similarity matrix
@@ -30,6 +32,7 @@ from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
 
 from core.cli.align_ensembles import _spectrum_from
+from core.utils import ms2deepscore
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -42,6 +45,9 @@ _UNRELATED_DISTANCE = 1.0 - 1e-9
 
 CLUSTERING_SECTION = "analyte_clustering"
 
+MODIFIED_COSINE = 'modified_cosine'
+MS2DEEPSCORE = 'ms2deepscore'
+
 
 class ClusterParams(NamedTuple):
     """
@@ -49,14 +55,20 @@ class ClusterParams(NamedTuple):
     mz_power / intensity_power: peak weighting in the cosine.
     min_matched_peaks: pairs matching fewer peaks than this score 0.
     linkage_method: scipy linkage method ('average', 'complete', ...).
+    scoring: MODIFIED_COSINE or MS2DEEPSCORE (which ignores the cosine fields).
     """
     tolerance: float = 0.02
     mz_power: float = 0.0
     intensity_power: float = 1.0
     min_matched_peaks: int = 3
     linkage_method: str = 'average'
+    scoring: str = MODIFIED_COSINE
 
-    source_name = "MS2 modified cosine"
+    @property
+    def source_name(self) -> str:
+        # Weird pattern - cornered into doing this because of ImportedClusterSpec
+        # TODO: clean this out lmao
+        return "MS2DeepScore" if self.scoring == MS2DEEPSCORE else "MS2 modified cosine"
 
 
 # One row per (sub-1.0) merge, for drawing / hit-testing the dendrogram.
@@ -105,6 +117,7 @@ def cluster_params_from_config(config: 'ConfigParser') -> ClusterParams:
             s, "min_matched_peaks", fallback=d.min_matched_peaks),
         linkage_method=config.get(
             s, "linkage_method", fallback=d.linkage_method),
+        scoring=config.get(s, "scoring", fallback=d.scoring),
     )
 
 
@@ -131,7 +144,7 @@ def cluster_analytes(
     cancel_event: Optional[threading.Event] = None,
 ) -> Optional[AnalyteClustering]:
     """
-    Cluster `alignment`'s analytes by modified cosine between their
+    Cluster `alignment`'s analytes by `params.scoring` between their
     representative MS2 spectra.
 
     ProcessController-compatible. Returns None if cancelled.
@@ -217,12 +230,16 @@ def similarity_matrix(
     params: ClusterParams,
     progress_callback=None,
     cancel_event=None,
-) -> Optional[tuple[np.ndarray, np.ndarray]]:
+) -> Optional[tuple[np.ndarray, Optional[np.ndarray]]]:
     """
-    Symmetric modified-cosine matrix (diagonal 1), and the matched-peak
-    count of each pair. Scores from fewer than `min_matched_peaks` matched
-    peaks are zeroed. None if cancelled.
+    Symmetric similarity matrix (diagonal 1) by `params.scoring`, and the
+    matched-peak count of each pair (None for MS2DeepScore). Modified-cosine
+    scores from fewer than `min_matched_peaks` matched peaks are zeroed.
+    None if cancelled.
     """
+    if params.scoring == MS2DEEPSCORE:
+        return _ms2deepscore_matrix(spectra, progress_callback, cancel_event), None
+
     n = len(spectra)
     similarity = np.eye(n)
     matches = np.zeros((n, n), dtype=int)
@@ -251,6 +268,24 @@ def similarity_matrix(
             )
 
     return similarity, matches
+
+
+def _ms2deepscore_matrix(spectra, progress_callback=None, cancel_event=None) -> Optional[np.ndarray]:
+    """MS2DeepScore similarity clipped to [0, 1]. Raises FileNotFoundError if the weights are missing."""
+    if cancel_event is not None and cancel_event.is_set():
+        return None
+    if progress_callback is not None:
+        progress_callback(0.0, f"Embedding {len(spectra)} MS2 spectra (MS2DeepScore)")
+    # shortcut: assumes positive mode (polarity isn't stored on Injection); read it from the mzML for negative mode
+    embeddings = ms2deepscore.load_model().embed(
+        (s.peaks.mz, s.peaks.intensities, {"precursor_mz": s.get("precursor_mz"), "ionmode": "positive"})
+        for s in spectra
+    )
+    similarity = np.clip(ms2deepscore.similarity_matrix(embeddings, embeddings), 0.0, 1.0)
+    np.fill_diagonal(similarity, 1.0)
+    if progress_callback is not None:
+        progress_callback(100.0, f"Scored {len(spectra)} analytes (MS2DeepScore)")
+    return similarity
 
 
 def _order_and_nodes(

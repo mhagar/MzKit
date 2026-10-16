@@ -82,16 +82,24 @@ def build_network_graphml(
         return None
     similarity, matches = scored
 
-    edges = [
-        (ms2_analytes[a], ms2_analytes[b], {
-            'cosine': f"{similarity[a, b]:.4f}",
-            'matched_peaks': int(matches[a, b]),
-        })
-        for a, b in _pairs_above(similarity, min_edge_cosine)
-    ]
+    if matches is None:  # MS2DeepScore: no matched peaks
+        edge_keys = _IMPORTED_EDGE_KEYS
+        edges = [
+            (ms2_analytes[a], ms2_analytes[b], {'similarity': f"{similarity[a, b]:.4f}"})
+            for a, b in _pairs_above(similarity, min_edge_cosine)
+        ]
+    else:
+        edge_keys = _COSINE_EDGE_KEYS
+        edges = [
+            (ms2_analytes[a], ms2_analytes[b], {
+                'cosine': f"{similarity[a, b]:.4f}",
+                'matched_peaks': int(matches[a, b]),
+            })
+            for a, b in _pairs_above(similarity, min_edge_cosine)
+        ]
     return _graphml(
         alignment, samples, formulas, 'has_ms2',
-        {a.uuid for a in ms2_analytes}, _COSINE_EDGE_KEYS, edges,
+        {a.uuid for a in ms2_analytes}, edge_keys, edges,
     )
 
 

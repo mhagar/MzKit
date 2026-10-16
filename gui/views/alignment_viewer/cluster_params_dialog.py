@@ -1,9 +1,10 @@
 """
 Non-modal dialog for the Alignment Viewer's cluster-mode parameters.
 
-Two similarity sources:
- - Modified cosine (`ClusterParams`, core/cli/cluster_analytes.py); applied
-   parameters are saved to the `[analyte_clustering]` config section.
+Three similarity sources:
+ - Modified cosine or MS2DeepScore (`ClusterParams`, core/cli/cluster_analytes.py);
+   applied parameters are saved to the `[analyte_clustering]` config section.
+   MS2DeepScore has no parameters, so it shows the cosine page disabled.
  - An imported matrix (core/cli/import_similarity.py): "Export MS2" writes
    the consensus .mgf (Export Table) is scored externally, "Import
    matrix…" reads the scores back.
@@ -21,6 +22,8 @@ from PyQt5 import QtCore, QtWidgets
 
 from core.cli.cluster_analytes import (
     CLUSTERING_SECTION,
+    MODIFIED_COSINE,
+    MS2DEEPSCORE,
     ClusterParams,
     cluster_params_to_config,
 )
@@ -53,6 +56,7 @@ class ClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
         self._matrices: dict[int, RawMatrix] = {}
 
         self.comboSource.addItem("Modified cosine", None)
+        self.comboSource.addItem("MS2DeepScore", MS2DEEPSCORE)
         self.comboLinkage.addItems(LINKAGE_METHODS)
         self.spinTolerance.setMinimum(0.0001)
         self.spinFloor.setMaximum(1.0)
@@ -139,6 +143,7 @@ class ClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
         self.spinMinMatches.setValue(params.min_matched_peaks)
         idx = self.comboLinkage.findText(params.linkage_method)
         self.comboLinkage.setCurrentIndex(max(idx, 0))
+        self.comboSource.setCurrentIndex(int(params.scoring == MS2DEEPSCORE))
 
     def set_import_params(self, params: ImportParams):
         self.checkDistance.setChecked(params.is_distance)
@@ -156,6 +161,8 @@ class ClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
             intensity_power=self.spinIntsyPower.value(),
             min_matched_peaks=self.spinMinMatches.value(),
             linkage_method=self.comboLinkage.currentText(),
+            scoring=(MS2DEEPSCORE if self.comboSource.currentData() == MS2DEEPSCORE
+                     else MODIFIED_COSINE),
         )
 
     def import_params(self) -> ImportParams:
@@ -173,8 +180,7 @@ class ClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
         return list(self._matrices.values())
 
     def _current_matrix(self) -> Optional[RawMatrix]:
-        uid = self.comboSource.currentData()
-        return None if uid is None else self._matrices.get(uid)
+        return self._matrices.get(self.comboSource.currentData())
 
     # -- slots --------------------------------------------------------------
 
@@ -182,6 +188,7 @@ class ClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
         self.stackSource.setCurrentIndex(
             int(self._current_matrix() is not None)
         )
+        self.pageCosine.setEnabled(self.comboSource.currentData() != MS2DEEPSCORE)
         self._update_preview()
 
     def _update_distance_tooltips(self, is_distance: bool):
@@ -267,7 +274,7 @@ class ClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
 
     def _restore_defaults(self):
         if self.stackSource.currentIndex() == 0:
-            self.set_params(ClusterParams())
+            self.set_params(ClusterParams(scoring=self.params().scoring))
         else:
             self.set_import_params(ImportParams())
 

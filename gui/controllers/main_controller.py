@@ -1047,6 +1047,17 @@ class MainController:
             )
             return
 
+        from core.cli.cluster_analytes import MS2DEEPSCORE
+        from core.utils import ms2deepscore
+        if params.scoring == MS2DEEPSCORE and not ms2deepscore.model_available():
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                alignment_viewer, "MS2DeepScore weights missing",
+                ms2deepscore.missing_model_message(),
+            )
+            on_done(None)
+            return
+
         samples = [
             sample for sample in (
                 self.data_registry.get_sample(u) for u in alignment.sample_uuids
