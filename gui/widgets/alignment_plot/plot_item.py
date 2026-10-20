@@ -82,6 +82,7 @@ class AlignmentPlotItem(pg.PlotItem):
         self.getViewBox().invertY(True)      # lane 0 at the top
         self.getViewBox().setMenuEnabled(False)
         self.setMouseEnabled(x=True, y=True)
+        self.getAxis('left').hoverEvent = self._on_axis_hover
 
         self._strips: Optional[EnsembleStripsItem] = None
         self._alignment_uuid: Optional[int] = None
@@ -292,15 +293,23 @@ class AlignmentPlotItem(pg.PlotItem):
 
     def _on_hover(self, target: Optional[HoverTarget]):
         self._hover_outline.clear()
-        self._hover_lane.set_lane(None)
         if target is not None and self._strips is not None:
-            if target.kind == 'sample':
-                span = self._strips.lane_span(target.sample_uuid)
-                if span is not None:
-                    self._hover_lane.set_lane(*span)
-            else:
+            if target.kind != 'sample':  # lane glow is driven by the Y axis
                 self._hover_outline.set_shapes(*self._shapes_for([target]))
         self.sigHovered.emit(target)
+
+    def _on_axis_hover(self, ev):
+        """
+        Glow the lane under the cursor while hovering the Y axis.
+        """
+        span = None
+
+        if not ev.exit and self._strips is not None:
+            y = self.getViewBox().mapSceneToView(ev.scenePos()).y()
+            sample_uuid = self._strips._lane_at(y)
+            span = self._strips.lane_span(sample_uuid)
+
+        self._hover_lane.set_lane(*span) if span else self._hover_lane.set_lane(None)
 
     def _on_click(self, target: Optional[HoverTarget], additive: bool):
         self.select(target, additive)
