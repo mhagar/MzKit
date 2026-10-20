@@ -538,6 +538,9 @@ class ChromPlotItem(pg.PlotItem):
         if not color:
             color = pg.intColor(uuid)
 
+        # Re-adding a uuid would orphan the old item: drawn but untracked
+        self.removePeak(uuid)
+
         chrom_graphic_item = ChromGraphicItem(
             rt_arr=rt_arr,
             intsy_arr=intsy_arr,
