@@ -20,6 +20,9 @@ dependencies = [
     "pyqtgraph>=0.13.7",
     "pyyaml>=6.0.3",
     "qdarkstyle>=3.2.3",
+    # Capped below 2026:
+    # 2026.x has no Intel-Mac / x86_64-Windows wheels yet, so the lock split versions by platform
+    "rdkit>=2025.9.3,<2026",
     "scipy<=1.15.1",
     "scipy-stubs==1.16.2.3",
 ]
