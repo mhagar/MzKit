@@ -26,23 +26,36 @@ from core.data_structs.formula_assignment import (
     FormulaAssignment,
     AssignedCandidate,
 )
+from core.data_structs.analyte_group import AnalyteGroup
+from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
 
 import logging
 import zipfile
 import pickle
+import io
 import json
 from pathlib import Path
 from dataclasses import asdict
 
+import numpy as np
 from find_mfs import FormulaCandidate
 from molmass import Formula
 
-from typing import TYPE_CHECKING
+from typing import NamedTuple, TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 logger = logging.getLogger(__name__)
+
+
+class ProjectData(NamedTuple):
+    """Everything load_project() reconstitutes from an .mzk file."""
+    samples: list[Sample]
+    alignments: list[EnsembleAlignment]
+    assignments: list[FormulaAssignment]
+    groups: list[AnalyteGroup]
+    matrices: list[SimilarityMatrix]
 
 def save_project(
     filepath: Path,
@@ -141,6 +154,24 @@ def save_project(
             for assignment in assignments:
                 serialize_assignment(assignment, zf)
 
+        # Serialize analyte groups
+        groups = data_registry.get_all_groups()
+        if groups:
+            logger.info(
+                f"Packaging {len(groups)} analyte groups"
+            )
+            for group in groups:
+                serialize_group(group, zf)
+
+        # Serialize similarity matrices (computed and imported, raw values)
+        matrices = data_registry.get_all_matrices()
+        if matrices:
+            logger.info(
+                f"Packaging {len(matrices)} similarity matrices"
+            )
+            for matrix in matrices:
+                serialize_matrix(matrix, zf)
+
     logger.info(
         f"Project saved: {filepath.absolute()}"
     )
@@ -219,6 +250,85 @@ def deserialize_assignment(
     data = json.loads(zf.read(assignment_path))
     candidates = [AssignedCandidate(**c) for c in data.pop('candidates')]
     return FormulaAssignment(candidates=candidates, **data)
+
+
+def serialize_group(
+    group: 'AnalyteGroup',
+    zf: 'zipfile.ZipFile',
+):
+    group_dict = {
+        'uuid': group.uuid,
+        'analyte_uuids': list(group.analyte_uuids),
+        'title': group.title,
+        'notes': group.notes,
+        'smiles': group.smiles,
+        'created_at': group.created_at,
+        'provenance': group.provenance,
+    }
+    zf.writestr(
+        f"groups/{group.uuid}.json",
+        data=json.dumps(group_dict, indent=2),
+    )
+
+
+def deserialize_group(
+    group_path: str,
+    zf: 'zipfile.ZipFile',
+) -> 'AnalyteGroup':
+    data = json.loads(zf.read(group_path))
+    # .get() defaults keep later field additions backward compatible
+    group = AnalyteGroup(
+        analyte_uuids=data['analyte_uuids'],
+        uuid=data['uuid'],
+        title=data.get('title', ''),
+        notes=data.get('notes', ''),
+        smiles=data.get('smiles', ''),
+        provenance=data.get('provenance'),
+    )
+    if 'created_at' in data:
+        group.created_at = data['created_at']
+    return group
+
+
+def serialize_matrix(
+    matrix: 'SimilarityMatrix',
+    zf: 'zipfile.ZipFile',
+):
+    buffer = io.BytesIO()
+    np.savez_compressed(buffer, values=matrix.values)
+    zf.writestr(f"similarity/{matrix.uuid}.npz", data=buffer.getvalue())
+    matrix_dict = {
+        'uuid': matrix.uuid,
+        'name': matrix.name,
+        'ids': list(matrix.ids),
+        'provenance': matrix.provenance,
+        # NamedTuple -> dict (json.dumps would write a bare list)
+        'default_transform': matrix.default_transform._asdict(),
+        'uncovered': list(matrix.uncovered),
+    }
+    zf.writestr(
+        f"similarity/{matrix.uuid}.json",
+        data=json.dumps(matrix_dict, indent=2),
+    )
+
+
+def deserialize_matrix(
+    json_path: str,
+    zf: 'zipfile.ZipFile',
+) -> 'SimilarityMatrix':
+    data = json.loads(zf.read(json_path))
+    npz_path = json_path.removesuffix('.json') + '.npz'
+    with np.load(io.BytesIO(zf.read(npz_path)), allow_pickle=False) as npz:
+        values = npz['values']
+    return SimilarityMatrix(
+        name=data['name'],
+        ids=tuple(data['ids']),
+        values=values,
+        provenance=data['provenance'],
+        default_transform=ImportParams(**data['default_transform']),
+        uncovered=tuple(data.get('uncovered', ())),
+        uuid=data['uuid'],
+    )
 
 
 def serialize_fingerprint_arrays(
@@ -434,19 +544,22 @@ def load_project(
     filepath: Path,
     progress_callback=None,  # injected by ProcessRunner; unused here
     cancel_event=None,       # injected by ProcessRunner; unused here
-) -> tuple[list[Sample], list['EnsembleAlignment'], list['FormulaAssignment']]:
+) -> ProjectData:
     """
     Given a path to an .mzk file generated using save_project(),
-    reconstitutes Samples, EnsembleAlignments and FormulaAssignments.
+    reconstitutes Samples, EnsembleAlignments, FormulaAssignments and
+    AnalyteGroups.
 
     :param filepath: Path to .mzk file
-    :return: (samples, alignments, assignments)
+    :return: ProjectData(samples, alignments, assignments, groups, matrices)
     """
     _sanity_checks(filepath)
 
     samples: list[Sample] = []
     alignments: list[EnsembleAlignment] = []
     assignments: list[FormulaAssignment] = []
+    groups: list[AnalyteGroup] = []
+    matrices: list[SimilarityMatrix] = []
 
     with zipfile.ZipFile(
         filepath,
@@ -531,13 +644,36 @@ def load_project(
                 continue
             assignments.append(assignment)
 
+        # Load analyte groups (absent before 1.4.0)
+        group_paths = [
+            name for name in zf.namelist()
+            if name.startswith('groups/')
+            and name.endswith('.json')
+        ]
+        for group_path in group_paths:
+            groups.append(deserialize_group(group_path, zf))
+
+        # Load similarity matrices (absent before 1.4.0)
+        matrices = [
+            deserialize_matrix(name, zf) for name in zf.namelist()
+            if name.startswith('similarity/') and name.endswith('.json')
+        ]
+
     logger.info(
         f"Loaded {len(samples)} samples, "
         f"{len(alignments)} alignments, "
-        f"{len(assignments)} assignments."
+        f"{len(assignments)} assignments, "
+        f"{len(groups)} groups, "
+        f"{len(matrices)} similarity matrices."
     )
 
-    return samples, alignments, assignments
+    return ProjectData(
+        samples=samples,
+        alignments=alignments,
+        assignments=assignments,
+        groups=groups,
+        matrices=matrices,
+    )
 
 
 def deserialize_injection(

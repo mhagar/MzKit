@@ -65,9 +65,22 @@ DataRegistry                       core/data_structs/data_registry.py
 │   │             └── annotations: IonAnnotation / MzDiffAnnotation /
 │   │                              IonPairAnnotation / GenericAnnotation
 │   └── Fingerprint    [optional]  fingerprint.py — bioassay data, "stapled" on
-└── EnsembleAlignment(s)           alignment.py — cross-sample grouping (immutable)
-     └── AlignedAnalyte            — maps {SampleUUID -> EnsembleUUID} per sample
+├── EnsembleAlignment(s)           alignment.py — cross-sample grouping (immutable)
+│    └── AlignedAnalyte            — maps {SampleUUID -> EnsembleUUID} per sample
+└── SimilarityMatrix(es)           similarity_matrix.py — analyte x analyte scores
 ```
+
+- **SimilarityMatrix** — raw, labelled analyte similarity (ids = analyte uuid
+  strings), either computed (`cluster_analytes.compute_similarity_matrix`:
+  MS2 modified cosine / MS2DeepScore) or imported from CSV/TSV
+  (`import_similarity.read_similarity_csv`). Both cluster through one path,
+  `cluster_analytes.cluster_matrix` = `transform` (under the matrix's
+  `ImportParams`; floor 0 for computed scores, a no-op) + `cluster_from_similarity`.
+  Not scoped to an alignment: offered for any alignment sharing an id
+  (`matrices_for_analytes`), reused instead of recomputed when provenance
+  matches and it covers the alignment (`find_matrix`), and dropped once no
+  alignment shares an id with it. Clusterings themselves are a viewer cache
+  keyed by `ClusterKey(matrix uuid, ImportParams, linkage)`.
 
 Key types (all in `core/data_structs/`):
 
@@ -187,9 +200,10 @@ the round-trip.
 
 - A `.mzk` is a **ZIP archive** of JSON (primitives, metadata, alignments) +
   pickle (numpy/scipy arrays: ScanArrays, fingerprint arrays, ensembles).
-- `load_project()` returns `(samples, alignments)`.
+- `load_project()` returns a `ProjectData(samples, alignments, assignments, groups, matrices)`.
 - Layout inside the zip: `project_metadata.json`, `samples/<name>/…`,
-  `alignments/<uuid>.json`.
+  `alignments/<uuid>.json`, `groups/<uuid>.json`, and
+  `similarity/<uuid>.npz` (raw values, no pickle) + `similarity/<uuid>.json`.
 - **Back-compat is intentional:** every deserializer uses `.get(..., default)`
   for fields added over time, so old `.mzk` files keep loading as the model
   grows. Preserve this when adding fields.

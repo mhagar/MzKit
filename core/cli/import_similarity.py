@@ -13,10 +13,11 @@ Round trip:
    the header row and first column - i.e.
    `pd.DataFrame(m, index=ids, columns=ids).to_csv(path)`.
 
-3. `read_similarity_csv` loads it (`RawMatrix`);
+3. `read_similarity_csv` loads it (a `SimilarityMatrix`, provenance
+   'imported'; registered in DataRegistry and saved in the .mzk raw);
    `transform` maps it onto an alignment's analytes under `ImportParams`;
-   `cluster_imported` clusters the result
-            (`cluster_analytes.cluster_from_similarity`).
+   `cluster_analytes.cluster_matrix` clusters the result - the same path
+   in-house (computed) matrices take.
 
 Transform, in order (see `transform`):
     match ids -> NaN = unrelated -> clip to [clip_min, clip_max] and
@@ -25,20 +26,17 @@ Transform, in order (see `transform`):
 
 The floor matters: learned scores almost never reach exactly 0, and
 clustering treats only 0 as "unrelated" (see cluster_analytes).
-
-TODO: imported matrices only exist for the session (held by the GUI).
-TODO: Implement persistence (a `SimilarityMatrix` in DataRegistry, saved in .mzk) so
-they survive a project reload.
 """
 import csv
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, Optional, TYPE_CHECKING
-import uuid
+from typing import NamedTuple, TYPE_CHECKING
 
 import numpy as np
 
-from core.cli.cluster_analytes import AnalyteClustering, cluster_from_similarity
+from core.data_structs.similarity_matrix import (
+    IMPORTED, ImportParams, SimilarityMatrix, initial_transform,
+)
 
 if TYPE_CHECKING:
     from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
@@ -51,20 +49,7 @@ HISTOGRAM_BINS = 40
 
 # --- Reading ------------------------------------------------------------------
 
-@dataclass(frozen=True, eq=False)
-class RawMatrix:
-    """
-    A labelled square matrix as read from file, untransformed.
-    Hashes by identity; `uid` identifies it in cache keys.
-    """
-    name: str
-    ids: tuple[str, ...]
-    values: np.ndarray
-    path: Optional[Path] = None
-    uid: int = field(default_factory=lambda: uuid.uuid4().int)
-
-
-def read_similarity_csv(path: Path) -> RawMatrix:
+def read_similarity_csv(path: Path) -> SimilarityMatrix:
     """
     Read a square, labelled matrix (header row and first column hold the
     same ids, in any order). Tab-separated unless the file is .csv.
@@ -91,7 +76,7 @@ def read_similarity_csv(path: Path) -> RawMatrix:
     if set(row_ids) != set(col_ids):
         raise ValueError(f"{path.name}: row and column ids differ")
 
-    values = np.empty((n, n))
+    values = np.empty((n, n), dtype=np.float32)
     for i, row in enumerate(rows[1:]):
         cells = row[1:]
         if len(cells) != n:
@@ -108,8 +93,10 @@ def read_similarity_csv(path: Path) -> RawMatrix:
     col_of = {c: j for j, c in enumerate(col_ids)}
     values = values[:, [col_of[r] for r in row_ids]]
 
-    return RawMatrix(
-        name=path.stem, ids=tuple(row_ids), values=values, path=path,
+    return SimilarityMatrix(
+        name=path.stem, ids=tuple(row_ids), values=values,
+        provenance={'source': IMPORTED, 'params': {}, 'path': str(path)},
+        default_transform=initial_transform(IMPORTED),
     )
 
 
@@ -128,23 +115,7 @@ def write_similarity_csv(
 
 # --- Transform ----------------------------------------------------------------
 
-class ImportParams(NamedTuple):
-    """
-    is_distance: values are distances (larger = less similar).
-    clip_min / clip_max: values are clipped to this range, then rescaled
-        to [0, 1]. For distances, clip_max is the "fully unrelated"
-        distance.
-    bidirectional: keep a pair only if both directions score at least
-        `bidirectional_threshold` (after rescaling), taking the smaller;
-        otherwise the two directions are averaged.
-    floor: (symmetrized) scores below this become 0, i.e. unrelated.
-    """
-    is_distance: bool = False
-    clip_min: float = 0.0
-    clip_max: float = 1.0
-    bidirectional: bool = False
-    bidirectional_threshold: float = 0.7
-    floor: float = 0.6
+# ImportParams lives in core.data_structs.similarity_matrix (re-exported here)
 
 
 @dataclass(frozen=True)
@@ -199,7 +170,7 @@ class TransformResult(NamedTuple):
 
 
 def transform(
-    raw: RawMatrix,
+    raw: SimilarityMatrix,
     alignment: 'EnsembleAlignment',
     params: ImportParams = ImportParams(),
 ) -> TransformResult:
@@ -265,37 +236,3 @@ def transform(
         bin_edges=bin_edges,
     )
     return TransformResult(analytes, sim, report)
-
-
-# --- Clustering ---------------------------------------------------------------
-
-class ImportedClusterSpec(NamedTuple):
-    """Cache key / params for a clustering by an imported matrix."""
-    matrix_uid: int
-    matrix_name: str
-    params: ImportParams
-    linkage_method: str = 'average'
-
-    @property
-    def source_name(self) -> str:
-        return self.matrix_name
-
-
-def cluster_imported(
-    alignment: 'EnsembleAlignment',
-    raw: RawMatrix,
-    spec: ImportedClusterSpec,
-    progress_callback=None,
-    cancel_event=None,
-) -> Optional[AnalyteClustering]:
-    """
-    Cluster `alignment`'s analytes by `raw` transformed under
-    `spec.params`. ProcessController-compatible.
-    """
-    analytes, similarity, report = transform(raw, alignment, spec.params)
-    return cluster_from_similarity(
-        analytes, similarity, spec.linkage_method,
-        n_dropped=report.n_uncovered,
-        params=spec,
-        dropped_reason=f"not in {raw.name}",
-    )

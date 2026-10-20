@@ -70,7 +70,7 @@ def test_formula_assignment_roundtrip(tmp_path):
 
     path = tmp_path / "roundtrip.mzk"
     persistence.save_project(filepath=path, data_registry=reg)
-    _, _, assignments = persistence.load_project(filepath=path)
+    assignments = persistence.load_project(filepath=path).assignments
 
     assert len(assignments) == 1
     loaded = assignments[0]
@@ -94,6 +94,43 @@ def test_formula_assignment_roundtrip(tmp_path):
     assert c.chem_logprior == -3.3
 
 
+def test_analyte_group_roundtrip(tmp_path):
+    """AnalyteGroups (incl. overlapping ones) survive save/load field by field."""
+    from core.data_structs import AnalyteGroup
+
+    reg = DataRegistry()
+    big = AnalyteGroup(
+        analyte_uuids=[3, 1, 2], title="Psammaplins", notes="bromotyrosines",
+        smiles="C1=CC=CC=C1", created_at=1760000000.0,
+        provenance={"alignment_uuid": 42, "params": {"linkage_method": "average"}},
+    )
+    small = AnalyteGroup(analyte_uuids=[2], notes="overlaps big")
+    reg.register_group(big)
+    reg.register_group(small)
+
+    path = tmp_path / "groups.mzk"
+    persistence.save_project(filepath=path, data_registry=reg)
+    groups = persistence.load_project(filepath=path).groups
+
+    assert sorted(groups, key=lambda g: g.created_at) == [big, small]
+
+
+def test_pre_1_4_file_has_no_groups(tmp_path):
+    """Files saved before 1.4.0 have no groups/ entries; they load as []."""
+    import json
+    import zipfile
+
+    path = tmp_path / "old.mzk"
+    with zipfile.ZipFile(path, mode="w") as zf:
+        zf.writestr(
+            "project_metadata.json", json.dumps({"format_version": "1.3.0"}),
+        )
+
+    data = persistence.load_project(filepath=path)
+    assert data.groups == []
+    assert data.matrices == []
+
+
 def test_pre_1_2_assignment_is_skipped_not_fatal(tmp_path, caplog):
     """Assignments saved before 1.2.0 (element-set provenance fields) aren't
     migrated; loading skips them with a warning and keeps the rest."""
@@ -110,7 +147,7 @@ def test_pre_1_2_assignment_is_skipped_not_fatal(tmp_path, caplog):
         zf.writestr("assignments/2.json", json.dumps(old))
 
     with caplog.at_level(logging.WARNING):
-        _, _, assignments = persistence.load_project(filepath=path)
+        assignments = persistence.load_project(filepath=path).assignments
 
     assert assignments == []
     assert "older format version" in caplog.text
@@ -129,7 +166,7 @@ def test_alignment_analyte_uuid_roundtrip(tmp_path):
 
     path = tmp_path / "roundtrip.mzk"
     persistence.save_project(filepath=path, data_registry=reg)
-    _, alignments, _ = persistence.load_project(filepath=path)
+    alignments = persistence.load_project(filepath=path).alignments
 
     assert len(alignments) == 1
     loaded = alignments[0].analytes[0]
@@ -141,9 +178,9 @@ def test_alignment_analyte_uuid_roundtrip(tmp_path):
 def test_load_project(
     data_registry: DataRegistry,
 ):
-    samples, alignments, _assignments = persistence.load_project(
+    samples = persistence.load_project(
         filepath=Path('test_project.mzk')
-    )
+    ).samples
 
     # Check if loaded and saved samples are indeed the same
     sample_uuids_original = data_registry.get_all_sample_uuids()

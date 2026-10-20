@@ -6,10 +6,15 @@ lane; strips of the same AlignedAnalyte share a colour and a connecting
 line (see gui/widgets/AlignmentPlotWidget.py).
 
 Cluster mode instead lays analytes out in the leaf order of a hierarchical
-clustering by MS2 modified cosine (core/cli/cluster_analytes.py) or by an
-imported similarity matrix (core/cli/import_similarity.py), with the
-dendrogram drawn above the map (gui/widgets/AlignmentDendrogramWidget.py).
-Clustering runs in the background via MainController (sigClusterRequested).
+clustering by a registered SimilarityMatrix - computed (MS2 modified cosine /
+MS2DeepScore, core/cli/cluster_analytes.py) or imported
+(core/cli/import_similarity.py) - with the dendrogram drawn above the map
+(gui/widgets/AlignmentDendrogramWidget.py). Matrix computation and clustering
+run in the background via MainController (sigClusterRequested).
+
+User AnalyteGroups (core/data_structs/analyte_group.py) are drawn on the
+group track above the map in either layout (gui/widgets/AlignmentGroupTrackWidget.py)
+and edited from the Inspector's groups panel (groups_panel.py, group_dialog.py).
 
 The selection on the map drives:
  - the Inspector side panel (properties / members / comparison table),
@@ -23,13 +28,20 @@ from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-from core.cli.cluster_analytes import ClusterParams, cluster_params_from_config
-from core.cli.import_similarity import ImportParams
+from core.cli.cluster_analytes import (
+    ClusterKey, ClusterParams, cluster_params_from_config, linkage_from_config,
+    scoring_name, similarity_provenance,
+)
+from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
 from core.utils.config import load_config
 from gui.resources.AlignmentViewerWindow import Ui_Form
 from gui.views.alignment_viewer.cluster_params_dialog import ClusterParamsDialog
 from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
 from gui.views.alignment_viewer.detail_panel import DetailPanel, XIC_COLOR
+from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog, jsonable
+from gui.views.alignment_viewer.groups_panel import (
+    GroupsPanel, selection_analyte_uuids,
+)
 from gui.views.alignment_viewer.inspector import Inspector
 from gui.views.alignment_viewer.render_params_dialog import RenderParamsDialog
 from gui.widgets.alignment_plot.layout import (
@@ -40,7 +52,6 @@ from gui.widgets.alignment_plot.params import RenderParams
 if TYPE_CHECKING:
     from core.cli.align_ensembles import PairScore
     from core.cli.cluster_analytes import AnalyteClustering
-    from core.cli.import_similarity import ImportedClusterSpec, RawMatrix
     from core.data_structs import Ensemble, SampleUUID
     from core.data_structs.alignment import EnsembleAlignment
     from gui.views.alignment_viewer.data_source import AlignmentViewerDataSource
@@ -58,8 +69,8 @@ class AlignmentViewer(
     sigViewEnsembleRequested = QtCore.pyqtSignal(object)  # Ensemble
     sigAddSamplesRequested = QtCore.pyqtSignal(object)     # list[SampleUUID]
     sigAutoFindMfsRequested = QtCore.pyqtSignal(object)    # list[Ensemble]
-    # EnsembleAlignment, ClusterParams | ImportedClusterSpec, RawMatrix | None
-    sigClusterRequested = QtCore.pyqtSignal(object, object, object)
+    # EnsembleAlignment, ClusterParams (compute) | SimilarityMatrix, linkage
+    sigClusterRequested = QtCore.pyqtSignal(object, object, str)
 
     def __init__(
         self,
@@ -84,15 +95,15 @@ class AlignmentViewer(
 
         self._params_dialog: Optional[RenderParamsDialog] = None
 
-        # Cluster mode: results for the current alignment, keyed by what
-        # produced them (ClusterParams, or ImportedClusterSpec + its matrix)
-        self._cluster_params: 'ClusterParams | ImportedClusterSpec' = (
-            cluster_params_from_config(load_config())
+        # Cluster mode: what to cluster by - ClusterParams (a registered
+        # matrix computed that way, else compute one) or a matrix uuid - and
+        # the results for the current alignment, keyed by ClusterKey
+        config = load_config()
+        self._cluster_source: 'ClusterParams | int' = (
+            cluster_params_from_config(config)
         )
-        self._cluster_matrix: Optional['RawMatrix'] = None
-        # Transform params each imported matrix was last clustered with
-        self._import_params: dict[int, ImportParams] = {}
-        self._clusterings: dict[object, 'AnalyteClustering'] = {}
+        self._cluster_linkage: str = linkage_from_config(config)
+        self._clusterings: dict[ClusterKey, 'AnalyteClustering'] = {}
         self._shown_clustering: Optional['AnalyteClustering'] = None
         self._cluster_dialog: Optional[ClusterParamsDialog] = None
 
@@ -112,6 +123,17 @@ class AlignmentViewer(
             table_analyte_members=self.tableAnalyteMembers,
             table_compare=self.tableCompare,
         )
+        self.groups_panel = GroupsPanel(
+            self.data_source,
+            table=self.tableGroups,
+            svg=self.svgGroupStructure,
+            btn_edit=self.btnGroupEdit,
+            btn_delete=self.btnGroupDelete,
+            btn_add=self.btnGroupAddSelected,
+            btn_remove=self.btnGroupRemoveSelected,
+        )
+        # Analyte -> x of the current layout, shared with the group track
+        self._x_of_analyte: dict = {}
 
         self._setup_layout()
         self._setup_toolbar()
@@ -130,6 +152,8 @@ class AlignmentViewer(
         self.splitter.setSizes([550, 450])
         self.plotDendrogram.link_to(self.plot_item)
         self.plotDendrogram.hide()
+        self.plotGroupTrack.link_to(self.plot_item)
+        self.plotGroupTrack.hide()
         self.plotMS1.pi.hideAxis('bottom')  # m/z-linked to the MS2 plot below
 
     def _setup_toolbar(self):
@@ -151,6 +175,11 @@ class AlignmentViewer(
         )
         self.btnClusterParams.setText("Clustering…")
         self.btnClusterParams.setToolTip("Edit clustering parameters")
+        self.btnGroupSelected.setText("Group selected…")
+        self.btnGroupSelected.setToolTip(
+            "Name / annotate the selected analytes as a group"
+        )
+        self.btnGroupSelected.setEnabled(False)
 
     def _add_status_bar(self):
         """
@@ -183,8 +212,13 @@ class AlignmentViewer(
         self.btnRenderParams.clicked.connect(self._show_params_dialog)
         self.btnClusterMode.toggled.connect(self._on_cluster_mode_toggled)
         self.btnClusterParams.clicked.connect(self._show_cluster_dialog)
-        self.plotDendrogram.sigSubtreeClicked.connect(self._on_subtree_clicked)
+        self.plotDendrogram.sigSubtreeClicked.connect(self._select_analytes)
         self.plotDendrogram.sigNodeHovered.connect(self._on_node_hovered)
+        self.btnGroupSelected.clicked.connect(lambda: self._group_analytes())
+        self.plotGroupTrack.sigGroupHovered.connect(
+            self.plot_item.set_hover_analytes
+        )
+        self.plotGroupTrack.sigGroupClicked.connect(self._select_analytes)
 
         # Formula assignments landing (from EnsembleViewer, auto find-mfs,
         # ...) change what the Inspector shows
@@ -199,6 +233,17 @@ class AlignmentViewer(
             removal_callback=self._on_alignment_removed,
             change_type='Alignment',
         )
+        self.data_source.subscribe_to_changes(
+            addition_callback=self._on_groups_changed,
+            removal_callback=self._on_groups_changed,
+            update_callback=self._on_groups_changed,
+            change_type='Group',
+        )
+        self.data_source.subscribe_to_changes(
+            addition_callback=lambda _: None,
+            removal_callback=self._on_matrix_removed,
+            change_type='Matrix',
+        )
 
     # -- public API (kept stable for MainController / SubWindowManager) ------
 
@@ -210,6 +255,12 @@ class AlignmentViewer(
         self._ctx = AlignmentContext(alignment, self.data_source)
         self._selection = []
         self._clear_cluster_mode()
+        if (
+            not isinstance(self._cluster_source, ClusterParams)
+            and self._cluster_matrix() is None
+        ):
+            # A matrix sharing no analytes with this alignment: back to config
+            self._cluster_source = cluster_params_from_config(load_config())
         if self._cluster_dialog is not None:
             self._cluster_dialog.set_alignment(alignment)
         self.detail_panel.reset()
@@ -247,16 +298,19 @@ class AlignmentViewer(
             return self.plot_item.reveal('ensemble', aid, sample_uuid)
         return False
 
-    def imported_similarities(self) -> list[tuple['RawMatrix', ImportParams]]:
+    def imported_similarities(self) -> list[tuple[SimilarityMatrix, ImportParams]]:
         """
-        The similarity matrices imported this session, each with the
-        transform params it was last clustered with (defaults if never).
+        The registered imported matrices sharing analytes with the shown
+        alignment, each with the transform it was last clustered with.
         """
-        if self._cluster_dialog is None:
+        if self._alignment is None:
             return []
         return [
-            (m, self._import_params.get(m.uid, ImportParams()))
-            for m in self._cluster_dialog.matrices()
+            (m, m.default_transform)
+            for m in self.data_source.matrices_for_analytes(
+                a.uuid for a in self._alignment.analytes
+            )
+            if m.is_imported
         ]
 
     def reset_for_new_project(self):
@@ -267,6 +321,8 @@ class AlignmentViewer(
         if self._cluster_dialog is not None:
             self._cluster_dialog.set_alignment(None)
         self.plot_item.clear_alignment()
+        self._x_of_analyte = {}
+        self._refresh_groups()
         self.detail_panel.reset()
         self.inspector.show_summary(None)
         self.status_bar.clearMessage()
@@ -296,6 +352,9 @@ class AlignmentViewer(
         self.plotDendrogram.setVisible(clustering is not None)
 
         if clustering is None:
+            self._x_of_analyte = {
+                a.uuid: a.consensus_rt for a in self._alignment.analytes
+            }
             self.plot_item.set_alignment(
                 self._alignment, self.data_source, self._params,
                 preserve_range=preserve_range,
@@ -303,6 +362,7 @@ class AlignmentViewer(
             )
         else:
             slot_of = {u: i for i, u in enumerate(clustering.analyte_uuids)}
+            self._x_of_analyte = slot_of
             self.plot_item.set_alignment(
                 self._alignment, self.data_source, self._params,
                 preserve_range=preserve_range,
@@ -312,6 +372,7 @@ class AlignmentViewer(
                 x_axis_visible=False,
                 stagger=False,   # one analyte per column: nothing to overlap
             )
+        self._refresh_groups()
         self._update_rt_link()
         self.status_bar.showMessage(self._summary_text())
 
@@ -339,11 +400,43 @@ class AlignmentViewer(
 
     # -- cluster mode -------------------------------------------------------
 
+    def _cluster_matrix(self) -> Optional[SimilarityMatrix]:
+        """
+        The registered matrix the current source resolves to for this
+        alignment (None: not computed yet, or not covering it).
+        """
+        if self._alignment is None:
+            return None
+        source = self._cluster_source
+        if isinstance(source, ClusterParams):
+            return self.data_source.find_matrix(
+                similarity_provenance(source), self._alignment,
+            )
+        matrix = self.data_source.get_matrix(source)
+        if matrix is None or matrix not in self.data_source.matrices_for_analytes(
+            a.uuid for a in self._alignment.analytes
+        ):
+            return None
+        return matrix
+
+    def _cluster_key(self) -> Optional[ClusterKey]:
+        matrix = self._cluster_matrix()
+        if matrix is None:
+            return None
+        return ClusterKey(
+            matrix.uuid, matrix.default_transform, self._cluster_linkage,
+        )
+
+    def _current_clustering(self) -> Optional['AnalyteClustering']:
+        """The cached clustering for the current settings, if any."""
+        key = self._cluster_key()
+        return None if key is None else self._clusterings.get(key)
+
     def _active_clustering(self) -> Optional['AnalyteClustering']:
         """The clustering to lay out by, or None for RT layout."""
         if not self.btnClusterMode.isChecked():
             return None
-        return self._clusterings.get(self._cluster_params)
+        return self._current_clustering()
 
     def _clear_cluster_mode(self):
         """Drop cached clusterings and fall back to RT mode (no re-render)."""
@@ -357,7 +450,7 @@ class AlignmentViewer(
             with QtCore.QSignalBlocker(self.btnClusterMode):
                 self.btnClusterMode.setChecked(False)
             return
-        if checked and self._cluster_params not in self._clusterings:
+        if checked and self._current_clustering() is None:
             self._request_clustering()
             return
         # Units change between modes: keep the selection, reset the range
@@ -365,12 +458,24 @@ class AlignmentViewer(
 
     def _request_clustering(self):
         """Ask MainController to cluster; the map stays as is meanwhile."""
+        matrix = self._cluster_matrix()
+        if matrix is None and not isinstance(self._cluster_source, ClusterParams):
+            # The chosen matrix is gone (or doesn't cover this alignment)
+            self._cluster_source = cluster_params_from_config(load_config())
         self.status_bar.showMessage(
-            f"Clustering analytes by {self._cluster_params.source_name}…"
+            f"Clustering analytes by {self._source_name(matrix)}…"
         )
         self.sigClusterRequested.emit(
-            self._alignment, self._cluster_params, self._cluster_matrix,
+            self._alignment, matrix or self._cluster_source,
+            self._cluster_linkage,
         )
+
+    def _source_name(self, matrix: Optional[SimilarityMatrix]) -> str:
+        if matrix is not None:
+            return matrix.name
+        if isinstance(self._cluster_source, ClusterParams):
+            return scoring_name(self._cluster_source.scoring)
+        return "similarity"
 
     def set_clustering(
         self,
@@ -395,8 +500,12 @@ class AlignmentViewer(
 
     def _show_cluster_dialog(self):
         if self._cluster_dialog is None:
+            config = load_config()
             self._cluster_dialog = ClusterParamsDialog(
-                cluster_params_from_config(load_config()), parent=self,
+                self.data_source,
+                cluster_params_from_config(config),
+                linkage_from_config(config),
+                parent=self,
             )
             self._cluster_dialog.sigApply.connect(self._on_cluster_params)
             self._cluster_dialog.set_alignment(self._alignment)
@@ -405,24 +514,25 @@ class AlignmentViewer(
 
     def _on_cluster_params(
         self,
-        params: 'ClusterParams | ImportedClusterSpec',
-        matrix: Optional['RawMatrix'],
+        source: 'ClusterParams | SimilarityMatrix',
+        linkage_method: str,
     ):
-        self._cluster_params = params
-        self._cluster_matrix = matrix
-        if matrix is not None:
-            self._import_params[matrix.uid] = params.params
+        self._cluster_source = (
+            source.uuid if isinstance(source, SimilarityMatrix) else source
+        )
+        self._cluster_linkage = linkage_method
         if self._alignment is None:
             return
         if not self.btnClusterMode.isChecked():
             self.btnClusterMode.setChecked(True)   # requests / renders
-        elif params in self._clusterings:
+        elif self._current_clustering() is not None:
             self._render(preserve_selection=True)
             self._refresh_compare()
         else:
             self._request_clustering()
 
-    def _on_subtree_clicked(self, analyte_uuids: list, additive: bool):
+    def _select_analytes(self, analyte_uuids: list, additive: bool):
+        """Select these analytes (a dendrogram subtree / group-track click)."""
         targets = self.plot_item.analyte_targets(analyte_uuids)
         if additive:
             keys = {t.analyte_id for t in targets}
@@ -448,6 +558,7 @@ class AlignmentViewer(
         self._selection = targets
         self._compare_idx = 1
         self._show_selection()
+        self._refresh_groups_panel()
 
     def _show_selection(self):
         ctx, targets = self._ctx, self._selection
@@ -512,7 +623,7 @@ class AlignmentViewer(
         None where unavailable: no clustering yet, or an item that isn't an
         analyte in it.
         """
-        clustering = self._clusterings.get(self._cluster_params)
+        clustering = self._current_clustering()
         if clustering is None:
             return [None] * len(items)
         slot = {u: i for i, u in enumerate(clustering.analyte_uuids)}
@@ -674,7 +785,7 @@ class AlignmentViewer(
         )
         clustering = self._active_clustering()
         if clustering is not None:
-            text += f"  ·  clustered by {self._cluster_params.source_name}"
+            text += f"  ·  clustered by {self._source_name(self._cluster_matrix())}"
             if clustering.n_dropped:
                 n = clustering.n_dropped
                 text += (
@@ -701,6 +812,62 @@ class AlignmentViewer(
     def _on_alignment_removed(self, alignment: 'EnsembleAlignment'):
         if self._alignment is not None and alignment.uuid == self._alignment.uuid:
             self.reset_for_new_project()
+
+    def _on_matrix_removed(self, matrix: SimilarityMatrix):
+        """Drop its clusterings; if it was laying out the map, back to RT."""
+        for key in [k for k in self._clusterings if k.matrix_uuid == matrix.uuid]:
+            del self._clusterings[key]
+        if self._cluster_source == matrix.uuid:
+            self._cluster_source = cluster_params_from_config(load_config())
+        shown = self._shown_clustering
+        if shown is not None and shown.params.matrix_uuid == matrix.uuid:
+            with QtCore.QSignalBlocker(self.btnClusterMode):
+                self.btnClusterMode.setChecked(False)
+            self._render(preserve_selection=True)
+            self._refresh_compare()
+
+    # -- analyte groups -----------------------------------------------------
+
+    def _on_groups_changed(self, _group):
+        self._refresh_groups()
+
+    def _refresh_groups(self):
+        """Redraw the group track and the Inspector's groups panel."""
+        if self._alignment is None:
+            self.plotGroupTrack.clear_groups()
+        else:
+            self.plotGroupTrack.set_groups(
+                self.data_source.groups_for_analytes(self._x_of_analyte),
+                self._x_of_analyte,
+            )
+        self.plotGroupTrack.setVisible(
+            self._alignment is not None and self.plotGroupTrack.has_visible_groups()
+        )
+        self._refresh_groups_panel()
+
+    def _refresh_groups_panel(self):
+        selected = selection_analyte_uuids(self._selection)
+        self.btnGroupSelected.setEnabled(bool(selected))
+        in_view = (
+            {a.uuid for a in self._alignment.analytes} if self._alignment else set()
+        )
+        self.groups_panel.refresh(in_view, selected)
+
+    def _group_analytes(self, targets: Optional[list[HoverTarget]] = None):
+        """Open the group dialog for `targets` (default: the selection)."""
+        analyte_uuids = selection_analyte_uuids(
+            self._selection if targets is None else targets
+        )
+        if self._alignment is None or not analyte_uuids:
+            return
+        clustering = self._active_clustering()
+        provenance = {
+            'alignment_uuid': self._alignment.uuid,
+            'clustering': None if clustering is None else jsonable(clustering.params),
+        }
+        AnalyteGroupDialog(
+            self.data_source, analyte_uuids, provenance, parent=self,
+        ).exec_()
 
     # -- context menu -------------------------------------------------------
 
@@ -746,6 +913,18 @@ class AlignmentViewer(
             )
 
         self._add_find_mfs_action(menu, target)
+
+        targets = (
+            self._selection
+            if len(self._selection) > 1 and target in self._selection
+            else [target]
+        )
+        if selection_analyte_uuids(targets):
+            if not menu.isEmpty():
+                menu.addSeparator()
+            menu.addAction("Group selected analytes…").triggered.connect(
+                lambda: self._group_analytes(targets)
+            )
 
         if not menu.isEmpty():
             menu.exec_(global_pos)

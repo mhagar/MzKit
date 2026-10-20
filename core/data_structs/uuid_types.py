@@ -35,3 +35,7 @@ AnalyteUUID = NewType(
     'AnalyteUUID',
     int,
 )
+GroupUUID = NewType(
+    'GroupUUID',
+    int,
+)

@@ -10,8 +10,11 @@ By default, this uses modified cosine scores:
    says so.
 3. Average-linkage (by default) clustering on distance = 1 - similarity.
 
-Steps 1-2 can instead come from an imported similarity matrix
-(`core.cli.import_similarity`); step 3 is `cluster_from_similarity`.
+Steps 1-2 (`compute_similarity_matrix`) produce a `SimilarityMatrix`, the
+same object an imported matrix is (`core.cli.import_similarity`). Every
+clustering then goes through `cluster_matrix`: `transform` under the
+matrix's ImportParams (a no-op for computed scores, floor 0), then
+`cluster_from_similarity`.
 
 Leaf order
 ----------
@@ -32,6 +35,10 @@ from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
 
 from core.cli.align_ensembles import _spectrum_from
+from core.cli.import_similarity import transform
+from core.data_structs.similarity_matrix import (
+    ImportParams, SimilarityMatrix, initial_transform,
+)
 from core.utils import ms2deepscore
 
 if TYPE_CHECKING:
@@ -54,21 +61,36 @@ class ClusterParams(NamedTuple):
     tolerance: m/z tolerance for matching peaks (ModifiedCosine).
     mz_power / intensity_power: peak weighting in the cosine.
     min_matched_peaks: pairs matching fewer peaks than this score 0.
-    linkage_method: scipy linkage method ('average', 'complete', ...).
     scoring: MODIFIED_COSINE or MS2DEEPSCORE (which ignores the cosine fields).
+
+    Describes how to *compute* a similarity matrix; the linkage is a
+    clustering option (`cluster_matrix`).
     """
     tolerance: float = 0.02
     mz_power: float = 0.0
     intensity_power: float = 1.0
     min_matched_peaks: int = 3
-    linkage_method: str = 'average'
     scoring: str = MODIFIED_COSINE
 
-    @property
-    def source_name(self) -> str:
-        # Weird pattern - cornered into doing this because of ImportedClusterSpec
-        # TODO: clean this out lmao
-        return "MS2DeepScore" if self.scoring == MS2DEEPSCORE else "MS2 modified cosine"
+
+def scoring_name(scoring: str) -> str:
+    return "MS2DeepScore" if scoring == MS2DEEPSCORE else "MS2 modified cosine"
+
+
+def similarity_provenance(params: ClusterParams) -> dict:
+    """The provenance a matrix computed under `params` carries (and is reused by)."""
+    if params.scoring == MS2DEEPSCORE:
+        return {'source': MS2DEEPSCORE, 'params': {}}
+    cosine = params._asdict()
+    del cosine['scoring']
+    return {'source': MODIFIED_COSINE, 'params': cosine}
+
+
+class ClusterKey(NamedTuple):
+    """What produced a clustering (and its cache key)."""
+    matrix_uuid: int
+    transform: ImportParams
+    linkage_method: str
 
 
 # One row per (sub-1.0) merge, for drawing / hit-testing the dendrogram.
@@ -90,8 +112,8 @@ class AnalyteClustering:
     similarity: NxN similarity, in leaf order.
     nodes: dendrogram merges below distance 1.0 (see NODE_DTYPE).
     n_dropped: analytes left out (see `dropped_reason`).
-    params: what produced this clustering - ClusterParams, or an
-        `import_similarity.ImportedClusterSpec`. Hashable (a cache key).
+    params: what produced this clustering (a ClusterKey, from
+        `cluster_matrix`). Hashable (a cache key).
     """
     analyte_uuids: list['AnalyteUUID']
     similarity: np.ndarray
@@ -115,43 +137,68 @@ def cluster_params_from_config(config: 'ConfigParser') -> ClusterParams:
             s, "intensity_power", fallback=d.intensity_power),
         min_matched_peaks=config.getint(
             s, "min_matched_peaks", fallback=d.min_matched_peaks),
-        linkage_method=config.get(
-            s, "linkage_method", fallback=d.linkage_method),
         scoring=config.get(s, "scoring", fallback=d.scoring),
     )
+
+
+def linkage_from_config(config: 'ConfigParser') -> str:
+    return config.get(CLUSTERING_SECTION, "linkage_method", fallback='average')
 
 
 def cluster_params_to_config(
     config: 'ConfigParser',
     params: ClusterParams,
+    linkage_method: str,
 ) -> None:
     """
-    Write ClusterParams into the ``[analyte_clustering]`` section (in memory;
-    caller persists via ``save_config``).
+    Write ClusterParams and the linkage into the ``[analyte_clustering]``
+    section (in memory; caller persists via ``save_config``).
     """
     s = CLUSTERING_SECTION
     if not config.has_section(s):
         config.add_section(s)
     for key, value in params._asdict().items():
         config.set(s, key, str(value))
+    config.set(s, "linkage_method", linkage_method)
 
 
 def cluster_analytes(
     alignment: 'EnsembleAlignment',
     samples: list['Sample'],
     params: ClusterParams = ClusterParams(),
+    linkage_method: str = 'average',
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
 ) -> Optional[AnalyteClustering]:
     """
-    Cluster `alignment`'s analytes by `params.scoring` between their
-    representative MS2 spectra.
+    Compute `alignment`'s similarity matrix under `params` and cluster by
+    it (`compute_similarity_matrix` + `cluster_matrix`).
+
+    ProcessController-compatible. Returns None if cancelled.
+    """
+    matrix = compute_similarity_matrix(
+        alignment, samples, params, progress_callback, cancel_event,
+    )
+    if matrix is None:
+        return None
+    return cluster_matrix(alignment, matrix, linkage_method=linkage_method)
+
+
+def compute_similarity_matrix(
+    alignment: 'EnsembleAlignment',
+    samples: list['Sample'],
+    params: ClusterParams = ClusterParams(),
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event: Optional[threading.Event] = None,
+) -> Optional[SimilarityMatrix]:
+    """
+    `params.scoring` between the representative MS2 spectra of
+    `alignment`'s analytes, as a SimilarityMatrix (analytes without MS2
+    are `uncovered`).
 
     ProcessController-compatible. Returns None if cancelled.
     """
     analytes, spectra = analyte_ms2_spectra(alignment, samples)
-    n_dropped = len(alignment.analytes) - len(analytes)
-
     scored = similarity_matrix(
         spectra, params, progress_callback, cancel_event,
     )
@@ -159,9 +206,44 @@ def cluster_analytes(
         return None
     similarity, _matches = scored
 
+    covered = {a.uuid for a in analytes}
+    return SimilarityMatrix(
+        name=scoring_name(params.scoring),
+        ids=tuple(str(a.uuid) for a in analytes),
+        values=similarity.astype(np.float32),
+        provenance=similarity_provenance(params),
+        default_transform=initial_transform(params.scoring),
+        uncovered=tuple(
+            str(a.uuid) for a in alignment.analytes if a.uuid not in covered
+        ),
+    )
+
+
+def cluster_matrix(
+    alignment: 'EnsembleAlignment',
+    matrix: SimilarityMatrix,
+    transform_params: Optional[ImportParams] = None,
+    linkage_method: str = 'average',
+    progress_callback=None,
+    cancel_event=None,
+) -> AnalyteClustering:
+    """
+    Cluster `alignment`'s analytes by `matrix` transformed under
+    `transform_params` (default: `matrix.default_transform`). Analytes
+    not in the matrix are dropped. ProcessController-compatible.
+
+    Raises ValueError on an invalid transform (see `transform`).
+    """
+    if transform_params is None:
+        transform_params = matrix.default_transform
+    analytes, similarity, report = transform(matrix, alignment, transform_params)
     return cluster_from_similarity(
-        analytes, similarity, params.linkage_method,
-        n_dropped=n_dropped, params=params,
+        analytes, similarity, linkage_method,
+        n_dropped=report.n_uncovered,
+        params=ClusterKey(matrix.uuid, transform_params, linkage_method),
+        dropped_reason=(
+            f"not in {matrix.name}" if matrix.is_imported else "without MS2"
+        ),
     )
 
 

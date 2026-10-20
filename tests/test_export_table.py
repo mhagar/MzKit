@@ -17,7 +17,7 @@ from core.cli.cluster_analytes import ClusterParams
 from core.cli.export_network import (
     build_imported_network_graphml, build_network_graphml,
 )
-from core.cli.import_similarity import ImportParams, RawMatrix
+from core.cli.import_similarity import ImportParams, read_similarity_csv
 from core.cli.export_table import (
     export_abundance_table,
     export_feature_mgf,
@@ -107,12 +107,44 @@ def test_abundance_table(stubbed):
         export_abundance_table(alignment, samples, names)
     )
     assert header == [
-        'analyte_id', 'consensus_mz', 'consensus_rt', 'S1', 'S2', 'S3', 'S4', 'S5',
+        'analyte_id', 'consensus_mz', 'consensus_rt', 'group',
+        'S1', 'S2', 'S3', 'S4', 'S5',
     ]
-    assert a0[3:] == ['100.0', '500.0', '300.0', '200.0', '50.0']
-    assert a1[3:] == ['7.0', '9.0', '0', '0', '0']
+    assert a0[4:] == ['100.0', '500.0', '300.0', '200.0', '50.0']
+    assert a1[4:] == ['7.0', '9.0', '0', '0', '0']
     # Mapped but unresolvable -> empty, not '0'
-    assert a2[3:] == ['0', '0', '', '0', '0']
+    assert a2[4:] == ['0', '0', '', '0', '0']
+    assert a0[3] == a1[3] == a2[3] == ''
+
+
+def test_abundance_table_group_column(stubbed):
+    """Group titles from DataRegistry.group_titles() fill the group column
+    and the GraphML node attribute."""
+    from core.data_structs import AnalyteGroup, DataRegistry
+
+    alignment, samples, names, _ = stubbed
+    a0, a1, _a2 = alignment.analytes
+    registry = DataRegistry()
+    registry.register_group(AnalyteGroup([a0.uuid, a1.uuid], title='Sugars', created_at=1.0))
+    registry.register_group(AnalyteGroup([a0.uuid], title='Glucose', created_at=2.0))
+    registry.register_group(AnalyteGroup([a1.uuid], title='', created_at=3.0))
+    titles = registry.group_titles()
+
+    _header, r0, r1, r2 = _rows(
+        export_abundance_table(alignment, samples, names, groups=titles)
+    )
+    assert (r0[3], r1[3], r2[3]) == ('Sugars;Glucose', 'Sugars', '')
+
+    text = build_network_graphml(
+        alignment, list(samples.values()), ClusterParams(), groups=titles,
+    )
+    ns = {'g': 'http://graphml.graphdrawing.org/xmlns'}
+    nodes = ET.fromstring(text).find('g:graph', ns).findall('g:node', ns)
+    node_groups = [
+        {d.get('key'): d.text for d in n.findall('g:data', ns)}.get('group')
+        for n in nodes
+    ]
+    assert node_groups == ['Sugars;Glucose', 'Sugars', None]
 
 
 def test_formula_table(stubbed):
@@ -173,13 +205,13 @@ def test_graphml_network():
     assert float(edge['mz_delta']) == pytest.approx(14.0)
 
 
-def test_graphml_imported_network(stubbed):
+def test_graphml_imported_network(stubbed, tmp_path):
     alignment, samples, _names, formulas = stubbed
     a0, a1, a2 = (str(a.uuid) for a in alignment.analytes)
     # a2 is left out of the matrix; a0-a1 is a distance of 0.1
-    raw = RawMatrix(
-        name='simba', ids=(a0, a1), values=np.array([[0.0, 0.1], [0.1, 0.0]]),
-    )
+    path = tmp_path / 'simba.csv'
+    path.write_text(f",{a0},{a1}\n{a0},0,0.1\n{a1},0.1,0\n")
+    raw = read_similarity_csv(path)
     text = build_imported_network_graphml(
         alignment, list(samples.values()), raw,
         ImportParams(is_distance=True), formulas,
@@ -208,7 +240,7 @@ def aligned():
             "(MS data is gitignored; place it locally to run this test)"
         )
     from core.utils.persistence import load_project
-    samples, alignments, _assignments = load_project(TEST_ALIGNMENT_MZK)
+    samples, alignments, *_ = load_project(TEST_ALIGNMENT_MZK)
     if not alignments:
         from core.data_structs.alignment import AlignmentParams
         import core.cli.align_ensembles as A

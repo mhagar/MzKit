@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from PyQt5.QtWidgets import QApplication
     from configparser import ConfigParser
     from core.data_structs import Sample
+    from core.utils.persistence import ProjectData
     from core.data_structs.fingerprint import FingerprintImportParams
     from core.data_structs.scan_array import ScanArrayParameters
     from core.cli.generate_ensemble import EnsembleExtractionParams
@@ -617,6 +618,7 @@ class MainController:
                 "output": path,
                 "separator": separator,
                 "formulas": self.data_registry.chosen_formulas(),
+                "groups": self.data_registry.group_titles(),
                 "network_params": cluster_params_from_config(load_config()),
                 # TODO: imported-matrix networks disabled until reworked
                 # "imported_similarities": self.subwindow_manager.get_window(
@@ -849,18 +851,21 @@ class MainController:
 
     def _register_loaded_project(
         self,
-        result: tuple[list['Sample'], list, list],
+        result: 'ProjectData',
     ):
         """
         Register the contents of a loaded project into the (current)
         registry. Used by both Open (after clearing) and Merge.
         """
-        samples, alignments, assignments = result
-        self.data_registry.register_samples(samples)
-        for alignment in alignments:
+        self.data_registry.register_samples(result.samples)
+        for alignment in result.alignments:
             self.data_registry.register_alignment(alignment)
-        for assignment in assignments:
+        for assignment in result.assignments:
             self.data_registry.register_assignment(assignment)
+        for group in result.groups:
+            self.data_registry.register_group(group)
+        for matrix in result.matrices:
+            self.data_registry.register_matrix(matrix)
 
     def _handle_generate_ensemble_request(
         self,
@@ -1019,14 +1024,23 @@ class MainController:
 
     def _handle_cluster_analytes_request(
         self,
-        alignment,  # EnsembleAlignment
-        params,     # ClusterParams | ImportedClusterSpec
-        matrix,     # RawMatrix (imported similarity) | None (modified cosine)
+        alignment,       # EnsembleAlignment
+        source,          # SimilarityMatrix | ClusterParams (compute)
+        linkage_method,  # str
     ):
         """
-        Cluster an alignment's analytes by MS2 similarity (Alignment Viewer
-        cluster mode); the result goes back to the viewer.
+        Cluster an alignment's analytes by a similarity matrix (Alignment
+        Viewer cluster mode); the result goes back to the viewer.
+
+        For ClusterParams, a registered matrix computed the same way and
+        covering the alignment is reused; otherwise one is computed in the
+        background and registered (so it is saved with the project).
         """
+        from core.cli.cluster_analytes import (
+            MS2DEEPSCORE, similarity_provenance,
+        )
+        from core.data_structs.similarity_matrix import SimilarityMatrix
+
         alignment_viewer = self.subwindow_manager.get_window(
             'alignment_viewer'
         )
@@ -1034,22 +1048,38 @@ class MainController:
         def on_done(result):
             alignment_viewer.set_clustering(alignment.uuid, result)
 
-        if matrix is not None:
+        def cluster(matrix):
+            if matrix is None:   # cancelled
+                on_done(None)
+                return
             self.process_controller.start_process(
-                module_path="core.cli.import_similarity",
-                function_name="cluster_imported",
+                module_path="core.cli.cluster_analytes",
+                function_name="cluster_matrix",
                 parameters={
                     "alignment": alignment,
-                    "raw": matrix,
-                    "spec": params,
+                    "matrix": matrix,
+                    "linkage_method": linkage_method,
                 },
                 on_completion_func=on_done,
             )
+
+        def on_computed(matrix):
+            if matrix is not None:
+                self.data_registry.register_matrix(matrix)
+            cluster(matrix)
+
+        if isinstance(source, SimilarityMatrix):
+            cluster(source)
+            return
+        matrix = self.data_registry.find_matrix(
+            similarity_provenance(source), alignment,
+        )
+        if matrix is not None:
+            cluster(matrix)
             return
 
-        from core.cli.cluster_analytes import MS2DEEPSCORE
         from core.utils import ms2deepscore
-        if params.scoring == MS2DEEPSCORE and not ms2deepscore.model_available():
+        if source.scoring == MS2DEEPSCORE and not ms2deepscore.model_available():
             from PyQt5.QtWidgets import QMessageBox
             QMessageBox.warning(
                 alignment_viewer, "MS2DeepScore weights missing",
@@ -1066,13 +1096,13 @@ class MainController:
         ]
         self.process_controller.start_process(
             module_path="core.cli.cluster_analytes",
-            function_name="cluster_analytes",
+            function_name="compute_similarity_matrix",
             parameters={
                 "alignment": alignment,
                 "samples": samples,
-                "params": params,
+                "params": source,
             },
-            on_completion_func=on_done,
+            on_completion_func=on_computed,
         )
 
     def _handle_auto_find_mf_batch_request(

@@ -9,7 +9,7 @@ from PyQt5 import QtCore
 
 from core.interfaces.data_sources import SampleDataSource
 
-from typing import Optional, TYPE_CHECKING, Literal
+from typing import Iterable, Optional, TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from core.data_structs import (
         Sample,
@@ -18,9 +18,13 @@ if TYPE_CHECKING:
         FingerprintUUID,
         AlignmentUUID,
         EnsembleUUID,
+        AnalyteUUID,
+        GroupUUID,
     )
     from core.data_structs.alignment import EnsembleAlignment
+    from core.data_structs.analyte_group import AnalyteGroup
     from core.data_structs.formula_assignment import FormulaAssignment
+    from core.data_structs.similarity_matrix import SimilarityMatrix
 
 class DataRegistry(
     QtCore.QObject,
@@ -59,6 +63,21 @@ class DataRegistry(
     sigAssignmentUpdated = QtCore.pyqtSignal(
         object  # FormulaAssignment (e.g. its chosen candidate changed)
     )
+    sigGroupAdded = QtCore.pyqtSignal(
+        object  # AnalyteGroup
+    )
+    sigGroupRemoved = QtCore.pyqtSignal(
+        object  # AnalyteGroup
+    )
+    sigGroupUpdated = QtCore.pyqtSignal(
+        object  # AnalyteGroup (edited in place: title, notes, membership)
+    )
+    sigMatrixAdded = QtCore.pyqtSignal(
+        object  # SimilarityMatrix
+    )
+    sigMatrixRemoved = QtCore.pyqtSignal(
+        object  # SimilarityMatrix
+    )
 
     def __init__(self):
         self._samples: dict['SampleUUID', 'Sample'] = {}
@@ -66,6 +85,10 @@ class DataRegistry(
         self._alignments: dict['AlignmentUUID', 'EnsembleAlignment'] = {}
         # Keyed by SOURCE uuid (an EnsembleUUID today); latest assignment wins.
         self._assignments: dict['EnsembleUUID', 'FormulaAssignment'] = {}
+        self._groups: dict['GroupUUID', 'AnalyteGroup'] = {}
+        # Reverse index for groups_for_analytes; rebuilt on every group change
+        self._groups_by_analyte: dict['AnalyteUUID', set['GroupUUID']] = {}
+        self._matrices: dict[int, 'SimilarityMatrix'] = {}
         super().__init__()
 
     def subscribe_to_changes(
@@ -73,7 +96,7 @@ class DataRegistry(
         addition_callback,
         removal_callback,
         update_callback=None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
     ):
         match change_type:
             case 'Sample':
@@ -112,6 +135,29 @@ class DataRegistry(
                     self.sigAssignmentUpdated.connect(
                         update_callback
                     )
+
+            case 'Group':
+                self.sigGroupAdded.connect(
+                    addition_callback
+                )
+
+                self.sigGroupRemoved.connect(
+                    removal_callback
+                )
+
+                if update_callback:
+                    self.sigGroupUpdated.connect(
+                        update_callback
+                    )
+
+            case 'Matrix':
+                self.sigMatrixAdded.connect(
+                    addition_callback
+                )
+
+                self.sigMatrixRemoved.connect(
+                    removal_callback
+                )
 
     def register_sample(
         self,
@@ -284,13 +330,20 @@ class DataRegistry(
         connections held by controllers, models and views remain valid.
 
         Assignments and alignments are removed first, since they reference
-        Samples (via source/ensemble UUIDs).
+        Samples (via source/ensemble UUIDs). Removing the last alignment
+        orphans every group, so groups go with it.
         """
         for source_uuid in self.get_all_assignment_source_uuids():
             self.remove_assignment(source_uuid)
 
         for uuid in self.get_all_alignment_uuids():
             self.remove_alignment(uuid)
+
+        # Groups/matrices not caught by orphan collection (e.g. no alignments)
+        for group in self.get_all_groups():
+            self.remove_group(group.uuid)
+        for matrix in self.get_all_matrices():
+            self.remove_matrix(matrix.uuid)
 
         for uuid in self.get_all_sample_uuids():
             self.remove_sample(uuid)
@@ -343,6 +396,25 @@ class DataRegistry(
             alignment = self._alignments[uuid]
             self.sigAlignmentRemoved.emit(alignment)
             del self._alignments[uuid]
+            self._collect_orphans()
+
+    def _collect_orphans(self):
+        """
+        Drop every group / similarity matrix none of whose analytes appear
+        in any remaining alignment (run after an alignment is removed).
+        """
+        live = {
+            analyte.uuid
+            for alignment in self._alignments.values()
+            for analyte in alignment.analytes
+        }
+        for group in self.get_all_groups():
+            if live.isdisjoint(group.analyte_uuids):
+                self.remove_group(group.uuid)
+        live_ids = {str(uuid) for uuid in live}
+        for matrix in self.get_all_matrices():
+            if live_ids.isdisjoint(matrix.ids):
+                self.remove_matrix(matrix.uuid)
 
     def get_alignment(
         self,
@@ -430,6 +502,128 @@ class DataRegistry(
 
     def assignment_count(self) -> int:
         return len(self._assignments)
+
+    # --- Analyte group methods ---
+
+    def register_group(
+        self,
+        group: 'AnalyteGroup',
+    ):
+        self._groups[group.uuid] = group
+        self._rebuild_group_index()
+        self.sigGroupAdded.emit(group)
+
+    def remove_group(
+        self,
+        uuid: 'GroupUUID',
+    ):
+        if uuid in self._groups:
+            group = self._groups.pop(uuid)
+            self._rebuild_group_index()
+            self.sigGroupRemoved.emit(group)
+
+    def get_group(
+        self,
+        uuid: 'GroupUUID',
+    ) -> Optional['AnalyteGroup']:
+        return self._groups.get(uuid)
+
+    def get_all_groups(self) -> list['AnalyteGroup']:
+        return list(self._groups.values())
+
+    def notify_group_updated(
+        self,
+        group: 'AnalyteGroup',
+    ):
+        """
+        Groups are edited in place; every edit path must call this so the
+        index and subscribed views refresh.
+        """
+        self._rebuild_group_index()
+        self.sigGroupUpdated.emit(group)
+
+    def groups_for_analytes(
+        self,
+        analyte_uuids: Iterable['AnalyteUUID'],
+    ) -> list['AnalyteGroup']:
+        """Groups with any member in `analyte_uuids`, in registration order."""
+        hits = set()
+        for uuid in analyte_uuids:
+            hits |= self._groups_by_analyte.get(uuid, set())
+        return [g for u, g in self._groups.items() if u in hits]
+
+    def group_titles(self) -> dict['AnalyteUUID', str]:
+        """
+        Titles of every group each analyte belongs to (oldest group first,
+        joined by ';'), for exports. Untitled groups are skipped.
+        """
+        titles: dict['AnalyteUUID', list[str]] = {}
+        for group in sorted(self._groups.values(), key=lambda g: g.created_at):
+            if not group.title:
+                continue
+            for uuid in group.analyte_uuids:
+                titles.setdefault(uuid, []).append(group.title)
+        return {uuid: ';'.join(t) for uuid, t in titles.items()}
+
+    # --- Similarity matrix methods ---
+
+    def register_matrix(
+        self,
+        matrix: 'SimilarityMatrix',
+    ):
+        self._matrices[matrix.uuid] = matrix
+        self.sigMatrixAdded.emit(matrix)
+
+    def remove_matrix(
+        self,
+        uuid: int,
+    ):
+        if uuid in self._matrices:
+            matrix = self._matrices.pop(uuid)
+            self.sigMatrixRemoved.emit(matrix)
+
+    def get_matrix(
+        self,
+        uuid: int,
+    ) -> Optional['SimilarityMatrix']:
+        return self._matrices.get(uuid)
+
+    def get_all_matrices(self) -> list['SimilarityMatrix']:
+        return list(self._matrices.values())
+
+    def matrices_for_analytes(
+        self,
+        analyte_uuids: Iterable['AnalyteUUID'],
+    ) -> list['SimilarityMatrix']:
+        """Matrices sharing any id with `analyte_uuids`, in registration order."""
+        ids = {str(uuid) for uuid in analyte_uuids}
+        return [m for m in self._matrices.values() if not ids.isdisjoint(m.ids)]
+
+    def find_matrix(
+        self,
+        provenance: dict,
+        alignment: 'EnsembleAlignment',
+    ) -> Optional['SimilarityMatrix']:
+        """
+        A registered matrix computed the same way (`provenance` source and
+        params match) that covers every analyte of `alignment` (each is in
+        its ids or uncovered), for reuse instead of recomputing.
+        """
+        needed = {str(a.uuid) for a in alignment.analytes}
+        for matrix in self._matrices.values():
+            if (
+                matrix.provenance.get('source') == provenance.get('source')
+                and matrix.provenance.get('params') == provenance.get('params')
+                and needed <= set(matrix.ids).union(matrix.uncovered)
+            ):
+                return matrix
+        return None
+
+    def _rebuild_group_index(self):
+        self._groups_by_analyte = {}
+        for group in self._groups.values():
+            for uuid in group.analyte_uuids:
+                self._groups_by_analyte.setdefault(uuid, set()).add(group.uuid)
 
 def _merge_is_valid(
     source: 'Sample',

@@ -27,10 +27,10 @@ from core.cli.cluster_analytes import (
 from core.cli.import_similarity import transform
 
 if TYPE_CHECKING:
-    from core.cli.import_similarity import ImportParams, RawMatrix
+    from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
     from core.data_structs import Sample
     from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
-    from core.data_structs.uuid_types import EnsembleUUID
+    from core.data_structs.uuid_types import AnalyteUUID, EnsembleUUID
 
 
 # (attribute name, GraphML attr.type), declared as <key>s
@@ -42,6 +42,7 @@ _NODE_KEYS = [
     ('formula_count', 'int'),
     ('formula_total', 'int'),
     ('n_samples', 'int'),
+    ('group', 'string'),
 ]
 _COSINE_EDGE_KEYS = [
     ('cosine', 'double'),
@@ -59,6 +60,7 @@ def build_network_graphml(
     samples: list['Sample'],
     params: ClusterParams = ClusterParams(),
     formulas: Optional[Mapping['EnsembleUUID', str]] = None,
+    groups: Optional[Mapping['AnalyteUUID', str]] = None,
     min_edge_cosine: float = 0.7,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
@@ -66,10 +68,10 @@ def build_network_graphml(
     """
     GraphML text for `alignment`'s MS2 similarity network.
 
-    :param params: scoring parameters (see `cluster_params_from_config`);
-        `linkage_method` is unused.
+    :param params: scoring parameters (see `cluster_params_from_config`).
     :param formulas: accepted formula per ensemble, for the
         consensus_formula node attributes.
+    :param groups: group titles per analyte, for the group node attribute.
     :param min_edge_cosine: drop edges scoring below this (GNPS default
         0.7). Must be > 0; unscored pairs are 0.
     :return: None if cancelled.
@@ -98,7 +100,7 @@ def build_network_graphml(
             for a, b in _pairs_above(similarity, min_edge_cosine)
         ]
     return _graphml(
-        alignment, samples, formulas, 'has_ms2',
+        alignment, samples, formulas, groups, 'has_ms2',
         {a.uuid for a in ms2_analytes}, edge_keys, edges,
     )
 
@@ -106,9 +108,10 @@ def build_network_graphml(
 def build_imported_network_graphml(
     alignment: 'EnsembleAlignment',
     samples: list['Sample'],
-    raw: 'RawMatrix',
+    raw: 'SimilarityMatrix',
     import_params: 'ImportParams',
     formulas: Optional[Mapping['EnsembleUUID', str]] = None,
+    groups: Optional[Mapping['AnalyteUUID', str]] = None,
 ) -> str:
     """
     GraphML text for `alignment`'s network by an imported similarity
@@ -122,7 +125,7 @@ def build_imported_network_graphml(
         for a, b in _pairs_above(similarity, 0.0)
     ]
     return _graphml(
-        alignment, samples, formulas, 'in_matrix',
+        alignment, samples, formulas, groups, 'in_matrix',
         {a.uuid for a in analytes}, _IMPORTED_EDGE_KEYS, edges,
     )
 
@@ -139,6 +142,7 @@ def _graphml(
     alignment: 'EnsembleAlignment',
     samples: list['Sample'],
     formulas: Optional[Mapping['EnsembleUUID', str]],
+    groups: Optional[Mapping['AnalyteUUID', str]],
     flag_key: str,
     flagged: set,
     edge_keys: list[tuple[str, str]],
@@ -150,6 +154,7 @@ def _graphml(
     gets `mz_delta`.
     """
     formulas = formulas or {}
+    groups = groups or {}
     sample_of = {s.uuid: s for s in samples}
     row_of = {a.uuid: i for i, a in enumerate(alignment.analytes)}
 
@@ -177,6 +182,7 @@ def _graphml(
             'formula_count': consensus.count,
             'formula_total': consensus.total,
             'n_samples': len(analyte.ensemble_map),
+            'group': groups.get(analyte.uuid),
             flag_key: 'true' if analyte.uuid in flagged else 'false',
         }
         lines.append(f'    <node id="{i}">')

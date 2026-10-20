@@ -5,16 +5,15 @@ import numpy as np
 import pytest
 
 from core.cli.cluster_analytes import (
-    ClusterParams, analyte_ms2_spectra, cluster_analytes, similarity_matrix,
+    ClusterKey, ClusterParams, analyte_ms2_spectra, cluster_analytes,
+    cluster_matrix, similarity_matrix,
 )
 from core.cli.import_similarity import (
     ImportParams,
-    ImportedClusterSpec,
-    RawMatrix,
-    cluster_imported,
     read_similarity_csv,
     transform,
 )
+from core.data_structs.similarity_matrix import SimilarityMatrix
 from core.data_structs.alignment import EnsembleAlignment
 from tests.test_cluster_analytes import FRAGS_A, FRAGS_B, FRAGS_C, _build
 
@@ -28,7 +27,11 @@ def _alignment(n):
 
 def _raw(analytes, values, extra_ids=()):
     ids = tuple(str(a.uuid) for a in analytes) + tuple(extra_ids)
-    return RawMatrix(name='m', ids=ids, values=np.asarray(values, float))
+    return SimilarityMatrix(
+        name='m', ids=ids, values=np.asarray(values, float),
+        provenance={'source': 'imported', 'params': {}},
+        default_transform=ImportParams(),
+    )
 
 
 NO_FLOOR = ImportParams(floor=0.0)
@@ -43,6 +46,10 @@ def test_read_csv_reorders_columns(tmp_path):
     assert raw.ids == ('a', 'b')
     assert np.allclose(raw.values, [[1, 0.2], [0.2, 1]])
     assert raw.name == 'scores'
+    assert raw.provenance['source'] == 'imported'
+    assert raw.provenance['path'] == str(path)
+    assert raw.default_transform == ImportParams()
+    assert raw.values.dtype == np.float32
 
 
 def test_read_tsv_empty_cell_is_nan(tmp_path):
@@ -170,11 +177,12 @@ def test_imported_cosine_matrix_clusters_like_cosine():
     ms2_analytes, spectra = analyte_ms2_spectra(alignment, samples)
     sim, _ = similarity_matrix(spectra, params)
     raw = _raw(ms2_analytes, sim)
-    spec = ImportedClusterSpec(raw.uid, raw.name, NO_FLOOR, 'average')
-    result = cluster_imported(alignment, raw, spec)
+    result = cluster_matrix(alignment, raw, NO_FLOOR, 'average')
 
     assert result.analyte_uuids == expected.analyte_uuids
     assert np.allclose(result.similarity, expected.similarity)
-    assert np.array_equal(result.nodes, expected.nodes)
+    assert np.allclose(result.nodes.tolist(), expected.nodes.tolist())
     assert result.n_dropped == 1
-    assert result.params == spec
+    assert result.params == ClusterKey(raw.uuid, NO_FLOOR, 'average')
+    assert result.dropped_reason == "not in m"
+    assert expected.dropped_reason == "without MS2"

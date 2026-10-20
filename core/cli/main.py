@@ -50,12 +50,16 @@ def _load_registry(*mzk_paths: Path) -> DataRegistry:
     registry = DataRegistry()
     for path in mzk_paths:
         logger.info(f"Loading {path}")
-        samples, alignments, assignments = load_project(path)
-        registry.register_samples(samples)
-        for alignment in alignments:
+        data = load_project(path)
+        registry.register_samples(data.samples)
+        for alignment in data.alignments:
             registry.register_alignment(alignment)
-        for assignment in assignments:
+        for assignment in data.assignments:
             registry.register_assignment(assignment)
+        for group in data.groups:
+            registry.register_group(group)
+        for matrix in data.matrices:
+            registry.register_matrix(matrix)
     return registry
 
 
@@ -592,9 +596,10 @@ def cmd_filter(args: argparse.Namespace) -> None:
         sample_lookup=sample_lookup,
     )
 
-    # Replace the old alignment with the filtered one
-    registry.remove_alignment(alignment.uuid)
+    # Replace the old alignment with the filtered one. Register first:
+    # removing the parent first would orphan-collect the child's groups
     registry.register_alignment(result.alignment)
+    registry.remove_alignment(alignment.uuid)
 
     output = _resolve_output(args, mzk_path)
     save_project(output, registry)
@@ -624,6 +629,7 @@ def cmd_export_table(args: argparse.Namespace) -> None:
         write_mgf=args.mgf,
         mgf_mode='per_sample' if args.mgf_mode == 'per-sample' else 'consensus',
         formulas=registry.chosen_formulas(),
+        groups=registry.group_titles(),
         write_graphml=args.graphml,
         min_edge_cosine=args.min_edge_cosine,
         network_params=cluster_params_from_config(load_config()),
@@ -631,7 +637,7 @@ def cmd_export_table(args: argparse.Namespace) -> None:
 
 
 def cmd_export_bpcs(args: argparse.Namespace) -> None:
-    samples, _, _ = load_project(Path(args.mzk))
+    samples = load_project(Path(args.mzk)).samples
 
     export_bpcs_to_file(
         samples=samples,

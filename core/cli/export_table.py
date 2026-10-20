@@ -5,7 +5,7 @@ Export an EnsembleAlignment as feature tables (CSV/TSV), with a companion
 From an output path like `features.tsv`, this writes:
 - `features_abundance.tsv`:
     rows = analytes
-    cols = samples
+    cols = `group` (titles of the analyte's AnalyteGroups, ';'-joined), samples
     vals = base intensity
         ('0' = not detected; empty = detected, but its ensemble
                 couldn't be resolved).
@@ -43,9 +43,9 @@ from core.cli.export_network import (
 from core.cli.import_similarity import ANALYTE_ID_TAG
 
 if TYPE_CHECKING:
-    from core.cli.import_similarity import ImportParams, RawMatrix
+    from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
     from core.data_structs import Sample, SampleUUID
-    from core.data_structs.uuid_types import EnsembleUUID
+    from core.data_structs.uuid_types import AnalyteUUID, EnsembleUUID
     from core.data_structs.alignment import EnsembleAlignment
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ def export_abundance_table(
     samples: dict['SampleUUID', 'Sample'],
     sample_names: dict['SampleUUID', str],
     separator: str = '\t',
+    groups: Optional[Mapping['AnalyteUUID', str]] = None,
 ) -> str:
     """
     Analyte x sample table of base intensities.
@@ -74,11 +75,14 @@ def export_abundance_table(
     :param samples: Mapping of SampleUUID -> Sample (with Injections)
     :param sample_names: Mapping of SampleUUID -> display name
     :param separator: Column separator (tab or comma)
+    :param groups: group titles per analyte, for the `group` column
+        (e.g. DataRegistry.group_titles()).
     """
+    groups = groups or {}
     ordered_uuids, ordered_names = _ordered_samples(alignment, sample_names)
 
     lines = [separator.join(
-        ['analyte_id', 'consensus_mz', 'consensus_rt'] + ordered_names
+        ['analyte_id', 'consensus_mz', 'consensus_rt', 'group'] + ordered_names
     )]
     for i, analyte in enumerate(alignment.analytes):
         members = analyte.resolve_members(samples.get)
@@ -86,6 +90,7 @@ def export_abundance_table(
             str(i),
             f"{analyte.consensus_mz:.5f}",
             f"{analyte.consensus_rt:.1f}",
+            groups.get(analyte.uuid, ''),
         ]
         for uuid in ordered_uuids:
             if uuid not in analyte.ensemble_map:
@@ -208,10 +213,11 @@ def export_feature_table_to_file(
     mgf_mode: MgfMode = 'consensus',
     normalize: bool = True,
     formulas: Optional[Mapping['EnsembleUUID', str]] = None,
+    groups: Optional[Mapping['AnalyteUUID', str]] = None,
     write_graphml: bool = True,
     network_params: ClusterParams = ClusterParams(),
     min_edge_cosine: float = 0.7,
-    imported_similarities: Sequence[tuple['RawMatrix', 'ImportParams']] = (),
+    imported_similarities: Sequence[tuple['SimilarityMatrix', 'ImportParams']] = (),
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
 ) -> list[Path]:
@@ -228,6 +234,8 @@ def export_feature_table_to_file(
     :param mgf_mode: ``'consensus'`` (RepresentativeSpectrum per analyte)
         or ``'per_sample'`` (every aligned ensemble).
     :param normalize: normalize MGF spectra to 0-100.
+    :param groups: group titles per analyte (DataRegistry.group_titles()),
+        for the abundance table and network nodes.
     :param write_graphml: also write the MS2 similarity network.
     :param network_params: network scoring parameters
         (see `cluster_params_from_config`).
@@ -250,7 +258,9 @@ def export_feature_table_to_file(
 
     write(
         sibling(f"_abundance{suffix}"),
-        export_abundance_table(alignment, samples, sample_names, separator),
+        export_abundance_table(
+            alignment, samples, sample_names, separator, groups,
+        ),
     )
     write(
         sibling(f"_formulas{suffix}"),
@@ -277,6 +287,7 @@ def export_feature_table_to_file(
             list(samples.values()),
             params=network_params,
             formulas=formulas,
+            groups=groups,
             min_edge_cosine=min_edge_cosine,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
@@ -294,6 +305,7 @@ def export_feature_table_to_file(
             n += 1
         write(path, build_imported_network_graphml(
             alignment, list(samples.values()), raw, import_params, formulas,
+            groups,
         ))
 
     return written

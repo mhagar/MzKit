@@ -14,7 +14,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 class Ui_Dialog(object):
     def setupUi(self, Dialog):
         Dialog.setObjectName("Dialog")
-        Dialog.resize(544, 510)
+        Dialog.resize(544, 546)
         self.verticalLayout = QtWidgets.QVBoxLayout(Dialog)
         self.verticalLayout.setObjectName("verticalLayout")
         self.horizontalLayout = QtWidgets.QHBoxLayout()
@@ -28,6 +28,9 @@ class Ui_Dialog(object):
         self.btnImport = QtWidgets.QPushButton(Dialog)
         self.btnImport.setObjectName("btnImport")
         self.horizontalLayout.addWidget(self.btnImport)
+        self.btnDelete = QtWidgets.QPushButton(Dialog)
+        self.btnDelete.setObjectName("btnDelete")
+        self.horizontalLayout.addWidget(self.btnDelete)
         self.verticalLayout.addLayout(self.horizontalLayout)
         self.stackSource = QtWidgets.QStackedWidget(Dialog)
         self.stackSource.setObjectName("stackSource")
@@ -168,6 +171,7 @@ class Ui_Dialog(object):
         Dialog.setWindowTitle(_translate("Dialog", "Dialog"))
         self.label.setText(_translate("Dialog", "Similarity:"))
         self.btnImport.setText(_translate("Dialog", "Import matrix..."))
+        self.btnDelete.setText(_translate("Dialog", "Delete matrix"))
         self.label_2.setText(_translate("Dialog", "m/z tolerance"))
         self.label_3.setText(_translate("Dialog", "m/z power"))
         self.label_4.setText(_translate("Dialog", "Intensity power"))

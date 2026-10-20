@@ -1,4 +1,4 @@
-from typing import Protocol, Optional, TYPE_CHECKING, Callable, Literal
+from typing import Protocol, Optional, TYPE_CHECKING, Callable, Iterable, Literal
 
 if TYPE_CHECKING:
     from core.data_structs import (
@@ -6,9 +6,13 @@ if TYPE_CHECKING:
         SampleUUID,
         AlignmentUUID,
         EnsembleUUID,
+        AnalyteUUID,
+        GroupUUID,
     )
     from core.data_structs.alignment import EnsembleAlignment
+    from core.data_structs.analyte_group import AnalyteGroup
     from core.data_structs.formula_assignment import FormulaAssignment
+    from core.data_structs.similarity_matrix import SimilarityMatrix
 
 class SampleDataSource(Protocol):
     """
@@ -52,7 +56,7 @@ class SampleDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to notifications when the registry changes.
@@ -60,10 +64,11 @@ class SampleDataSource(Protocol):
         :param addition_callback: Called when an object is added.
         :param removal_callback: Called when an object is removed.
         :param update_callback: Called when an object is updated/changed.
-            Only honoured for change_type='Sample'; optional.
+            Honoured for 'Sample', 'Assignment' and 'Group'; optional.
         :param change_type: Which family of changes to subscribe to.
             'Sample' subscribes to Sample add/remove/update signals;
-            'Alignment' and 'Assignment' subscribe to add/remove only.
+            'Alignment' subscribes to add/remove only; 'Assignment' and
+            'Group' also honour update_callback.
         """
         ...
 
@@ -90,7 +95,7 @@ class AlignmentDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to alignment change notifications; call with
@@ -149,12 +154,124 @@ class AssignmentDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to assignment change notifications; call with
         change_type='Assignment'. See SampleDataSource.subscribe_to_changes
         for the full parameter contract; update_callback fires when an
         assignment's chosen candidate changes.
+        """
+        ...
+
+
+class GroupDataSource(Protocol):
+    """
+    Structural contract for the read/subscribe surface over AnalyteGroups.
+    """
+    def get_group(
+        self,
+        uuid: 'GroupUUID',
+    ) -> Optional['AnalyteGroup']:
+        ...
+
+    def get_all_groups(self) -> list['AnalyteGroup']:
+        ...
+
+    def groups_for_analytes(
+        self,
+        analyte_uuids: Iterable['AnalyteUUID'],
+    ) -> list['AnalyteGroup']:
+        """Groups with any member in `analyte_uuids`."""
+        ...
+
+    def register_group(
+        self,
+        group: 'AnalyteGroup',
+    ):
+        ...
+
+    def remove_group(
+        self,
+        uuid: 'GroupUUID',
+    ):
+        ...
+
+    def notify_group_updated(
+        self,
+        group: 'AnalyteGroup',
+    ):
+        """
+        Groups are edited in place; call this after every edit so
+        update subscribers refresh.
+        """
+        ...
+
+    def subscribe_to_changes(
+        self,
+        addition_callback: Callable[..., None],
+        removal_callback: Callable[..., None],
+        update_callback: Optional[Callable[..., None]] = None,
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+    ):
+        """
+        Subscribe to group change notifications; call with
+        change_type='Group'. See SampleDataSource.subscribe_to_changes
+        for the full parameter contract.
+        """
+        ...
+
+
+class MatrixDataSource(Protocol):
+    """
+    Structural contract for the read/subscribe surface over
+     SimilarityMatrices (computed or imported).
+    """
+    def get_matrix(
+        self,
+        uuid: int,
+    ) -> Optional['SimilarityMatrix']:
+        ...
+
+    def get_all_matrices(self) -> list['SimilarityMatrix']:
+        ...
+
+    def matrices_for_analytes(
+        self,
+        analyte_uuids: Iterable['AnalyteUUID'],
+    ) -> list['SimilarityMatrix']:
+        """Matrices sharing any id with `analyte_uuids`."""
+        ...
+
+    def find_matrix(
+        self,
+        provenance: dict,
+        alignment: 'EnsembleAlignment',
+    ) -> Optional['SimilarityMatrix']:
+        """A matrix with this provenance covering all of `alignment`."""
+        ...
+
+    def register_matrix(
+        self,
+        matrix: 'SimilarityMatrix',
+    ):
+        ...
+
+    def remove_matrix(
+        self,
+        uuid: int,
+    ):
+        ...
+
+    def subscribe_to_changes(
+        self,
+        addition_callback: Callable[..., None],
+        removal_callback: Callable[..., None],
+        update_callback: Optional[Callable[..., None]] = None,
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+    ):
+        """
+        Subscribe to matrix change notifications; call with
+        change_type='Matrix' (add/remove only).
         """
         ...

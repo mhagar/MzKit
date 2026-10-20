@@ -215,6 +215,18 @@ class AlignmentPlotItem(pg.PlotItem):
             return []
         return self._strips.analyte_targets(analyte_uuids)
 
+    def set_hover_analytes(self, analyte_uuids: Optional[list]):
+        """
+        Show the hover outline around these AnalyteUUIDs (e.g. a hovered
+        group on the group track); None clears it. Normal map hover
+        replaces it again on the next hover event.
+        """
+        self._hover_outline.clear()
+        if analyte_uuids and self._strips is not None:
+            self._hover_outline.set_shapes(
+                *self._shapes_for(self.analyte_targets(analyte_uuids))
+            )
+
     def select(self, target: Optional[HoverTarget], additive: bool = False):
         """
         Select an ensemble / analyte target. `additive` toggles it in or
