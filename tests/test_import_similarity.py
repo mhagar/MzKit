@@ -186,3 +186,45 @@ def test_imported_cosine_matrix_clusters_like_cosine():
     assert result.params == ClusterKey(raw.uuid, NO_FLOOR, 'average')
     assert result.dropped_reason == "not in m"
     assert expected.dropped_reason == "without MS2"
+
+
+# --- CLI ------------------------------------------------------------------------
+
+def test_cli_import_saves_matrix_into_mzk(tmp_path):
+    from core.cli.main import build_parser
+    from core.data_structs.data_registry import DataRegistry
+    from core.utils.persistence import load_project, save_project
+
+    alignment, _, analytes = _build(
+        [(10.0 * i, 200.0 + i, FRAGS_A) for i in range(3)]
+    )
+    registry = DataRegistry()
+    registry.register_alignment(alignment)
+    mzk = tmp_path / 'p.mzk'
+    save_project(mzk, registry)
+
+    ids = [str(a.uuid) for a in analytes]
+    matrix = tmp_path / 'scores.csv'
+    matrix.write_text(
+        ',' + ','.join(ids) + '\n'
+        + ''.join(f"{i},1,0.9,0.1\n" for i in ids)
+    )
+
+    def run(path, *extra):
+        args = build_parser().parse_args(
+            ['import-similarity', str(mzk), str(path), *extra]
+        )
+        args.func(args)
+
+    run(matrix, '--floor', '0.5')
+    run(matrix, '--floor', '0.3')  # re-import replaces, with the new params
+    matrices = load_project(mzk).matrices
+    assert len(matrices) == 1
+    assert matrices[0].ids == tuple(ids)
+    assert matrices[0].default_transform.floor == 0.3
+
+    other = tmp_path / 'unrelated.csv'
+    other.write_text(",x,y\nx,1,0\ny,0,1\n")
+    with pytest.raises(ValueError, match='not saved'):
+        run(other)
+    assert len(load_project(mzk).matrices) == 1

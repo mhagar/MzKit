@@ -702,6 +702,24 @@ def cmd_import_similarity(args: argparse.Namespace) -> None:
         )
         print(f"Wrote transformed matrix to {args.output}")
 
+    if report.n_matched == 0:
+        raise ValueError(
+            "No matrix ids match the alignment's analytes; not saved. Was the "
+            "matrix scored on an .mgf exported from this (or a parent) alignment?"
+        )
+
+    # Stored raw; these params become the transform the GUI clusters with.
+    # Re-importing the same file replaces it, so tuning params doesn't pile up copies
+    raw.default_transform = params
+    for old in registry.get_all_matrices():
+        if old.provenance.get('path') == raw.provenance['path']:
+            registry.remove_matrix(old.uuid)
+    registry.register_matrix(raw)
+
+    output = _resolve_output(args, Path(args.mzk))
+    save_project(output, registry)
+    print(f"Saved matrix '{raw.name}' to {output}")
+
 
 # --- Argument parser ---
 
@@ -1245,8 +1263,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_sim = subparsers.add_parser(
         'import-similarity',
         help='Match an external similarity matrix (CSV/TSV, labelled by the '
-             'MZKIT_ANALYTE ids of the export-table .mgf) to an alignment and '
-             'report; optionally write the transformed matrix',
+             'MZKIT_ANALYTE ids of the export-table .mgf) to an alignment, '
+             'report, and save it into the .mzk (clustered with these params '
+             'in the GUI); optionally write the transformed matrix',
     )
     p_sim.add_argument('mzk', help='.mzk file containing the alignment')
     p_sim.add_argument('matrix', help='Square matrix (.csv, else tab-separated)')
@@ -1280,6 +1299,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sim.add_argument(
         '-o', '--output', default=None,
         help='Write the transformed similarity matrix here',
+    )
+    p_sim.add_argument(
+        '--output-mzk',
+        default=None,
+        help='Output .mzk file (default: modify input in place)',
     )
     p_sim.set_defaults(func=cmd_import_similarity)
 

@@ -95,7 +95,7 @@ def read_similarity_csv(path: Path) -> SimilarityMatrix:
 
     return SimilarityMatrix(
         name=path.stem, ids=tuple(row_ids), values=values,
-        provenance={'source': IMPORTED, 'params': {}, 'path': str(path)},
+        provenance={'source': IMPORTED, 'params': {}, 'path': str(path.resolve())},
         default_transform=initial_transform(IMPORTED),
     )
 
