@@ -6,6 +6,8 @@ from molmass import Formula
 import re
 from typing import TYPE_CHECKING, Optional
 
+from core.data_structs.formula_assignment import AssignedCandidate
+
 if TYPE_CHECKING:
     from molmass import CompositionItem
     from core.data_structs.formula_assignment import FormulaAssignment
@@ -75,6 +77,28 @@ def format_formula_obj_to_html(
         output.append('-' * abs(charge))
 
     return "".join(output)
+
+
+def format_assignment_formula_text(
+    assignment: Optional['FormulaAssignment'],
+) -> str:
+    """
+    Returns plain-text formula of an assignment:
+     The accepted candidate, else the top (unaccepted) candidate
+      marked with '?'.
+
+    Empty if none.
+    """
+    if assignment is None:
+        return ""
+
+    if assignment.chosen is not None:
+        return assignment.chosen.formula_str
+
+    if assignment.top is not None:
+        return f"{assignment.top.formula_str}?"
+
+    return ""
 
 
 def format_assignment_label_html(

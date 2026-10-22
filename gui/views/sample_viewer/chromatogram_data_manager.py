@@ -100,7 +100,10 @@ class ChromatogramDataManager(QtCore.QObject):
         scan_array: "ScanArray" = injection.get_scan_array(self._current_ms_level)
         chrom_array: "ChromArray" = self._get_chrom_array(scan_array)
 
-        self._widget_mgr.get_widget(uuid).setChromArray(strip_empty_values(chrom_array))
+        self._widget_mgr.get_widget(uuid).setChromArray(
+            strip_empty_values(chrom_array),
+            names=[self._model.getSample(uuid).name],
+        )
         self.link_widget_axes()
 
     def _get_chrom_array(

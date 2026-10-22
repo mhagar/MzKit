@@ -23,7 +23,7 @@ from core.utils.spectra import normalize_spectrum
 
 if TYPE_CHECKING:
     from core.cli.align_ensembles import PairScore
-    from core.data_structs import Ensemble, SampleUUID
+    from core.data_structs import Ensemble, EnsembleUUID, SampleUUID
     from core.data_structs.alignment import AlignedAnalyte
     from core.utils.array_types import SpectrumArray
     from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
@@ -273,12 +273,20 @@ class DetailPanel:
         pi.clear_plots()
         self.chrom_plot.clearPeaks()
 
-        bpcs = []
+        bpcs: list[np.ndarray] = []
+        bpc_names: list[str] = []
+
         if ctx is not None:
             for sample_uuid in dict.fromkeys(sample_uuids):  # dedupe, keep order
                 bpc = self._bpc(ctx, sample_uuid)
                 if bpc is not None:
-                    bpcs.append(bpc)
+                    bpcs.append(
+                        bpc
+                    )
+
+                    bpc_names.append(
+                        ctx.data_source.get_sample(sample_uuid).name
+                    )
 
         if bpcs:
             opacity = max(1.0 / len(bpcs), BPC_MIN_OPACITY)
@@ -286,7 +294,25 @@ class DetailPanel:
                 bpcs,
                 color=pg.mkColor(*BPC_GREY, int(round(255 * opacity))),
                 replace=True,
+                names=bpc_names,
             )
+
+        by_uuid = {ensemble.uuid: ensemble for ensemble in ensembles}
+
+        def peak_name(
+                uuid: 'EnsembleUUID'
+        ) -> Optional[str]:
+            """
+            Callable given to ChromPlotWidget so it can retrieve peak name
+            """
+            ensemble = by_uuid.get(uuid)
+            if ensemble is None:
+                return None
+
+            formula = ctx.formula(ensemble) if ctx is not None else ''
+            return '_'.join(filter(None, [ensemble.format_string, formula]))
+
+        self.chrom_plot.peak_name_provider = peak_name
 
         colors = colors or [XIC_COLOR] * len(ensembles)
         xics = []

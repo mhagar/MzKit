@@ -36,6 +36,10 @@ class ChromatogramPlotManager(QtCore.QObject):
         super().__init__()
         self.chrom_plot = chrom_plot_widget
         self.corr_plot = corr_plot_widget
+        # Overlay keys are 1-based: MS1 signals first, then MS2 (see update_chromatogram_plot)
+        self.chrom_plot.peak_name_provider = (
+            lambda key: 'MS1' if key <= len(self.ms1_chroms) else 'MS2'
+        )
 
         self.ensemble: Optional['Ensemble'] = None
         self.base_chrom: Optional[np.ndarray] = None
@@ -138,7 +142,8 @@ class ChromatogramPlotManager(QtCore.QObject):
         # Set background chrom array
         self.chrom_plot.setChromArray(
             # self._apply_transforms(self.base_chrom)
-            self._apply_transforms(self.background_chrom)
+            self._apply_transforms(self.background_chrom),
+            names=['BPC'],
         )
 
         # Configure slider selector

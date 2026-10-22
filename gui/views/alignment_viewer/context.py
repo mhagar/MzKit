@@ -11,6 +11,7 @@ from typing import Optional, TYPE_CHECKING
 
 from core.cli.align_ensembles import PairScore, score_spectrum_pair
 from core.data_structs.alignment import RepresentativeSpectrum
+from core.utils.formula_formatting import format_assignment_formula_text
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble, SampleUUID
@@ -65,20 +66,16 @@ class AlignmentContext:
     ) -> Optional[RepresentativeSpectrum]:
         return analyte.representative_spectrum(self.members(analyte))
 
-    def formula(self, ensemble: 'Ensemble') -> str:
+    def formula(
+            self,
+            ensemble: 'Ensemble',
+    ) -> str:
         """
-        Plain-text formula for an ensemble: the accepted assignment
-        candidate, else the free-text proposed formula, else the top
-        (unaccepted) candidate marked with '?'. Empty if none.
+        Plain-text formula for an ensemble (see format_assignment_formula_text)
         """
-        assignment = self.data_source.get_assignment_for_source(ensemble.uuid)
-        chosen = assignment.chosen if assignment is not None else None
-        if chosen is not None:
-            return chosen.formula_str
-        top = assignment.top if assignment is not None else None
-        if top is not None:
-            return f"{top.formula_str}?"
-        return ""
+        return format_assignment_formula_text(
+            self.data_source.get_assignment_for_source(ensemble.uuid)
+        )
 
     def formula_agreement(
         self,

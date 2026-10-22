@@ -95,3 +95,31 @@ def test_clear_peaks_clears_glyphs(plot):
     plot.clearPeaks()
     assert len(plot._label_glyphs.data) == 0
     assert not plot._peak_labels
+
+
+def test_export_csv_aligns_traces_on_rt(qapp, tmp_path):
+    import csv
+    from gui.widgets.ChromPlotWidget import ChromPlotWidget
+    widget = ChromPlotWidget()
+    chrom = np.zeros(3, dtype=[('rt', 'f8'), ('intsy', 'f8')])
+    chrom['rt'], chrom['intsy'] = [1, 2, 3], [10, 20, 30]
+    widget.setChromArray([chrom, chrom], names=['sample_A', ''])
+    widget.addPeak(chrom[1:], uuid=7)
+    widget.addPeak(chrom[1:], uuid=8)
+    widget.peak_name_provider = {7: 'caffeine'}.get
+    path = tmp_path / 'out.csv'
+    widget.pi.exportCsv(str(path))
+    rows = list(csv.reader(path.open()))
+    assert [row[:3] for row in rows] == [
+        ['rt', 'sample_A', 'chrom_1'],
+        ['1.0', '10.0', '10.0'],
+        ['2.0', '20.0', '20.0'],
+        ['3.0', '30.0', '30.0'],
+    ]
+    assert [row[3:] for row in rows] == [
+        ['caffeine', 'ensemble_8'],
+        ['', ''],
+        ['20.0', '20.0'],
+        ['30.0', '30.0'],
+    ]
+    widget.close()

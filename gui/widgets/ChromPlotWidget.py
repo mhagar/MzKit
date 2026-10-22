@@ -1,5 +1,8 @@
+import csv
+
 import numpy as np
 import pyqtgraph as pg
+import pyqtgraph.exporters
 from PyQt5 import QtCore, QtWidgets, QtGui
 from PyQt5.QtCore import QPointF
 
@@ -7,7 +10,7 @@ from gui.widgets.CustomAxisItems import IntsyAxisItem, TimeAxisItem
 from gui.widgets.TextOverlay import TextOverlay
 from gui.widgets.text_items import center_textitem
 
-from typing import NamedTuple, Optional, Literal, TYPE_CHECKING
+from typing import Callable, NamedTuple, Optional, Literal, TYPE_CHECKING
 if TYPE_CHECKING:
     from core.data_structs import (
         EnsembleUUID,
@@ -86,6 +89,10 @@ class ChromPlotWidget(pg.PlotWidget):
         self._seed_drag_enabled: bool = False
         self._seed_preview: Optional[pg.PlotCurveItem] = None
 
+        # Names peak overlays (by uuid) in CSV exports; set by the owning view.
+        # Resolved at export time, so identity/formula edits show up.
+        self.peak_name_provider: Optional[Callable[['EnsembleUUID'], Optional[str]]] = None
+
     def showAxes(
         self,
         enabled: bool,
@@ -110,6 +117,27 @@ class ChromPlotWidget(pg.PlotWidget):
             vb.mapSceneToView(pos)  # QPointF
         )
 
+    def show_context_menu(
+        self,
+        pos: QtCore.QPoint,
+    ) -> None:
+        menu = QtWidgets.QMenu(self)
+        menu.addAction("Export as .csv", self.export_csv)
+        menu.addAction("Export as .svg", self.export_svg)
+        menu.exec_(pos)
+
+    def export_csv(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export as .csv", "", "CSV files (*.csv)",
+        )
+        if path:
+            self.pi.exportCsv(path)
+
+    def export_svg(self) -> None:
+        # Kept on self: the exporter's (non-modal) file dialog dies with it
+        self._svg_exporter = pg.exporters.SVGExporter(self.pi)
+        self._svg_exporter.export()
+
     def update_label(
             self,
             text: str,
@@ -127,11 +155,13 @@ class ChromPlotWidget(pg.PlotWidget):
             chroms: list[np.ndarray] | np.ndarray,
             max_opacity: Optional[int] = None,
             replace: bool = True,
+            names: Optional[list[str]] = None,
     ):
         self.pi.addChroms(
             chroms,
             max_opacity,
             replace=replace,
+            names=names,
         )
 
     def addHighlight(
@@ -444,6 +474,7 @@ class ChromPlotItem(pg.PlotItem):
         max_opacity: Optional[int] = None,
         color: Optional[QtGui.QColor] = None,
         replace: bool = True,
+        names: Optional[list[str]] = None,
     ) -> None:
         """
         Adds a chromatogram to plot
@@ -452,6 +483,8 @@ class ChromPlotItem(pg.PlotItem):
 
         if no `color`, but `max_opacity` is specified, adjusts
         the translucency depending on how many chromatograms are being 'stacked'
+
+        `names` (parallel to `arrs`) label the traces' columns in CSV exports
         """
         if not isinstance(arrs, list):
             arrs: list[np.ndarray] = [arrs]
@@ -472,7 +505,8 @@ class ChromPlotItem(pg.PlotItem):
                 adaptive_alpha,  # Variable alpha channel
             )
 
-        for arr in arrs:
+        names = names or [''] * len(arrs)
+        for arr, name in zip(arrs, names, strict=True):
             arr: np.ndarray
             rt_arr, intsy_arr = (arr['rt'], arr['intsy'])
 
@@ -481,7 +515,8 @@ class ChromPlotItem(pg.PlotItem):
                 intsy_arr=intsy_arr,
                 pen=pg.mkPen(
                     color,
-                )
+                ),
+                name=name,
             )
 
             chrom_graphic_item.setZValue(-1000)
@@ -1022,6 +1057,43 @@ class ChromPlotItem(pg.PlotItem):
         self.vb.setXRange(rt_min, rt_max, padding=0.0)
         self.vb.setYRange(0, intsy_max * 1.05, padding=0.0)
 
+    def exportCsv(
+        self,
+        path: str,
+    ) -> None:
+        """
+        Write every displayed trace as a column against the union of their
+        RTs; cells are blank where a trace has no point at that RT.
+        """
+        provider = self.plot_widget.peak_name_provider
+        traces: list[tuple[str, ChromGraphicItem]] = [
+            (item.name or f'chrom_{i}', item) for i, item in enumerate(self.chrom_items)
+        ]
+        traces += [
+            ((provider and provider(uuid)) or f'ensemble_{uuid}', item)
+            for uuid, item in self.peak_overlays.items()
+        ]
+        # clearHighlights() removes the item but keeps the reference
+        if self.highlight_trace is not None and self.highlight_trace.scene() is not None:
+            traces.append(('highlight', self.highlight_trace))
+
+        rt = np.unique(np.concatenate(
+            [np.empty(0)] + [item.rt_arr for _, item in traces]
+        ))
+        cols: list[np.ndarray] = []
+        for _, item in traces:
+            col = np.full(rt.size, np.nan)
+            col[np.searchsorted(rt, item.rt_arr)] = item.intsy_arr
+            cols.append(col)
+
+        with open(path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['rt', *(name for name, _ in traces)])
+            for i, x in enumerate(rt):
+                writer.writerow(
+                    [x, *('' if np.isnan(col[i]) else col[i] for col in cols)]
+                )
+
     def clear_plots(
             self,
     ):
@@ -1119,6 +1191,12 @@ class ChromViewBox(pg.ViewBox):
         # descend below zero (which otherwise occasionally happens while
         # auto-ranging against non-data items).
         self.setLimits(yMin=0)
+
+    def raiseContextMenu(self, ev):
+        # Replaces pyqtgraph's default ViewBox menu
+        plot_item = getattr(self, '_plot_item', None)
+        if plot_item is not None:
+            plot_item.plot_widget.show_context_menu(ev.screenPos().toPoint())
 
     def mouseDoubleClickEvent(self, ev):
         # Delegate to the PlotItem's data-driven auto-scale rather than
@@ -1280,8 +1358,10 @@ class ChromGraphicItem(pg.GraphicsObject):
         intsy_arr: np.ndarray,
         pen: QtGui.QPen,
         interactive: bool = False,
+        name: str = '',
     ):
         pg.GraphicsObject.__init__(self)
+        self.name = name  # CSV export column header
         self.rt_arr = rt_arr
         self.intsy_arr = intsy_arr
         self.pen = pen

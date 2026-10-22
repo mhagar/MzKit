@@ -150,6 +150,7 @@ class SampleWidget(
         chroms: list[np.ndarray] | np.ndarray,
         max_opacity: Optional[int] = None,
         replace: bool = True,
+        names: Optional[list[str]] = None,
     ):
         """
         Wrapper around `ChromPlotWidget.setChromArray`
@@ -158,6 +159,7 @@ class SampleWidget(
             chroms=chroms,
             max_opacity=max_opacity,
             replace=replace,
+            names=names,
         )
 
 

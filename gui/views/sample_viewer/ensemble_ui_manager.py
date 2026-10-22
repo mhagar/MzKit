@@ -1,7 +1,10 @@
 from PyQt5 import QtCore, QtGui
 import pyqtgraph as pg
 
-from core.utils.formula_formatting import format_assignment_label_html
+from core.utils.formula_formatting import (
+    format_assignment_formula_text,
+    format_assignment_label_html,
+)
 
 from typing import Optional, Literal, TYPE_CHECKING
 
@@ -75,6 +78,16 @@ class EnsembleUIManager(QtCore.QObject):
 
         # Clear existing peaks first to prevent stale state
         widget.clearPeaks()
+
+        def peak_name(ensemble_uuid: 'EnsembleUUID') -> Optional[str]:
+            ensemble = injection.ensembles.get(ensemble_uuid)
+            if ensemble is None:
+                return None
+            formula = format_assignment_formula_text(
+                self._model.getAssignment(ensemble_uuid)
+            )
+            return '_'.join(filter(None, [ensemble.format_string, formula]))
+        widget.chromPlotWidget.peak_name_provider = peak_name
 
         # Iterate through injection's ensembles and add peak overlays
         for idx, (ensemble_uuid, ensemble) in enumerate(
