@@ -14,7 +14,8 @@ Promoted from Qt Designer (see gui/resources/AlignmentViewerWindow.ui).
 from typing import NamedTuple, Optional, TYPE_CHECKING
 
 import pyqtgraph as pg
-from PyQt5 import QtCore
+import pyqtgraph.exporters
+from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPicture, QPolygonF
 
@@ -182,6 +183,16 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
         self.pi.sigXRangeChanged.connect(self._update_labels)
         self.pi.getViewBox().sigResized.connect(self._update_labels)
         self._set_lanes(1)
+
+    def contextMenuEvent(self, ev):
+        menu = QtWidgets.QMenu(self)
+        menu.addAction("Export as .svg", self.export_svg)
+        menu.exec_(ev.globalPos())
+
+    def export_svg(self) -> None:
+        # Kept on self: the exporter's (non-modal) file dialog dies with it
+        self._svg_exporter = pyqtgraph.exporters.SVGExporter(self.pi)
+        self._svg_exporter.export()
 
     def link_to(self, plot_item: pg.PlotItem):
         """Share the x axis with the feature map."""

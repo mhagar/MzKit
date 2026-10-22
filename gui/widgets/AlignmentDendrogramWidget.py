@@ -13,7 +13,8 @@ from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5 import QtCore
+import pyqtgraph.exporters
+from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QColor, QPainter, QPicture, QPolygonF
 
@@ -134,6 +135,16 @@ class AlignmentDendrogramWidget(pg.PlotWidget):
         self._highlight = OutlineIndicator(
             _cosmetic_pen(QColor(255, 255, 255, 255), 2), z_value=100,
         )
+
+    def contextMenuEvent(self, ev):
+        menu = QtWidgets.QMenu(self)
+        menu.addAction("Export as .svg", self.export_svg)
+        menu.exec_(ev.globalPos())
+
+    def export_svg(self) -> None:
+        # Kept on self: the exporter's (non-modal) file dialog dies with it
+        self._svg_exporter = pyqtgraph.exporters.SVGExporter(self.pi)
+        self._svg_exporter.export()
 
     def link_to(self, plot_item: pg.PlotItem):
         """Share the x axis with the feature map."""
