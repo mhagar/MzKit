@@ -27,6 +27,7 @@ MainController wires up.
 from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtWidgets, QtCore, QtGui
+import pyqtgraph.exporters
 
 from core.cli.cluster_analytes import (
     ClusterKey, ClusterParams, cluster_params_from_config, linkage_from_config,
@@ -876,12 +877,11 @@ class AlignmentViewer(
             target: Optional[HoverTarget],
             global_pos,
     ):
-        if target is None:
-            return
-
         menu = QtWidgets.QMenu(self)
 
-        if target.kind == 'ensemble':
+        if target is None:
+            pass  # empty plot area: only the plot-wide actions below
+        elif target.kind == 'ensemble':
             act_open = menu.addAction("Open in Ensemble Viewer")
             act_open.triggered.connect(
                 lambda: self.sigViewEnsembleRequested.emit(target.ensemble)
@@ -912,22 +912,30 @@ class AlignmentViewer(
                 lambda: self.sigAddSamplesRequested.emit([target.sample_uuid])
             )
 
-        self._add_find_mfs_action(menu, target)
+        if target is not None:
+            self._add_find_mfs_action(menu, target)
 
-        targets = (
-            self._selection
-            if len(self._selection) > 1 and target in self._selection
-            else [target]
-        )
-        if selection_analyte_uuids(targets):
-            if not menu.isEmpty():
-                menu.addSeparator()
-            menu.addAction("Group selected analytes…").triggered.connect(
-                lambda: self._group_analytes(targets)
+            targets = (
+                self._selection
+                if len(self._selection) > 1 and target in self._selection
+                else [target]
             )
+            if selection_analyte_uuids(targets):
+                if not menu.isEmpty():
+                    menu.addSeparator()
+                menu.addAction("Group selected analytes…").triggered.connect(
+                    lambda: self._group_analytes(targets)
+                )
 
         if not menu.isEmpty():
-            menu.exec_(global_pos)
+            menu.addSeparator()
+        menu.addAction("Export plot as .svg", self._export_plot_svg)
+        menu.exec_(global_pos)
+
+    def _export_plot_svg(self) -> None:
+        # Kept on self: the exporter's (non-modal) file dialog dies with it
+        self._svg_exporter = pyqtgraph.exporters.SVGExporter(self.plot_item)
+        self._svg_exporter.export()
 
     def _add_find_mfs_action(
             self,
