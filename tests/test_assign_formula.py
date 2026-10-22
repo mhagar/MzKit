@@ -128,18 +128,19 @@ def test_worker_widens_to_halogens_and_builds_assignment():
 def test_end_to_end_from_ensemble_manual_precursor(ensemble):
     """Real DIA Cycloheximide ensemble -> query -> assignment.
 
-    Cycloheximide loses water in-source, so the base (tallest) MS1 ion is the
-    dehydrated [M+H-H2O]+ (264.16), not [M+H]+. The manual precursor override
-    pins the intact 282.17 -- the MVP's manual-steering path.
+    The automated default is the base (tallest) MS1 ion, [M+H]+ 282.17.
+    The manual precursor override pins it explicitly -- the MVP's
+    manual-steering path.
     """
     if ensemble.is_dda:
         with pytest.raises(NotImplementedError):
             query_from_ensemble(ensemble)
         pytest.skip("fixture ensemble is DDA; extractor correctly refuses")
 
-    # Automated default picks the dominant in-source water-loss ion.
+    # Automated default is the base ion. (It used to read 264.16: base_mz
+    # averaged in m/z 0 from scans where the lane was empty.)
     auto = query_from_ensemble(ensemble)
-    assert auto.precursor_mz == pytest.approx(264.1587, abs=0.02)
+    assert auto.precursor_mz == pytest.approx(282.1701, abs=0.02)
 
     # Manual override pins the true [M+H]+.
     query = query_from_ensemble(ensemble, precursor_mz=282.17024, adducts=["H"])

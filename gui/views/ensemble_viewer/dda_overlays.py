@@ -240,7 +240,11 @@ class EnsembleDDAOverlayManager:
         groups: list[tuple[float, np.ndarray]] = []
         for key in np.unique(group_keys):
             members = scan_idxs[group_keys == key]
-            rep_mz = float(np.median(ms2_arr.precursor_mz_arr[members]))
+            # Badge sits on the precursor cofeature's measured apex m/z
+            rep_mz = (
+                ms1_cofeatures[int(key)].get_apex_mz(ms1_arr)
+                if ms1_cofeatures else float(key)
+            )
             groups.append((rep_mz, members))
 
         groups.sort(key=lambda g: g[0])

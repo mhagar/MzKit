@@ -71,8 +71,8 @@ def test_dda_consensus_groups_by_precursor():
     out = sorted(out, key=lambda s: s.precursor_mz)
 
     assert len(out) == 2
-    # First group: the two ~200 precursors merged (median m/z).
-    assert out[0].precursor_mz == pytest.approx(np.median([200.0, 200.05]))
+    # First group: the two ~200 precursors merged; m/z of the tallest scan.
+    assert out[0].precursor_mz == pytest.approx(200.0)
     # Second group: the lone 500 precursor.
     assert out[1].precursor_mz == pytest.approx(500.0)
 

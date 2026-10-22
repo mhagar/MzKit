@@ -640,12 +640,7 @@ class EnsembleViewer(
         scan_array = ensemble.injection.scan_array_ms2
         if scan_array is None:
             return None
-        # Read the cofeature's own scans: get_max_intsy's contiguous slice is
-        # empty for single-scan DDA cofeatures and spans unrelated DDA scans
-        intsys = [
-            scan_array.intsy_arr[c.mz_lane_idx, c.scan_idxs].max()
-            for c in ensemble.ms2_cofeatures
-        ]
+        intsys = [c.get_max_intsy(scan_array) for c in ensemble.ms2_cofeatures]
         return int(np.argmax(intsys))
 
     def _preselect_base_peaks(self, scan_rt: float):
@@ -689,10 +684,8 @@ class EnsembleViewer(
             # Make the MS2 base peak the correlation readout target — but
             # not for DDA, where the correlation plot suppresses MS2.
             if not is_dda:
-                ms2_mz = float(
-                    ensemble.ms2_cofeatures[ms2_idx].get_mz_values(
-                        ensemble.injection.scan_array_ms2
-                    ).mean()
+                ms2_mz = ensemble.ms2_cofeatures[ms2_idx].get_apex_mz(
+                    ensemble.injection.scan_array_ms2
                 )
                 self.chrom_manager.set_last_selection(mz=ms2_mz, ms_level=2)
 

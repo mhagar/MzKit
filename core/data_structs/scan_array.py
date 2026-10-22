@@ -657,9 +657,9 @@ def _build_features_legacy(
     for ftr in wip_features:
         final_features.append(ftr)
 
-    # Sort by mz
+    # Sort by apex m/z (the m/z at each feature's most intense scan)
     final_features.sort(
-        key=lambda x: np.mean(x.nonzero_scans['mz'])
+        key=lambda x: x.array['mz'][x.array['intsy'].argmax()]
     )
 
     return final_features
@@ -759,13 +759,15 @@ def build_features(
             empty = csr_array((0, n_scans), dtype=np.float64)
             return empty, empty, rt_per_scan
 
-        # Sort features (lanes) by mean nonzero m/z (matches legacy final
-        # sort). Every stored COO entry is a real peak, so a per-row mean over
-        # the triplets equals the mean over nonzero columns.
-        counts = np.bincount(coo_rows, minlength=n_alloc)
-        sums = np.bincount(coo_rows, weights=coo_mz, minlength=n_alloc)
-        mean_mz = sums / counts
-        order = np.argsort(mean_mz, kind='stable')
+        # Sort features (lanes) by apex m/z, i.e. their mz_lane_label (matches
+        # legacy final sort). Order entries by row, then intensity, then
+        # descending scan, so each row's last entry is its tallest peak (ties
+        # -> earliest scan, as argmax). Every row holds at least one peak.
+        by_row = np.lexsort((-coo_cols, coo_intsy, coo_rows))
+        row_last = np.flatnonzero(np.diff(coo_rows[by_row], append=n_alloc))
+        assert row_last.size == n_alloc, "feature lane with no peaks"
+        apex_mz = coo_mz[by_row[row_last]]
+        order = np.argsort(apex_mz, kind='stable')
         # Remap each old lane id to its position in the sorted order.
         new_row_of = np.empty(n_alloc, dtype=np.int64)
         new_row_of[order] = np.arange(n_alloc)
@@ -793,28 +795,12 @@ def build_features(
         empty = csr_array((0, n_scans), dtype=np.float64)
         return empty, empty, rt_per_scan
 
-    mean_mz = _row_mean_nonzero(out_mz, out_intsy)
-    order = np.argsort(mean_mz, kind='stable')
+    apex_mz = out_mz[np.arange(out_mz.shape[0]), out_intsy.argmax(axis=1)]
+    order = np.argsort(apex_mz, kind='stable')
     out_mz = np.ascontiguousarray(out_mz[order])
     out_intsy = np.ascontiguousarray(out_intsy[order])
 
     return csr_array(out_mz), csr_array(out_intsy), rt_per_scan
-
-
-def _row_mean_nonzero(
-    out_mz: np.ndarray,
-    out_intsy: np.ndarray,
-) -> np.ndarray:
-    """
-    Per-row mean of ``out_mz`` over columns where ``out_intsy > 0``.
-    Matches ``np.mean(feature.nonzero_scans['mz'])`` for each legacy feature.
-    """
-    mask = out_intsy > 0
-    counts = mask.sum(axis=1)
-    # All features have at least one nonzero scan (we never allocate
-    # a feature without writing a peak), so counts > 0 everywhere.
-    sums = np.where(mask, out_mz, 0.0).sum(axis=1)
-    return sums / counts
 
 
 def _run_feature_kernel(

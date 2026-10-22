@@ -222,8 +222,13 @@ def _dda_link_ms2_cofeatures(
         for lane_idx in active_lane_idxs
     ]
 
-    # Precursor metadata: median m/z and modal charge across matched scans.
-    precursor_mz = float(np.median(ms2_arr.precursor_mz_arr[matched_ms2_idxs]))
+    # Precursor metadata: the matched isolation target nearest the search ion
+    # (one recorded value, not an average), and modal charge across scans.
+    matched_precursors = ms2_arr.precursor_mz_arr[matched_ms2_idxs]
+    search_mz = search_ftr_ptr.get_apex_mz(ms1_arr)
+    precursor_mz = float(
+        matched_precursors[np.argmin(np.abs(matched_precursors - search_mz))]
+    )
     charges = ms2_arr.precursor_charge_arr[matched_ms2_idxs]
     nonzero_charges = charges[charges != 0]
     if nonzero_charges.size:

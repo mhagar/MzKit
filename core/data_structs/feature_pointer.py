@@ -1,7 +1,7 @@
 """
 This is a data structure that indexes ScanArrays.
-Can be used to retrieve a particular 'slice' of time-contiguous
-MS signals (i.e. a feature).
+Can be used to retrieve a particular set of scans of one
+m/z lane (i.e. a feature).
 """
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -17,10 +17,11 @@ if TYPE_CHECKING:
 @dataclass
 class FeaturePointer:
     """
-    A reference to a time-contiguous m/z signal within a ScanArray.
+    A reference to an m/z signal within a ScanArray, at `scan_idxs`.
 
-    Stores indices that can be used to retrieve specific feature
-    from a ScanArray.
+    `scan_idxs` is contiguous for MS1 / DIA features, but sparse for DDA MS2
+    cofeatures (only the scans that fragmented the ensemble's precursors).
+    Every accessor reads exactly these scans, last one included.
     """
     mz_lane_idx: int
     scan_idxs: np.ndarray[...,]
@@ -43,13 +44,7 @@ class FeaturePointer:
         Returns:
             numpy.ndarray: Array of m/z values for this feature.
         """
-        self.validate_source(scan_array)
-
-        row_data = scan_array.mz_arr[
-           self.mz_lane_idx,
-           self.scan_start: self.scan_end,
-        ]
-        return row_data.toarray().flatten()
+        return self._take_lane(scan_array, scan_array.mz_arr)
 
     def get_intensity_values(
             self,
@@ -64,14 +59,7 @@ class FeaturePointer:
         Returns:
             numpy.ndarray: Array of intensity values for this feature.
         """
-        self.validate_source(scan_array)
-
-        row_data = scan_array.intsy_arr[
-           self.mz_lane_idx,
-           self.scan_start: self.scan_end
-        ]
-
-        return row_data.toarray().flatten()
+        return self._take_lane(scan_array, scan_array.intsy_arr)
 
     def get_retention_times(
             self,
@@ -88,9 +76,23 @@ class FeaturePointer:
         """
         self.validate_source(scan_array)
 
-        return scan_array.rt_arr[
-           self.scan_start: self.scan_end
-        ]
+        return scan_array.rt_arr[self.scan_idxs]
+
+    def _take_lane(
+            self,
+            scan_array: 'ScanArray',
+            lane_arr,
+    ) -> np.ndarray:
+        """
+        This feature's values from `lane_arr` (one of `scan_array`'s sparse
+        lane x scan arrays): its lane, at its `scan_idxs`.
+        """
+        self.validate_source(scan_array)
+
+        # Densify only the spanned range, then pick the (possibly sparse) scans
+        s0, s1 = self.scan_start, self.scan_end
+        row = lane_arr[self.mz_lane_idx, s0:s1 + 1].toarray().flatten()
+        return row[self.scan_idxs - s0]
 
     def get_chrom_array(
         self,
@@ -124,6 +126,17 @@ class FeaturePointer:
         :return:
         """
         return self.get_intensity_values(scan_array).max()
+
+    def get_apex_mz(
+        self,
+        scan_array: 'ScanArray',
+    ) -> float:
+        """
+        This feature's m/z at its most intense scan (a measured value, never
+        an average across scans)
+        """
+        idx = self.get_intensity_values(scan_array).argmax()
+        return float(self.get_mz_values(scan_array)[idx])
 
     def get_max_intsy_scan_num(
         self,

@@ -166,9 +166,7 @@ class Ensemble:
         self.peak_rt = best_rt
 
         base_ftr_ptr = self.ms1_cofeatures[self.base_ms1_cofeature_idx]
-        self.base_mz = base_ftr_ptr.get_mz_values(
-            self.injection.scan_array_ms1
-        ).mean()
+        self.base_mz = base_ftr_ptr.get_apex_mz(self.injection.scan_array_ms1)
 
     def set_injection(
         self,
@@ -354,10 +352,8 @@ class Ensemble:
 
         ms1_arr = self.injection.scan_array_ms1
         lane_mzs = np.array([
-            np.mean(mzs[mzs > 0]) if np.any(mzs > 0) else np.nan
-            for mzs in (
-                cf.get_mz_values(ms1_arr) for cf in self.ms1_cofeatures
-            )
+            cf.get_apex_mz(ms1_arr) or np.nan  # 0.0: lane empty in its scans
+            for cf in self.ms1_cofeatures
         ])
 
         def precursor_lane(spec: MS2Spectrum) -> Optional[int]:
@@ -969,16 +965,12 @@ def _merge_by_group(
     The merged spectrum is kept as a ConsensusSpectrumArray so its per-bin
     frequency survives for downstream thresholding at display / print time
     (see core.utils.spectra.threshold_consensus) — nothing is dropped here.
-    Precursor m/z is the group median, charge the modal charge, rt that of
-    the most intense contributing scan.
+    Precursor m/z and rt are those of the most intense contributing scan,
+    charge the modal charge.
     """
     consensus: ConsensusSpectrumArray = merge_spectra(
         (s.spectrum for s in specs),
         bin_width=bin_width,
-    )
-
-    precursor_mz = float(
-        np.median([s.precursor_mz for s in specs])
     )
 
     charges = [
@@ -994,7 +986,7 @@ def _merge_by_group(
 
     return MS2Spectrum(
         spectrum=consensus,
-        precursor_mz=precursor_mz,
+        precursor_mz=tallest.precursor_mz,
         charge=charge,
         rt=tallest.rt,
     )

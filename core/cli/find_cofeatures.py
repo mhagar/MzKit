@@ -82,8 +82,7 @@ def find_cofeatures_within_scan_array(
     candidate_xics: np.ndarray[..., ...] = _get_xic_grid(
         mass_lane_idxs=nonzero_mass_lane_idxs,
         scan_array=scan_array,
-        scan_start=search_target.scan_start,
-        scan_end=search_target.scan_end,
+        scan_idxs=search_target.scan_idxs,
         use_rel_intsy=use_rel_intsy,
     )
     search_xic = search_target.get_intensity_values(
@@ -132,23 +131,23 @@ def find_cofeatures_within_scan_array(
 def _get_xic_grid(
     mass_lane_idxs: np.ndarray,
     scan_array: 'ScanArray',
-    scan_start: int,
-    scan_end: int,
+    scan_idxs: np.ndarray,
     use_rel_intsy: bool,
 ) -> np.ndarray:
     """
-    Generates a 2D np.ndarray representing XICs.
+    Generates a 2D np.ndarray representing XICs, at the same scans a
+    FeaturePointer with `scan_idxs` reads.
 
     :param scan_array: ScanArray to parse
     :param mass_lane_idxs: Indices of ScanArray to parse
-    :param scan_start: Scan to start with
-    :param scan_end: Scan to end with
+    :param scan_idxs: Sorted scan indices to take
     :return:
     """
+    s0, s1 = int(scan_idxs[0]), int(scan_idxs[-1])
     candidate_xics = scan_array.intsy_arr[
                      mass_lane_idxs,
-                     scan_start:scan_end,
-                     ].toarray()
+                     s0:s1 + 1,
+                     ].toarray()[:, scan_idxs - s0]
 
 
     # If requested, normalize (use_rel_intsy)
@@ -336,8 +335,6 @@ def find_cofeatures_across_scan_array(
     )[0]
     if target_scan_idxs.size == 0:
         return []
-    target_scan_start = target_scan_idxs.min()
-    target_scan_end = target_scan_idxs.max()
 
     # Find mass lanes within the search scan range that actually have signals
     nonzero_mass_lane_idxs = _find_nonzero_mass_lanes(
@@ -350,19 +347,15 @@ def find_cofeatures_across_scan_array(
     candidate_xics: np.ndarray[..., ...] = _get_xic_grid(
         mass_lane_idxs=nonzero_mass_lane_idxs,
         scan_array=target_scan_array,
-        scan_start=target_scan_start,
-        scan_end=target_scan_end,
+        scan_idxs=target_scan_idxs,
         use_rel_intsy=use_rel_intsy,
     )
 
     # Interpolate search_xic based on the retention times of target_scan_array
-    rt_source: np.ndarray = source_scan_array.rt_arr[
-        search_target.scan_start: search_target.scan_end
-    ]
-
-    rt_target: np.ndarray = target_scan_array.rt_arr[
-        target_scan_start:target_scan_end,
-    ]
+    rt_source: np.ndarray = search_target.get_retention_times(
+        source_scan_array
+    )
+    rt_target: np.ndarray = target_scan_array.rt_arr[target_scan_idxs]
 
     search_xic: np.ndarray[...,] = search_target.get_intensity_values(
         source_scan_array,

@@ -755,9 +755,9 @@ def build_features_masscube(
     for ftr in wip_features:
         final_features.append(ftr)
 
-    # Sort by mz
+    # Sort by apex m/z (the m/z at each feature's most intense scan)
     final_features.sort(
-        key=lambda x: np.mean(x.nonzero_scans['mz'])
+        key=lambda x: x.array['mz'][x.array['intsy'].argmax()]
     )
 
     return final_features

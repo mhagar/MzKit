@@ -468,15 +468,12 @@ def _recruit_ms1(
     if candidates.size == 0:
         return np.empty(0, dtype=int)
 
-    # Match find_cofeatures' windowing: FeaturePointer.scan_end is the LAST scan
-    # index (inclusive), and XIC slices are [scan_start:scan_end], so the final
-    # scan of the window is excluded. Replicate that here (scan_end == last idx)
-    # for both the seed and candidate XICs so they stay aligned (and DDA stays
-    # byte-identical to the FeaturePointer-based path).
-    scan_start = int(window_idxs[0])
-    scan_end = int(window_idxs[-1])  # exclusive of the final window scan
-    if scan_end <= scan_start:
+    # Score over the whole window, last scan included, matching the scans the
+    # emitted FeaturePointers (and find_cofeatures) read.
+    if window_idxs.size < 2:
         return np.empty(0, dtype=int)
+    scan_start = int(window_idxs[0])
+    scan_end = int(window_idxs[-1]) + 1  # window_intensity is [start:end)
 
     # A candidate whose only signal sits on a truncated window edge (or was fully
     # consumed) can normalize to an all-zero row (0/0 -> NaN). NaN scores are
