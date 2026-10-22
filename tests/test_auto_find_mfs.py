@@ -3,11 +3,11 @@ Tests for core/cli/auto_find_mfs — the DIA auto-annotation glue.
 
 find-mfs itself is mocked (a synthetic AnalyteAnnotation): these exercise OUR
 integration — result conversion, top-hit auto-pick, adduct-label attachment,
-re-run replacement, and the DDA skip — without loading MistNet or depending on
+re-run replacement, and the DDA precursor pin — without loading MistNet or depending on
 its output. A real DIA `Ensemble` (composite spectrum + cofeature validation)
 comes from the committed tests/std_mix.mzk.
 """
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -136,15 +136,27 @@ def test_rerun_replaces_labels_and_spares_user(dia_ensemble, monkeypatch):
     assert len(user) == 1 and user[0].text == 'mine'
 
 
-def test_dda_ensemble_is_skipped(dia_ensemble, monkeypatch):
-    _install_fake_annotate(monkeypatch)
-    monkeypatch.setattr(dia_ensemble.injection, 'acquisition_mode', 'dda')
-    assert dia_ensemble.is_dda is True
+def test_dda_pins_composite_precursor(dia_ensemble, monkeypatch):
+    """DIA lets find-mfs pick the envelope; DDA pins it to the composite's
+    precursor, since the composite MS2 came from that precursor."""
+    res = _install_fake_annotate(monkeypatch)
+    captured = {}
 
+    def fake(*a, **k):
+        captured.update(k)
+        return res
+
+    monkeypatch.setattr('find_mfs.annotate_analyte_dia', fake, raising=False)
+
+    composite = dia_ensemble.composite_spectrum
+    annotate_ensembles_dia([dia_ensemble])
+    assert captured['precursor_mz'] is None
+
+    monkeypatch.setattr(dia_ensemble.injection, 'acquisition_mode', 'dda')
+    dia_ensemble._composite = replace(composite, precursor_mz=321.5)
     result = annotate_ensembles_dia([dia_ensemble])
-    assert result.assignments == []
-    assert result.n_dda == 1
-    assert dia_ensemble.generic_annots == {}       # nothing attached
+    assert captured['precursor_mz'] == 321.5
+    assert result.assignments[0].ms2_mode == 'consensus'
 
 
 # --- params -> find-mfs, provenance -> assignment -----------------------------
@@ -201,8 +213,8 @@ def test_invalid_params_fail_once_up_front(dia_ensemble, monkeypatch):
 
 # --- batch selection + skip reporting ----------------------------------------
 
-def _ens(intsy, dda=False):
-    return SimpleNamespace(base_intsy=intsy, is_dda=dda, uuid=int(intsy))
+def _ens(intsy):
+    return SimpleNamespace(base_intsy=intsy, uuid=int(intsy))
 
 
 def test_selection_ranks_and_limits():
@@ -236,7 +248,7 @@ def test_selection_config_roundtrip():
 
 
 def test_batch_reports_every_skip(dia_ensemble, monkeypatch):
-    """DDA, below-floor, beyond-count and no-envelope ensembles are each counted,
+    """Below-floor, beyond-count and no-envelope ensembles are each counted,
     and the survivors are annotated most intense first."""
     res = _install_fake_annotate(monkeypatch)
     annotated = []
@@ -260,7 +272,6 @@ def test_batch_reports_every_skip(dia_ensemble, monkeypatch):
     ensembles = [
         _ens(1e6), _ens(4e5), _ens(9e5), _ens(2e5),   # DIA, ranked 1e6 > 9e5 > 4e5 > 2e5
         _ens(5e4),                                    # below the floor
-        _ens(3e6, dda=True),                          # DDA
     ]
     result = annotate_ensembles_dia(
         ensembles,
@@ -270,12 +281,11 @@ def test_batch_reports_every_skip(dia_ensemble, monkeypatch):
 
     assert [e.base_intsy for e in annotated] == [1e6, 9e5, 4e5]
     assert len(result.assignments) == 2
-    assert (result.n_ensembles, result.n_dda, result.n_below_intensity,
-            result.n_beyond_count, result.n_no_envelope) == (6, 1, 1, 1, 1)
+    assert (result.n_ensembles, result.n_below_intensity,
+            result.n_beyond_count, result.n_no_envelope) == (5, 1, 1, 1)
     assert result.summary() == (
-        "Annotated 2 of 6 ensembles; skipped 1 below min. intensity, "
-        "1 beyond the N most intense, 1 with no resolvable envelope, "
-        "1 DDA (not supported yet)"
+        "Annotated 2 of 5 ensembles; skipped 1 below min. intensity, "
+        "1 beyond the N most intense, 1 with no resolvable envelope"
     )
 
 

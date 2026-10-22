@@ -46,6 +46,7 @@ def _ens(uuid, base_intsy, frags=None, precursor=200.0):
     return SimpleNamespace(
         uuid=uuid,
         base_intsy=base_intsy,
+        ms2_cofeatures=['ms2'] if frags else [],
         composite_spectrum=SimpleNamespace(
             ms1=_spec([(precursor, 1.0)]),
             ms2=_spec(frags) if frags else None,

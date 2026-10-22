@@ -54,10 +54,6 @@ class EnsembleViewer(
     # Auto-annotate (find-mfs) requested for the current ensemble. The
     # MainController runs it through ProcessController and registers the result.
     sigAutoFindMfRequested = QtCore.pyqtSignal(object)  # Ensemble
-    # TEMPORARY DDA path: auto-annotate using the spectra currently on screen.
-    # Payload dict: {ensemble, ms1_peaks, ms2_peaks, precursor_mz}. Retire once
-    # DDA composite/consensus stitching lands and the DIA path covers DDA.
-    sigAutoFindMfSelectedMs2Requested = QtCore.pyqtSignal(object)
 
     def __init__(
         self,
@@ -486,9 +482,6 @@ class EnsembleViewer(
         self.initialize_property_table()
         self.refresh_assignment_display()
 
-        # Auto find-MF: the DIA path uses composite_spectrum (raises for DDA).
-        # TEMPORARY: for DDA we route through a selected-MS2 path instead
-        # (see _on_auto_find_mf_triggered), so the button stays enabled for both.
         self.toolAutoFindMf.setEnabled(True)
         self.actionAutoFindMf.setEnabled(True)
 
@@ -533,39 +526,11 @@ class EnsembleViewer(
 
     def _on_auto_find_mf_triggered(self):
         """
-        Ask the MainController to auto-annotate the current ensemble via
-        find-mfs (runs through ProcessController).
-
-        DIA uses the composite spectrum. DDA has no composite yet, so
-        (TEMPORARY) we hand find-mfs whatever MS1 + MS2 spectra are currently
-        on screen, plus the ensemble's precursor. Retire once DDA stitching
-        lands and the DIA path covers DDA.
+        Ask the MainController to auto-annotate the current ensemble's
+        composite spectrum via find-mfs (runs through ProcessController).
         """
-        if not self.ensemble:
-            return
-
-        if not self.ensemble.is_dda:
+        if self.ensemble:
             self.sigAutoFindMfRequested.emit(self.ensemble)
-            return
-
-        ms1_peaks = self.spectrum_manager.current_ms1
-        ms2_peaks = self.spectrum_manager.current_ms2
-        if ms1_peaks is None or len(ms1_peaks) == 0:
-            self.status_bar.showMessage(
-                "No MS1 spectrum on screen to annotate.", 5000
-            )
-            return
-
-        # An empty MS2 array means 'no MS2 on this scan' -> skip the MS2 term.
-        if ms2_peaks is not None and len(ms2_peaks) == 0:
-            ms2_peaks = None
-
-        self.sigAutoFindMfSelectedMs2Requested.emit({
-            "ensemble": self.ensemble,
-            "ms1_peaks": ms1_peaks,
-            "ms2_peaks": ms2_peaks,
-            "precursor_mz": self.ensemble.resolved_precursor_mz,
-        })
 
     def _on_assignment_changed(self, assignment):
         """
@@ -621,8 +586,6 @@ class EnsembleViewer(
         # the (corrected) apex RT passes through unchanged.
         initial_rt = self._snap_rt_to_ensemble(self.ensemble.peak_rt)
 
-        # Chromatogram + DDA overlays are RT context, the same in either mode.
-        self.dda_overlay_mgr.update(scan_rt=initial_rt)
         self.chrom_manager.populate_chromatogram_plot(
             peak_rt=initial_rt
         )
@@ -644,24 +607,21 @@ class EnsembleViewer(
         """
         Render the MS1/MS2 spectrum panels according to the active mode.
 
-        Composite mode shows the ensemble's representative (composite) spectrum
-        -- but only where one is defined (DIA / MS1-only). For DDA, composite
-        mode falls back to the scan-based view (snap-to-matched-MS2 + badges)
-        until precursor-confirmed stitching lands, so DDA workflows keep
-        working. `_showing_composite` is True only when a *true* composite is
-        on screen, which is what makes composite-mode annotations scan-agnostic.
+        Composite mode shows the ensemble's representative (composite)
+        spectrum; scan mode the scan at `scan_rt`. DDA overlays are redrawn
+        after, since badges anchor to the MS1 now on screen.
+        `_showing_composite` is what makes composite-mode annotations
+        scan-agnostic.
         """
-        show_composite = (
-            self.tool_manager.active_mode == Mode.COMPOSITE
-            and not self.ensemble.is_dda
-        )
+        show_composite = self.tool_manager.active_mode == Mode.COMPOSITE
 
         if show_composite:
-            self.spectrum_manager.populate_composite(
-                self.ensemble.composite_spectrum
-            )
+            composite = self.ensemble.composite_spectrum
+            self.spectrum_manager.populate_composite(composite)
+            self.dda_overlay_mgr.update(scan_rt=scan_rt, composite=composite)
         else:
             self.spectrum_manager.populate_spectrum_plot(scan_rt=scan_rt)
+            self.dda_overlay_mgr.update(scan_rt=scan_rt)
 
         self._showing_composite = show_composite
 
@@ -680,7 +640,12 @@ class EnsembleViewer(
         scan_array = ensemble.injection.scan_array_ms2
         if scan_array is None:
             return None
-        intsys = [c.get_max_intsy(scan_array) for c in ensemble.ms2_cofeatures]
+        # Read the cofeature's own scans: get_max_intsy's contiguous slice is
+        # empty for single-scan DDA cofeatures and spans unrelated DDA scans
+        intsys = [
+            scan_array.intsy_arr[c.mz_lane_idx, c.scan_idxs].max()
+            for c in ensemble.ms2_cofeatures
+        ]
         return int(np.argmax(intsys))
 
     def _preselect_base_peaks(self, scan_rt: float):
@@ -861,6 +826,8 @@ class EnsembleViewer(
         to `rt`. Used by the DDA badge click handler so the click goes
         through the same snap-and-update path as a user drag.
         """
+        if self.tool_manager.active_mode == Mode.COMPOSITE:
+            self.actionScan.trigger()
         rt = self._snap_rt_to_ensemble(rt)
         # Block sigPositionChanged so we don't re-enter
         # onChromatogramSelectorMoved when we move the indicator.
@@ -883,7 +850,6 @@ class EnsembleViewer(
         rt = self.chrom_manager.selected_rt or self.ensemble.peak_rt
         # Re-render honoring the active mode (composite vs scan).
         self._populate_spectra_for_mode(scan_rt=rt)
-        self.dda_overlay_mgr.update(scan_rt=rt)
         self._redraw_annotations_for_current_scan()
 
     def _on_transform_settings_changed(self):

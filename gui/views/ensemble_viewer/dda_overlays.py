@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble, ScanArray
+    from core.data_structs.composite_spectrum import CompositeSpectrum
     from gui.widgets.MSPlotWidget import MSPlotWidget
     from gui.widgets.ChromPlotWidget import ChromPlotWidget
 
@@ -80,12 +81,16 @@ class EnsembleDDAOverlayManager:
         self.clear()
         self.ensemble = ensemble
 
-    def update(self, scan_rt: float) -> None:
+    def update(
+        self,
+        scan_rt: float,
+        composite: Optional['CompositeSpectrum'] = None,
+    ) -> None:
         """
-        Re-render overlays. Call after `SpectrumPlotManager
-        .populate_spectrum_plot(scan_rt)`. The badges' Y position
-        depends on the currently-displayed MS1 spectrum; the MS2
-        overlay depends on which MS2 scan that RT resolves to.
+        Re-render overlays. Call *after* the spectra are populated: the
+        badges' Y position depends on the currently-displayed MS1 spectrum.
+        The MS2 overlay depends on which MS2 scan `scan_rt` resolves to,
+        or, when a `composite` is on display, on the composite's precursor.
         """
         self.clear()
         if not self._is_dda():
@@ -93,6 +98,12 @@ class EnsembleDDAOverlayManager:
 
         ms2_arr = self.ensemble.injection.scan_array_ms2
         if ms2_arr is None or ms2_arr.precursor_mz_arr is None:
+            return
+
+        if composite is not None:
+            self._current_ms2_scan_idx = None
+            self._render_ms1_badges(ms2_arr, None)
+            self._render_composite_ms2_overlay(composite)
             return
 
         ms2_scan_idx = int(ms2_arr.rt_to_scan_num(scan_rt))
@@ -124,7 +135,7 @@ class EnsembleDDAOverlayManager:
     def _render_ms1_badges(
         self,
         ms2_arr: 'ScanArray',
-        current_ms2_scan_idx: int,
+        current_ms2_scan_idx: Optional[int],
     ) -> None:
         # All MS2 cofeatures in a DDA ensemble share the same scan_idxs
         # (built that way in `_dda_link_ms2_cofeatures`). Take the first.
@@ -139,7 +150,7 @@ class EnsembleDDAOverlayManager:
         # currently-displayed MS1 spectrum. Badges sit on top of the
         # parent ion when it's visible; rest at the baseline otherwise.
         spec_array = self.ms1_plot.pi.spectrum_array
-        if spec_array is None or len(spec_array) == 0:
+        if spec_array is None or spec_array.size == 0:
             return
         spec_mzs = spec_array['mz']
         spec_intsys = spec_array['intsy']
@@ -285,6 +296,24 @@ class EnsembleDDAOverlayManager:
         self.ms2_plot.update_label(
             f"MS2  precursor m/z {prec_mz:.4f}  z={charge_str}  "
             f"RT={rt:.2f}  scan #{mzml_scan}"
+        )
+
+    def _render_composite_ms2_overlay(
+        self,
+        composite: 'CompositeSpectrum',
+    ) -> None:
+        marker = pg.InfiniteLine(
+            pos=composite.precursor_mz,
+            angle=90,
+            movable=False,
+            pen=_ISOLATION_PEN,
+        )
+        marker.setZValue(-10)
+        self.ms2_plot.pi.addItem(marker)
+        self._isolation_item = marker
+        self.ms2_plot.update_label(
+            f"MS2 composite  precursor m/z {composite.precursor_mz:.4f}  "
+            f"z={composite.charge:+d}"
         )
 
     # ------------------------------------------------------------------ #

@@ -37,6 +37,7 @@ def _build(entries):
         ensembles[ens_uuid] = SimpleNamespace(
             uuid=ens_uuid,
             base_intsy=1e6,
+            ms2_cofeatures=['ms2'] if frags else [],
             composite_spectrum=SimpleNamespace(
                 ms1=_spec([(precursor, 1.0)]),
                 ms2=_spec(frags) if frags else None,

@@ -1,6 +1,6 @@
 """
-Auto-annotate DIA ensembles with molecular formulae via find-mfs
-`annotate_analyte_dia`.
+Auto-annotate ensembles (DIA, DDA, MS1-only) with molecular formulae
+via find-mfs `annotate_analyte_dia`
 
 Hands each ensemble's composite (representative) MS1 + MS2 spectrum to find-mfs,
 which does its own base-envelope/precursor selection, charge + adduct resolution
@@ -8,7 +8,8 @@ and ranked formula search. Produces one FormulaAssignment per ensemble and, when
 enabled, attaches the resolved per-envelope adduct labels to the ensemble's MS1
 signals as 'auto_adduct'-tagged generic annotations.
 
-DIA / MS1-only only (composite_spectrum is DIA-only); DDA ensembles are skipped.
+For DDA, the composite's precursor (the tallest fragmented precursor) is passed
+to find-mfs so it picks the envelope the composite MS2 actually came from.
 
 ProcessController-compatible: accepts `progress_callback` + `cancel_event` and
 accepts an iterable of ensembles, so the same function backs the single-ensemble
@@ -122,7 +123,6 @@ class BatchAnnotationResult:
     """
     assignments: list[FormulaAssignment] = field(default_factory=list)
     n_ensembles: int = 0            # handed in
-    n_dda: int = 0                  # skipped: TODO DDA has no composite spectrum yet
     n_below_intensity: int = 0      # skipped: below the base-peak intensity floor
     n_beyond_count: int = 0         # skipped: outside the N most intense
     n_no_envelope: int = 0          # skipped: find-mfs found no resolvable envelope
@@ -152,7 +152,6 @@ class BatchAnnotationResult:
                 (self.n_below_intensity, "below min. intensity"),
                 (self.n_beyond_count, "beyond the N most intense"),
                 (self.n_no_envelope, "with no resolvable envelope"),
-                (self.n_dda, "DDA (not supported yet)"),
                 (self.n_cancelled, "not reached (cancelled)"),
             ) if n
         ]
@@ -176,12 +175,12 @@ def annotate_ensembles_dia(
     cancel_event: Optional[threading.Event] = None,
 ) -> BatchAnnotationResult:
     """
-    Run find-mfs `annotate_analyte_dia` over each (DIA) ensemble.
+    Run find-mfs `annotate_analyte_dia` over each ensemble.
 
     For each ensemble: builds a FormulaAssignment (top candidate pre-selected,
     `chosen_idx=0`, `chosen_by='auto'`), and — if
     `attach_adduct_labels` — replaces prior 'auto_adduct' generic annotations
-    with the resolved per-envelope adduct labels. DDA ensembles are skipped.
+    with the resolved per-envelope adduct labels.
 
     Ensembles are annotated most intense first (so a cancelled run has done
     the ones that matter), limited by `selection` if given.
@@ -209,11 +208,9 @@ def annotate_ensembles_dia(
     ensembles = [e for e in ensembles if e.uuid not in keep]
     result.n_user_chosen = result.n_ensembles - len(ensembles)
 
-    # Composite is DIA-only for now; nothing to do for DDA.
-    dia = [e for e in ensembles if not e.is_dda]
-    result.n_dda = len(ensembles) - len(dia)
-
-    todo, result.n_below_intensity, result.n_beyond_count = selection.select(dia)
+    todo, result.n_below_intensity, result.n_beyond_count = selection.select(
+        ensembles
+    )
 
     scorer = _get_scorer(model_path)  # MistNet warmed once, cached across calls
 
@@ -260,24 +257,14 @@ def _annotate_one(
     scorer,
     params: FindMfsParams,
     attach_adduct_labels: bool,
-    ms1_peaks=None,
-    ms2_peaks=None,
-    precursor_mz: Optional[float] = None,
-    ms2_mode: str = 'tallest',
 ) -> FormulaAssignment:
-    # DIA default: pull the composite (representative) spectra and let find-mfs
-    # pick the base envelope (precursor_mz=None). When the caller passes explicit
-    # spectra (the temporary DDA path), use those + the given precursor instead.
-    if ms1_peaks is None:
-        composite = ensemble.composite_spectrum
-        ms1_peaks = composite.ms1
-        ms2_peaks = composite.ms2         # may be None -> MS2 term skipped
-        precursor_mz = None
-
+    # DIA: find-mfs picks the base envelope itself (precursor_mz=None).
+    # DDA: the composite MS2 belongs to a known precursor, so pin the envelope to it.
+    composite = ensemble.composite_spectrum
     res = annotate_analyte_dia(
-        ms1_peaks=ms1_peaks,
-        ms2_peaks=ms2_peaks,              # may be None -> MS2 term skipped
-        precursor_mz=precursor_mz,
+        ms1_peaks=composite.ms1,
+        ms2_peaks=composite.ms2,          # may be None -> MS2 term skipped
+        precursor_mz=composite.precursor_mz if ensemble.is_dda else None,
         scorer=scorer,
         **params.search_kwargs(),
     )
@@ -293,7 +280,7 @@ def _annotate_one(
         chosen_by='auto' if candidates else None,
         precursor_mz=res.precursor_mz,          # precursor find-mfs actually used
         charge=res.charge,                       # resolved charge
-        ms2_mode=ms2_mode,
+        ms2_mode=ensemble.default_ms2_mode,
         params=asdict(params),
         **search_provenance(res.candidates),
     )
@@ -302,74 +289,6 @@ def _annotate_one(
         _attach_adduct_labels(ensemble, res.grouped)
 
     return assignment
-
-
-def annotate_ensemble_with_selected_ms2(
-    ensemble: 'Ensemble',
-    ms1_peaks,
-    ms2_peaks,
-    precursor_mz: Optional[float] = None,
-    *,
-    params: Optional[FindMfsParams] = None,
-    model_path: Optional[str] = None,
-    attach_adduct_labels: bool = True,
-    progress_callback: Optional[Callable[[float, str], None]] = None,
-    cancel_event: Optional[threading.Event] = None,
-) -> BatchAnnotationResult:
-    """
-    TEMPORARY DDA compound-annotation path.
-
-    Runs find-mfs against caller-supplied MS1 + MS2 spectra (whatever the
-    EnsembleViewer currently has on screen) plus the ensemble's precursor,
-    rather than the DIA composite (which is undefined for DDA). Produces a
-    single FormulaAssignment, returned as a BatchAnnotationResult to match the
-    DIA completion handler.
-
-    This is a stopgap until DDA MS2 'consensus' stitching lands and
-    `composite_spectrum` works for DDA; it will be retired then. Note that
-    unlike the DIA path we hand find-mfs a real precursor_mz.
-
-    ProcessController-compatible (accepts progress_callback + cancel_event).
-    """
-    # Lazy import: find-mfs pulls in MistNet + scorers.
-    from find_mfs import annotate_analyte_dia
-
-    if progress_callback is not None:
-        progress_callback(0.0, "Annotating (DDA, selected MS2)…")
-
-    result = BatchAnnotationResult(n_ensembles=1)
-    if cancel_event is not None and cancel_event.is_set():
-        result.n_cancelled = 1
-        return result
-
-    params = params if params is not None else FindMfsParams()
-    params.validate()
-    scorer = _get_scorer(model_path)
-
-    try:
-        assignment = _annotate_one(
-            ensemble,
-            annotate_analyte_dia=annotate_analyte_dia,
-            scorer=scorer,
-            params=params,
-            attach_adduct_labels=attach_adduct_labels,
-            ms1_peaks=ms1_peaks,
-            ms2_peaks=ms2_peaks,
-            precursor_mz=precursor_mz,
-            ms2_mode='selected_scan',
-        )
-    except ValueError as exc:
-        logger.warning("DDA annotate skipped for %s: %s", ensemble.uuid, exc)
-        if progress_callback is not None:
-            progress_callback(100.0, "No resolvable envelope")
-        result.n_no_envelope = 1
-        return result
-
-    if progress_callback is not None:
-        progress_callback(100.0, "Annotated 1 ensemble")
-
-    result.assignments.append(assignment)
-    return result
 
 
 def _attach_adduct_labels(

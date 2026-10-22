@@ -6,10 +6,11 @@ from types import SimpleNamespace
 from core.data_structs.alignment import AlignedAnalyte
 
 
-def _fake_ensemble(uuid: int, base_intsy: float):
+def _fake_ensemble(uuid: int, base_intsy: float, has_ms2: bool = True):
     return SimpleNamespace(
         uuid=uuid,
         base_intsy=base_intsy,
+        ms2_cofeatures=['ms2'] if has_ms2 else [],
         composite_spectrum=f"composite-{uuid}",
     )
 
@@ -48,3 +49,22 @@ def test_resolve_members():
     }
     analyte = AlignedAnalyte(ensemble_map={1: 10, 2: 20, 3: 30})
     assert analyte.resolve_members(samples.get) == {1: ens}
+
+
+def test_representative_spectrum_prefers_members_with_ms2():
+    # DDA: the tallest member often has no MS2; take the tallest that does
+    analyte = AlignedAnalyte(ensemble_map={1: 10, 2: 20, 3: 30})
+    rep = analyte.representative_spectrum({
+        1: _fake_ensemble(10, 5e5),
+        2: _fake_ensemble(20, 2e11, has_ms2=False),
+        3: _fake_ensemble(30, 1e6),
+    })
+    assert rep.ensemble_uuid == 30
+
+    # ...but with no MS2 anywhere, still the tallest member
+    analyte = AlignedAnalyte(ensemble_map={1: 10, 2: 20})
+    rep = analyte.representative_spectrum({
+        1: _fake_ensemble(10, 5e5, has_ms2=False),
+        2: _fake_ensemble(20, 2e11, has_ms2=False),
+    })
+    assert rep.ensemble_uuid == 20

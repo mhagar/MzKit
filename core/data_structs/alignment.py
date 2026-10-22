@@ -131,7 +131,8 @@ class AlignedAnalyte:
         """
         The analyte's representative (MS1, MS2) pair: the composite
         spectrum of its tallest member ensemble (by base intensity).
-        Saturation is handled within each ensemble's composite spectrum.
+
+        Saturation is handled within each ensemble's composite spectrum
 
         :param ensembles: this analyte's resolved member ensembles, keyed
             by sample uuid (members that can't be resolved may be omitted).
@@ -150,7 +151,11 @@ class AlignedAnalyte:
         if not members:
             return None
 
-        sample_uuid, ens = max(members, key=lambda m: m[1].base_intsy)
+        # Prefer members with MS2
+        with_ms2 = [m for m in members if m[1].ms2_cofeatures]
+        sample_uuid, ens = max(
+            with_ms2 or members, key=lambda m: m[1].base_intsy
+        )
         self._representative = RepresentativeSpectrum(
             composite=ens.composite_spectrum,
             sample_uuid=sample_uuid,

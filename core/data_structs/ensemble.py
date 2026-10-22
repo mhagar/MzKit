@@ -277,14 +277,23 @@ class Ensemble:
         i.e. for use with find-mfs or showing by default in EnsembleViewer
 
         MS1: the most intense unsaturated scan (see `composite_ms1_scan_num`)
-        MS2: DIA / MS1-only uses the tallest MS2 scan; DDA uses the MS2 of
-        the tallest precursor (see `_dda_tallest_precursor_ms2`)
+        MS2: DIA / MS1-only uses the tallest MS2 scan; DDA uses the
+        (normalized) MS2 of the tallest precursor, and takes its precursor
+        m/z + charge from that precursor (see `_dda_tallest_precursor_ms2`)
 
         Computed lazily
         """
         if self._composite is None:
+            precursor_mz = self.resolved_precursor_mz
+            charge = self.resolved_charge
             if self.is_dda:
-                ms2 = self._dda_tallest_precursor_ms2()
+                dda_ms2 = self._dda_tallest_precursor_ms2()
+                ms2 = None
+                if dda_ms2 is not None:
+                    # Single scans are raw, consensus spectra 0-1: same scale
+                    ms2 = normalize_spectrum(dda_ms2.spectrum)
+                    precursor_mz = dda_ms2.precursor_mz
+                    charge = dda_ms2.charge
             else:
                 ms2_spectra = self.get_ms2_spectra()
                 ms2 = ms2_spectra[0].spectrum if ms2_spectra else None
@@ -294,8 +303,8 @@ class Ensemble:
                     ms_level=1, scan_num=self.composite_ms1_scan_num()
                 ),
                 ms2=ms2,
-                precursor_mz=self.resolved_precursor_mz,
-                charge=self.resolved_charge,
+                precursor_mz=precursor_mz,
+                charge=charge,
             )
 
         return self._composite
@@ -324,7 +333,7 @@ class Ensemble:
             return self.base_scan_num
         return s0 + i
 
-    def _dda_tallest_precursor_ms2(self) -> Optional[SpectrumArray]:
+    def _dda_tallest_precursor_ms2(self) -> Optional[MS2Spectrum]:
         """
         DDA composite MS2: the MS2 of the precursor that was most intense
         in MS1 (each scan's precursor intensity is read in the MS1 scan
@@ -334,6 +343,10 @@ class Ensemble:
         Each scan's precursor is matched to the closest MS1 cofeature lane
         (by m/z); falls back to the tallest MS2 scan when no MS1 cofeature
         lies within 0.5 m/z of any precursor.
+
+        The returned precursor_mz is the matched cofeature's MS1-measured
+        m/z (more accurate than the instrument's isolation target), or the
+        fallback scan's own precursor.
         """
         scan_specs = self._iter_ms2_scan_spectra()
         if not scan_specs:
@@ -347,27 +360,37 @@ class Ensemble:
             )
         ])
 
-        def precursor_intsy(spec: MS2Spectrum) -> float:
+        def precursor_lane(spec: MS2Spectrum) -> Optional[int]:
             diffs = np.abs(lane_mzs - spec.precursor_mz)
             if np.all(np.isnan(diffs)) or np.nanmin(diffs) > 0.5:
+                return None
+            return int(np.nanargmin(diffs))
+
+        def precursor_intsy(spec: MS2Spectrum) -> float:
+            lane = precursor_lane(spec)
+            if lane is None:
                 return -np.inf
-            cofeature = self.ms1_cofeatures[int(np.nanargmin(diffs))]
+            cofeature = self.ms1_cofeatures[lane]
             scan_num = ms1_arr.rt_to_scan_num(spec.rt)
             return float(ms1_arr.intsy_arr[cofeature.mz_lane_idx, scan_num])
 
         groups = _group_by_precursor(scan_specs, precursor_tol=0.5)
-        group_intsys = [
-            max(precursor_intsy(s) for s in group) for group in groups
-        ]
+        group_tallest = [max(group, key=precursor_intsy) for group in groups]
+        group_intsys = [precursor_intsy(s) for s in group_tallest]
         if max(group_intsys) == -np.inf:
-            return max(scan_specs, key=_max_intsy).spectrum
+            return max(scan_specs, key=_max_intsy)
 
-        best = groups[int(np.argmax(group_intsys))]
-        if len(best) == 1:
-            return best[0].spectrum
-        return reduce_ms2_spectra(
+        i = int(np.argmax(group_intsys))
+        best = groups[i]
+        ms2 = best[0] if len(best) == 1 else reduce_ms2_spectra(
             best, 'consensus', group_by_precursor=False,
-        )[0].spectrum
+        )[0]
+        return MS2Spectrum(
+            spectrum=ms2.spectrum,
+            precursor_mz=float(lane_mzs[precursor_lane(group_tallest[i])]),
+            charge=ms2.charge,
+            rt=ms2.rt,
+        )
 
     # ------------------------------------------------------------------
     # MS2 spectrum production

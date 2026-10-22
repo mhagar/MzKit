@@ -314,9 +314,6 @@ class MainController:
         ensemble_viewer.sigAutoFindMfRequested.connect(
             self._handle_auto_find_mf_request
         )
-        ensemble_viewer.sigAutoFindMfSelectedMs2Requested.connect(
-            self._handle_auto_find_mf_selected_ms2_request
-        )
 
     def _handle_add_samples_request(
         self,
@@ -982,41 +979,6 @@ class MainController:
                 "params": FindMfsParams.from_config(self.config),
             },
             # Asked for on this one ensemble: replaces even a user's pick
-            on_completion_func=partial(
-                self._on_auto_find_mf_complete, protect_user_choices=False,
-            ),
-        )
-
-    def _handle_auto_find_mf_selected_ms2_request(
-        self,
-        payload: dict,
-    ):
-        """
-        TEMPORARY DDA path: auto-annotate a single ensemble using the MS1 + MS2
-        spectra the EnsembleViewer currently has on screen (DDA has no composite
-        yet). Same completion handler as the DIA button. Retire once DDA
-        stitching lands.
-        """
-        ensemble = payload.get("ensemble")
-        if ensemble is None:
-            return
-
-        from core.formula.params import FindMfsParams
-
-        self.process_controller.start_process(
-            module_path="core.cli.auto_find_mfs",
-            function_name="annotate_ensemble_with_selected_ms2",
-            parameters={
-                "ensemble": ensemble,
-                "ms1_peaks": payload.get("ms1_peaks"),
-                "ms2_peaks": payload.get("ms2_peaks"),
-                "precursor_mz": payload.get("precursor_mz"),
-                "params": FindMfsParams.from_config(self.config),
-                # attach_adduct_labels assumes DIA composite MS1 cofeature
-                # ordering; skip it on this stopgap DDA path to avoid
-                # mislabeled envelopes.
-                "attach_adduct_labels": False,
-            },
             on_completion_func=partial(
                 self._on_auto_find_mf_complete, protect_user_choices=False,
             ),
