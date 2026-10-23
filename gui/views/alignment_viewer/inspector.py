@@ -238,13 +238,12 @@ class Inspector(QtCore.QObject):
         members = ctx.members(analyte)
         rep = ctx.representative(analyte)
         n, total = len(analyte.ensemble_map), ctx.alignment.sample_count
-        self.title_label.setText(f"<b>Analyte</b> · {n}/{total} samples")
+        self.title_label.setText(f"<b>Analyte</b>: {n}/{total} samples")
 
         props = [
             ["Consensus RT (s)", f"{analyte.consensus_rt:.2f}"],
             ["Representative base m/z",
              f"{rep.base_mz:.4f}" if rep else "n/a"],
-            ["Mean base m/z", f"{analyte.consensus_mz:.4f}"],
             ["Detected in", f"{n}/{total} samples"],
             ["Representative from",
              ctx.sample_name(rep.sample_uuid) if rep else "n/a"],

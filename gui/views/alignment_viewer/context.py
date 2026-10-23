@@ -126,9 +126,8 @@ class AlignmentContext:
             agreement = self.formula_agreement(analyte)
             return ItemSpectra(
                 label=(
-                    f"Analyte {analyte.consensus_mz:.4f} @ "
+                    f"{analyte.consensus_mz:.4f} @ "
                     f"{analyte.consensus_rt:.1f}s "
-                    f"({len(analyte.ensemble_map)}/{self.alignment.sample_count})"
                 ),
                 ms1=rep.composite.ms1,
                 ms2=rep.composite.ms2,
@@ -144,8 +143,14 @@ class AlignmentContext:
 
         return None
 
-    def score(self, a: ItemSpectra, b: ItemSpectra) -> PairScore:
-        """Cosine scores between two items, as alignment computes them."""
+    def score(
+            self,
+            a: ItemSpectra,
+            b: ItemSpectra,
+    ) -> PairScore:
+        """
+        Cosine scores between two items, as alignment computes them
+        """
         return score_spectrum_pair(
             a.ms1, b.ms1, a.ms2, b.ms2, self.alignment.parameters,
         )

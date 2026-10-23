@@ -145,11 +145,11 @@ class DetailPanel:
         ms_x = self._ms_x_range
         self._show_single(
             self.ms1_plot, rep.composite.ms1,
-            f"Representative MS1 · from {source}",
+            f"Representative MS1 - {source}",
         )
         self._show_single(
             self.ms2_plot, rep.composite.ms2,
-            f"Representative MS2 · from {source}",
+            f"Representative MS2 - {source}",
         )
         self._frame_ms([rep.composite.ms1, rep.composite.ms2], ms_x)
         self._draw_chroms(

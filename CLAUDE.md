@@ -67,6 +67,11 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 - NumPy-only inference in `core/utils/ms2deepscore.py`; weights are `.npz` files in the gitignored `models/` folder
 - `tools/ms2deepscore/export_weights.py` (dev tool, own locked torch env): `uv run --script tools/ms2deepscore/export_weights.py` dumps the official weights, checks parity, writes `tests/ms2deepscore_parity.npz`
 
+## GLACIER (MS/MS spectrum prediction, ms-pred)
+
+- `core/utils/glacier.py`: three ONNX blocks run in onnxruntime; featurization + fragment glue in NumPy/RDKit. Model files in gitignored `models/glacier/`
+- `tools/glacier/export_onnx.py` (dev tool, own locked torch env): `uv run --script tools/glacier/export_onnx.py --ckpt best.ckpt --ms-pred <checkout>` exports the blocks + `meta.json`, checks parity vs ms-pred's `predict_mol`, writes `tests/glacier_parity.npz`
+
 ## GUI resources
 
 - `.ui` files are edited in Qt Designer, then compiled with `pyuic5 -o gui/resources/Foo.py gui/resources/Foo.ui`
