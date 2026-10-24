@@ -1,99 +1,59 @@
 """
-The AlignmentViewer's Inspector side panel: a stack of pages, one per
-selection mode (nothing / ensemble / analyte / compare), each backed by a
-read-only table model.
+The AlignmentViewer's Inspector side panel: a stack of pages (the alignment
+summary while nothing is selected, else a tree of the analytes the selection
+touches, each with its member ensembles), plus an always-visible analyte
+editor (name / SMILES) for the focused item's analyte.
+
+The tree mirrors the viewer's SelectionModel: picking a row asks to focus
+it; its context menu sets / clears the anchor.
 """
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt5.QtCore import QModelIndex, Qt
 
 from core.formula import delta_formula
-from gui.widgets.alignment_plot.layout import ANCHOR_COLOR, CURRENT_COLOR
+from core.utils.natural_sort import natural_sort_key
+from gui.views.alignment_viewer.group_dialog import show_smiles
+from gui.widgets.alignment_plot.layout import (
+    ANCHOR_COLOR, CURRENT_COLOR, HoverTarget,
+)
+from gui.widgets.alignment_plot.selection import display_order, target_key
 
 if TYPE_CHECKING:
-    from core.data_structs import Ensemble, SampleUUID
     from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
-    from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
+    from gui.views.alignment_viewer.context import AlignmentContext
 
 
-class ReadOnlyTableModel(QAbstractTableModel):
-    """
-    A plain headers + rows table. Row payloads are kept for lookups.
-    """
-
-    def __init__(self, headers: list[str], parent=None):
-        super().__init__(parent)
-        self._headers = headers
-        self._rows: list[list[Any]] = []
-        self._payloads: list[Any] = []
-        self._marks: dict[int, QtGui.QColor] = {}
-
-    def set_rows(
-        self,
-        rows: list[list[Any]],
-        payloads: Optional[list] = None,
-        marks: Optional[dict[int, QtGui.QColor]] = None,
-    ):
-        """:param marks: see `set_marks`."""
-        self.beginResetModel()
-        self._rows = rows
-        self._payloads = payloads if payloads is not None else [None] * len(rows)
-        self._marks = marks or {}
-        self.endResetModel()
-
-    def set_marks(self, marks: dict[int, QtGui.QColor]):
-        """Rows whose first cell shows a ● in the given colour (no model reset)."""
-        self._marks = marks
-        if self._rows:
-            self.dataChanged.emit(
-                self.index(0, 0), self.index(len(self._rows) - 1, 0),
-            )
-
-    def payload(self, row: int) -> Any:
-        return self._payloads[row] if 0 <= row < len(self._payloads) else None
-
-    def rowCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self._rows)
-
-    def columnCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self._headers)
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        if index.column() == 0 and index.row() in self._marks:
-            if role == Qt.ForegroundRole:
-                return self._marks[index.row()]
-            if role == Qt.DisplayRole:
-                return "●"
-        if role != Qt.DisplayRole:
-            return None
-        value = self._rows[index.row()][index.column()]
-        return "" if value is None else str(value)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return self._headers[section]
-        return None
-
-
-def _copy_selection(table: QtWidgets.QTableView):
+def _copy_selection(table: QtWidgets.QAbstractItemView):
     """Copy the selected cells as TSV (a column -> one value per line)."""
     indexes = table.selectionModel().selectedIndexes()
     if not indexes:
         return
-    rows: dict[int, dict[int, str]] = {}
+    # (top-level row, child row or -1): display order in tables and in
+    # the (two-level) compare tree
+    rows: dict[tuple[int, int], dict[int, str]] = {}
     for index in indexes:
-        rows.setdefault(index.row(), {})[index.column()] = index.data() or ""
+        parent = index.parent()
+        key = (parent.row(), index.row()) if parent.isValid() else (index.row(), -1)
+        rows.setdefault(key, {})[index.column()] = index.data() or ""
     cols = sorted({c for row in rows.values() for c in row})
     QtWidgets.QApplication.clipboard().setText('\n'.join(
         '\t'.join(rows[r].get(c, "") for c in cols) for r in sorted(rows)
     ))
 
 
-def _compare_marks(current_row: int) -> dict[int, QtGui.QColor]:
-    return {0: ANCHOR_COLOR, current_row: CURRENT_COLOR}
+def _add_copy_action(view: QtWidgets.QAbstractItemView):
+    copy = QtWidgets.QAction(view)
+    copy.setShortcut(QtGui.QKeySequence.Copy)
+    copy.setShortcutContext(Qt.WidgetShortcut)
+    copy.triggered.connect(lambda _: _copy_selection(view))
+    view.addAction(copy)
+
+
+# Selection tree: the HoverTarget behind a row, on its first cell (None on
+# analyte header rows)
+ITEM_ROLE = Qt.UserRole
 
 
 def _fmt_intsy(value: float) -> str:
@@ -104,30 +64,38 @@ def _fmt_opt(value: Optional[float], fmt: str) -> str:
     return "n/a" if value is None else format(value, fmt)
 
 
+def _cells(values: list) -> list[QtGui.QStandardItem]:
+    cells = [QtGui.QStandardItem(str(v)) for v in values]
+    for cell in cells:
+        cell.setEditable(False)
+    return cells
+
+
 class Inspector(QtCore.QObject):
     """
     Populates the Inspector widgets generated from the .ui (passed in by
     the viewer) for the current selection.
     """
-    # Emitted when the user picks a compare-table row: the row's index
-    # into the selection (never the anchor, row 0).
-    sigCompareRowSelected = QtCore.pyqtSignal(int)
-    # Emitted when a compare-table row is double-clicked: make it the anchor.
-    sigAnchorRequested = QtCore.pyqtSignal(int)
-    # Emitted when a member ensemble row is double-clicked.
-    sigMemberActivated = QtCore.pyqtSignal(object)  # Ensemble
-
-    PAGE_EMPTY, PAGE_ENSEMBLE, PAGE_ANALYTE, PAGE_COMPARE = range(4)
+    # Emitted when the user picks a selection-tree row: focus its target.
+    sigFocusRequested = QtCore.pyqtSignal(object)  # HoverTarget
+    # From the tree's context menu: make a target the anchor (None clears it).
+    sigAnchorRequested = QtCore.pyqtSignal(object)  # HoverTarget | None
+    # Emitted when an ensemble's tree row is double-clicked (or opened from
+    # the tree's context menu).
+    sigEnsembleActivated = QtCore.pyqtSignal(object)  # Ensemble
+    # Emitted when the focused analyte's name / SMILES is edited:
+    # (AnalyteUUID, field, new value)
+    sigAnnotationEdited = QtCore.pyqtSignal(object, str, str)
 
     def __init__(
         self,
         title_label: QtWidgets.QLabel,
         stack: QtWidgets.QStackedWidget,
         summary_label: QtWidgets.QLabel,
-        table_ensemble: QtWidgets.QTableView,
-        table_analyte_props: QtWidgets.QTableView,
-        table_analyte_members: QtWidgets.QTableView,
-        table_compare: QtWidgets.QTableView,
+        edit_name: QtWidgets.QLineEdit,
+        edit_smiles: QtWidgets.QLineEdit,
+        tree_compare: QtWidgets.QTreeView,
+        svg_structure,
     ):
         super().__init__()
         self.title_label = title_label
@@ -136,48 +104,44 @@ class Inspector(QtCore.QObject):
         self.summary_label.setWordWrap(True)
         self.summary_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
-        self.ensemble_model = ReadOnlyTableModel(["Property", "Value"])
-        self.analyte_props_model = ReadOnlyTableModel(["Property", "Value"])
-        self.members_model = ReadOnlyTableModel(
-            ["Sample", "RT (s)", "Base m/z", "Intensity", "Formula"]
-        )
-        self.compare_model = ReadOnlyTableModel(
-            ["", "Item", "Formula", "Count", "Similarity", "Δm/z", "ΔFmla"]
-        )
+        self.compare_model = QtGui.QStandardItemModel()
 
-        for table, model in (
-            (table_ensemble, self.ensemble_model),
-            (table_analyte_props, self.analyte_props_model),
-            (table_analyte_members, self.members_model),
-            (table_compare, self.compare_model),
-        ):
-            table.setModel(model)
-            table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-            table.horizontalHeader().setStretchLastSection(True)
-            table.verticalHeader().setVisible(False)
-            table.verticalHeader().setStretchLastSection(False)
-            copy = QtWidgets.QAction(table)
-            copy.setShortcut(QtGui.QKeySequence.Copy)
-            copy.setShortcutContext(Qt.WidgetShortcut)
-            copy.triggered.connect(lambda _, t=table: _copy_selection(t))
-            table.addAction(copy)
+        self._focus_uuid = None
+        self.edit_name, self.edit_smiles = edit_name, edit_smiles
+        for edit, field in ((edit_name, 'name'), (edit_smiles, 'smiles')):
+            edit.setEnabled(False)
+            edit.editingFinished.connect(
+                lambda edit=edit, field=field: self._focus_uuid is not None
+                and self.sigAnnotationEdited.emit(
+                    self._focus_uuid, field, edit.text().strip()
+                )
+            )
+        self.svg_structure = svg_structure
+        svg_structure.hide()
 
-        self.table_compare = table_compare
-        table_compare.selectionModel().currentRowChanged.connect(
-            self._on_compare_row_changed
+        self.tree_compare = tree_compare
+        tree_compare.setModel(self.compare_model)
+        tree_compare.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        tree_compare.header().setStretchLastSection(True)
+        _add_copy_action(tree_compare)
+        # Target key -> its row's first cell and label (for marks / current)
+        self._item_cells: dict[tuple, tuple[QtGui.QStandardItem, str]] = {}
+        self._focus: Optional['HoverTarget'] = None
+        self._anchor: Optional['HoverTarget'] = None
+        self._listed: set = set()
+        tree_compare.selectionModel().currentRowChanged.connect(
+            self._on_tree_row_changed
         )
-        table_compare.doubleClicked.connect(
-            lambda index: index.row() > 0
-            and self.sigAnchorRequested.emit(index.row())
+        tree_compare.doubleClicked.connect(
+            lambda index: self._activate(self._target_at(index))
         )
-        table_analyte_members.doubleClicked.connect(
-            lambda index: self._emit_member(index.row())
-        )
+        tree_compare.setContextMenuPolicy(Qt.CustomContextMenu)
+        tree_compare.customContextMenuRequested.connect(self._show_tree_menu)
 
     # -- pages --------------------------------------------------------------
 
     def show_summary(self, alignment: Optional['EnsembleAlignment']):
-        self.stack.setCurrentIndex(self.PAGE_EMPTY)
+        self.stack.setCurrentWidget(self.summary_label.parentWidget())
         if alignment is None:
             self.title_label.setText("<b>No alignment loaded</b>")
             self.summary_label.setText("")
@@ -197,125 +161,206 @@ class Inspector(QtCore.QObject):
             f"{p.ms1_similarity_threshold} / {p.ms2_similarity_threshold}\n"
             f"  MS1 / MS2 weights: {p.ms1_weight} / {p.ms2_weight}\n\n"
             f"Click a strip or line to inspect it; "
-            f"Ctrl+click to compare several."
+            f"Ctrl+click to select several."
         )
 
-    def show_ensemble(
+    def show_focus(
         self,
-        ctx: 'AlignmentContext',
-        sample_uuid: 'SampleUUID',
-        ensemble: 'Ensemble',
+        ctx: Optional['AlignmentContext'],
         analyte: Optional['AlignedAnalyte'],
     ):
-        self.stack.setCurrentIndex(self.PAGE_ENSEMBLE)
-        name = ctx.sample_name(sample_uuid)
-        self.title_label.setText(f"<b>Ensemble</b> · {name}")
+        """Fill the annotation editor for `analyte` (None clears it)."""
+        self._focus_uuid = None if analyte is None else analyte.uuid
+        annotation = (
+            None if ctx is None or analyte is None
+            else ctx.data_source.get_annotation(analyte.uuid)
+        )
+        smiles = annotation.smiles if annotation else ""
+        self.edit_name.setText(annotation.name if annotation else "")
+        self.edit_smiles.setText(smiles)
+        for edit in (self.edit_name, self.edit_smiles):
+            edit.setEnabled(self._focus_uuid is not None)
+        show_smiles(self.svg_structure, smiles)
+        self.svg_structure.setVisible(bool(smiles))
 
-        rows = [
-            ["Sample", name],
-            ["Base m/z", f"{ensemble.base_mz:.4f}"],
-            ["Base intensity", _fmt_intsy(ensemble.base_intsy)],
-            ["Peak RT (s)", f"{ensemble.peak_rt:.2f}"],
-            ["MS1 cofeatures", len(ensemble.ms1_cofeatures)],
-            ["MS2 cofeatures", len(ensemble.ms2_cofeatures)],
-            ["Formula", ctx.formula(ensemble)],
-            ["Identity", ensemble.identity or ""],
-        ]
-        if analyte is not None:
-            rows.append([
-                "Aligned in",
-                f"{len(analyte.ensemble_map)}/{ctx.alignment.sample_count} samples",
-            ])
-        rows.extend([k, v] for k, v in ensemble.user_metadata.items())
-        self.ensemble_model.set_rows(rows)
-
-    def show_analyte(
+    def show_selection(
         self,
         ctx: 'AlignmentContext',
-        analyte: 'AlignedAnalyte',
-    ):
-        self.stack.setCurrentIndex(self.PAGE_ANALYTE)
-        members = ctx.members(analyte)
-        rep = ctx.representative(analyte)
-        n, total = len(analyte.ensemble_map), ctx.alignment.sample_count
-        self.title_label.setText(f"<b>Analyte</b>: {n}/{total} samples")
-
-        props = [
-            ["Consensus RT (s)", f"{analyte.consensus_rt:.2f}"],
-            ["Representative base m/z",
-             f"{rep.base_mz:.4f}" if rep else "n/a"],
-            ["Detected in", f"{n}/{total} samples"],
-            ["Representative from",
-             ctx.sample_name(rep.sample_uuid) if rep else "n/a"],
-            ["Formula", ctx.formula_label(analyte)],
-        ]
-        self.analyte_props_model.set_rows(props)
-
-        ordered = sorted(members.items(), key=lambda kv: ctx.sample_name(kv[0]))
-        self.members_model.set_rows(
-            [
-                [
-                    ctx.sample_name(sample_uuid),
-                    f"{ens.peak_rt:.2f}",
-                    f"{ens.base_mz:.4f}",
-                    _fmt_intsy(ens.base_intsy),
-                    ctx.formula(ens),
-                ]
-                for sample_uuid, ens in ordered
-            ],
-            payloads=[ens for _, ens in ordered],
-        )
-
-    def show_compare(
-        self,
-        items: list['ItemSpectra'],
-        similarities: list[Optional[float]],
-        current_row: int,
+        targets: list['HoverTarget'],
+        focus: Optional['HoverTarget'],
+        anchor: Optional['HoverTarget'],
+        similarities: dict,
     ):
         """
-        :param items: selected items; items[0] is the anchor.
-        :param similarities: similarities[i] is items[i] vs the anchor
-            (None where unavailable).
-        :param current_row: the row whose pair is on the mirror plots.
+        :param similarities: AnalyteUUID -> similarity to the anchor (an
+            analyte), from the clustering; shown for analyte rows.
+
+        One row per analyte the selection touches (display_order), with
+        all its member ensembles under it (a selected analyte's members are
+        selected with it). Rows that aren't selected are disabled (muted,
+        and can't be focused): an analyte only some of whose ensembles are
+        selected, and its other members. Analytes with a
+        selected ensemble start expanded, the rest collapsed. An anchor
+        not in the tree gets a disabled row on top. With an anchor, columns
+        comparing each item to it are added.
         """
-        self.stack.setCurrentIndex(self.PAGE_COMPARE)
-        self.title_label.setText(f"<b>Compare</b> · {len(items)} items")
+        self.stack.setCurrentWidget(self.tree_compare.parentWidget())
+        n = len(targets)
+        self.title_label.setText(f"<b>Selection</b> · {n} item{'' if n == 1 else 's'}")
+        self._anchor = anchor
+        anchor_key = target_key(anchor)
+        anchor_item = None if anchor is None else ctx.item_spectra(anchor)
 
-        anchor = items[0]
-        rows = [[
-            "", anchor.label, anchor.formula_label, anchor.formula_count,
-            "—", "—", "—",
-        ]]
-        for item, similarity in zip(items[1:], similarities[1:]):
-            rows.append([
-                "",
-                item.label,
-                item.formula_label,
-                item.formula_count,
-                _fmt_opt(similarity, ".3f"),
-                f"{item.base_mz - anchor.base_mz:+.4f}",
-                delta_formula(anchor.formula, item.formula),
-            ])
+        model = self.compare_model
+        # Rebuilding moves the current row about: not the user picking one
+        blocker = QtCore.QSignalBlocker(self.tree_compare.selectionModel())
+        model.clear()
+        headers = ["Item", "Intensity", "Formula", "Count"]
+        if anchor is not None:
+            headers += ["Similarity", "Δm/z", "ΔFmla"]
+        model.setHorizontalHeaderLabels(headers)
+        self._item_cells = {}
 
-        self.compare_model.set_rows(rows, marks=_compare_marks(current_row))
-        self.set_current_compare_row(current_row)
-        self.table_compare.resizeColumnsToContents()
+        def item_row(target: 'HoverTarget') -> list[QtGui.QStandardItem]:
+            item = ctx.item_spectra(target)  # None: an analyte without spectra
+            label = (
+                item.label if item is not None
+                else ctx.analyte_label(target.analyte) if target.kind == 'analyte'
+                else ctx.sample_name(target.sample_uuid)
+            )
+            values = [
+                label,
+                _fmt_intsy(target.ensemble.base_intsy) if target.ensemble else "",
+                item.formula_label if item else "",
+                item.formula_count if item else "",
+            ]
+            if anchor is not None:
+                if target_key(target) == anchor_key:
+                    values += ["—", "—", "—"]
+                else:
+                    similarity = (
+                        similarities.get(target.analyte.uuid)
+                        if target.kind == 'analyte' else None
+                    )
+                    both = item is not None and anchor_item is not None
+                    values += [
+                        _fmt_opt(similarity, ".3f"),
+                        f"{item.base_mz - anchor_item.base_mz:+.4f}" if both else "n/a",
+                        delta_formula(anchor_item.formula, item.formula) if both else "",
+                    ]
+            row = _cells(values)
+            row[0].setData(target, ITEM_ROLE)
+            self._item_cells[target_key(target)] = (row[0], label)
+            return row
 
-    def set_current_compare_row(self, row: int):
-        """Mark `row` as the one on the mirror plots and make it current, silently."""
-        self.compare_model.set_marks(_compare_marks(row))
-        blocker = QtCore.QSignalBlocker(self.table_compare.selectionModel())
-        self.table_compare.setCurrentIndex(self.compare_model.index(row, 2))
+        selected = {target_key(t): t for t in targets}
+        self._listed = set(selected)
+        groups: dict = {}
+        for target in display_order(targets):
+            groups.setdefault(target.analyte_id, []).append(target)
+
+        rows = []   # (top-level row, expanded)
+        for aid, group in groups.items():
+            analyte = group[0].analyte
+            head = selected.get(('analyte', aid, None))
+            if head is not None:
+                parent = item_row(head)
+            else:
+                agreement = ctx.formula_agreement(analyte)
+                parent = _cells([
+                    ctx.analyte_label(analyte), "",
+                    agreement[0] if agreement else "",
+                    f"{agreement[1]}/{agreement[2]}" if agreement else "",
+                ])
+                for cell in parent:
+                    cell.setEnabled(False)
+            members = sorted(
+                ctx.members(analyte).items(),
+                key=lambda kv: natural_sort_key(ctx.sample_name(kv[0])),
+            )
+            for sample_uuid, ensemble in members:
+                member = HoverTarget('ensemble', aid, sample_uuid, ensemble, analyte)
+                target = selected.get(target_key(member))
+                child = item_row(target or member)
+                if target is None and head is None:
+                    for cell in child:
+                        cell.setEnabled(False)
+                parent[0].appendRow(child)
+            rows.append((parent, any(t.kind == 'ensemble' for t in group)))
+
+        if anchor is not None and anchor_key not in self._item_cells:
+            pinned = item_row(anchor)
+            for cell in pinned:
+                cell.setEnabled(False)
+            rows.insert(0, (pinned, False))
+
+        for parent, _ in rows:
+            model.appendRow(parent)
+        for parent, expanded in rows:
+            self.tree_compare.setExpanded(parent[0].index(), expanded)
         del blocker
+        self.set_focus(focus)
+        for column in range(model.columnCount()):
+            self.tree_compare.resizeColumnToContents(column)
+
+    def set_focus(self, focus: Optional['HoverTarget']):
+        """Mark the focused row and make it current, silently."""
+        self._focus = focus
+        self._set_marks()
+        blocker = QtCore.QSignalBlocker(self.tree_compare.selectionModel())
+        found = self._item_cells.get(target_key(focus))
+        if found is None:
+            self.tree_compare.clearSelection()
+        else:
+            self.tree_compare.setCurrentIndex(found[0].index())
+            self.tree_compare.scrollTo(found[0].index())   # expands its parent
+        del blocker
+
+    def _set_marks(self):
+        """● the anchor's label, and the focus's within a multi-selection."""
+        marks = {target_key(self._anchor): ANCHOR_COLOR}
+        # A lone listed item needs no mark, unless one of its members is focused
+        focus_key = target_key(self._focus)
+        if len(self._listed) > 1 or focus_key not in self._listed:
+            marks.setdefault(focus_key, CURRENT_COLOR)
+        for key, (cell, label) in self._item_cells.items():
+            color = marks.get(key)
+            cell.setText(f"● {label}" if color else label)
+            # None clears the role (theme colour); an empty QBrush paints black
+            cell.setData(QtGui.QBrush(color) if color else None, Qt.ForegroundRole)
+
+    @staticmethod
+    def _target_at(index: QModelIndex) -> Optional['HoverTarget']:
+        """The target behind a tree row (None for a header row)."""
+        if not index.isValid():
+            return None
+        return index.sibling(index.row(), 0).data(ITEM_ROLE)
 
     # -- signals ------------------------------------------------------------
 
-    def _on_compare_row_changed(self, current: QModelIndex, _previous):
-        if current.isValid() and current.row() > 0:
-            self.compare_model.set_marks(_compare_marks(current.row()))
-            self.sigCompareRowSelected.emit(current.row())
+    def _on_tree_row_changed(self, current: QModelIndex, _previous):
+        target = self._target_at(current)
+        if target is not None:
+            self.sigFocusRequested.emit(target)
 
-    def _emit_member(self, row: int):
-        ensemble = self.members_model.payload(row)
-        if ensemble is not None:
-            self.sigMemberActivated.emit(ensemble)
+    def _activate(self, target: Optional['HoverTarget']):
+        if target is not None and target.kind == 'ensemble' and target.ensemble:
+            self.sigEnsembleActivated.emit(target.ensemble)
+
+    def _show_tree_menu(self, pos: QtCore.QPoint):
+        target = self._target_at(self.tree_compare.indexAt(pos))
+        menu = QtWidgets.QMenu(self.tree_compare)
+        if target is not None and target_key(target) != target_key(self._anchor):
+            menu.addAction("Set as anchor").triggered.connect(
+                lambda: self.sigAnchorRequested.emit(target)
+            )
+        if self._anchor is not None:
+            menu.addAction("Clear anchor").triggered.connect(
+                lambda: self.sigAnchorRequested.emit(None)
+            )
+        if target is not None and target.kind == 'ensemble':
+            menu.addAction("Open in Ensemble Viewer").triggered.connect(
+                lambda: self._activate(target)
+            )
+        if not menu.isEmpty():
+            menu.exec_(self.tree_compare.viewport().mapToGlobal(pos))

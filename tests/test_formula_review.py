@@ -202,10 +202,11 @@ def test_alignment_viewer_find_mfs_action(qapp):
     emitted = []
     viewer = SimpleNamespace(
         _ctx=SimpleNamespace(members=lambda a: members[a]),
-        _selection=[],
+        selection_model=SimpleNamespace(selection=[]),
         sigAutoFindMfsRequested=SimpleNamespace(emit=emitted.append),
     )
     viewer._ensembles_for = lambda ts: AlignmentViewer._ensembles_for(viewer, ts)
+    viewer._menu_targets = lambda t: AlignmentViewer._menu_targets(viewer, t)
 
     menus = []   # keep the menus (and so their actions) alive
 
@@ -228,7 +229,7 @@ def test_alignment_viewer_find_mfs_action(qapp):
     assert act.text() == "Auto find-mfs on this ensemble"
 
     # Inside a multi-selection: all of it, with shared members deduplicated
-    viewer._selection = [ta, tb]
+    viewer.selection_model.selection = [ta, tb]
     (act,) = menu_for(tb)
     assert act.text() == "Auto find-mfs on 2 selected items (3 ensembles)"
     act.trigger()

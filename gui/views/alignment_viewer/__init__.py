@@ -16,14 +16,20 @@ User AnalyteGroups (core/data_structs/analyte_group.py) are drawn on the
 group track above the map in either layout (gui/widgets/AlignmentGroupTrackWidget.py)
 and edited from the Inspector's groups panel (groups_panel.py, group_dialog.py).
 
-The selection on the map drives:
- - the Inspector side panel (properties / members / comparison table),
- - the bottom panel (MS1, MS2, chromatogram; see detail_panel.py),
- - the status bar (hover readout).
+The map's SelectionModel (gui/widgets/alignment_plot/selection.py) holds the
+selection, the focused item and the comparison anchor. The map edits all
+three; the Inspector's tree shows the selection and edits the focus and
+anchor. They drive:
+ - the Inspector side panel (selection tree, the focused analyte's panel),
+ - the bottom panel (MS1, MS2, chromatogram; see detail_panel.py): the
+   focused item, mirrored against the anchor if one is set,
+ - the groups panel (the selection).
+The status bar shows a hover readout.
 
 Actions into the Ensemble / Sample viewers go out via signals the
 MainController wires up.
 """
+import dataclasses
 from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtWidgets, QtCore, QtGui
@@ -33,11 +39,13 @@ from core.cli.cluster_analytes import (
     ClusterKey, ClusterParams, cluster_params_from_config, linkage_from_config,
     scoring_name, similarity_provenance,
 )
+from core.data_structs.analyte_annotation import AnalyteAnnotation
 from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
 from core.utils.config import load_config
+from core.utils.render_molecule import smiles_to_svg
 from gui.resources.AlignmentViewerWindow import Ui_Form
 from gui.views.alignment_viewer.cluster_params_dialog import ClusterParamsDialog
-from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
+from gui.views.alignment_viewer.context import AlignmentContext
 from gui.views.alignment_viewer.detail_panel import DetailPanel, XIC_COLOR
 from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog, jsonable
 from gui.views.alignment_viewer.groups_panel import (
@@ -49,9 +57,9 @@ from gui.widgets.alignment_plot.layout import (
     ANCHOR_COLOR, CURRENT_COLOR, HoverTarget,
 )
 from gui.widgets.alignment_plot.params import RenderParams
+from gui.widgets.alignment_plot.selection import target_key
 
 if TYPE_CHECKING:
-    from core.cli.align_ensembles import PairScore
     from core.cli.cluster_analytes import AnalyteClustering
     from core.data_structs import Ensemble, SampleUUID
     from core.data_structs.alignment import EnsembleAlignment
@@ -85,14 +93,8 @@ class AlignmentViewer(
         self._params = RenderParams()
         self._alignment: Optional['EnsembleAlignment'] = None
         self._ctx: Optional[AlignmentContext] = None
-        self._selection: list[HoverTarget] = []
-
-        # Compare mode: the selected items, their scores vs the anchor, and
-        # which one is on the mirror plots
-        self._compare_items: list[ItemSpectra] = []
-        self._compare_targets: list[HoverTarget] = []   # parallel to items
-        self._compare_scores: list[Optional['PairScore']] = []
-        self._compare_idx: int = 1
+        # (selection, focus, anchor) keys the bottom panel last drew
+        self._details_state: Optional[tuple] = None
 
         self._params_dialog: Optional[RenderParamsDialog] = None
 
@@ -109,6 +111,7 @@ class AlignmentViewer(
         self._cluster_dialog: Optional[ClusterParamsDialog] = None
 
         self.plot_item = self.plotAlignment.pi
+        self.selection_model = self.plot_item.selection_model
         self.detail_panel = DetailPanel(
             ms1_plot=self.plotMS1,
             ms2_plot=self.plotMS2,
@@ -119,14 +122,14 @@ class AlignmentViewer(
             title_label=self.labelInspectorTitle,
             stack=self.stackedWidget,
             summary_label=self.labelAlignmentSummary,
-            table_ensemble=self.tableEnsembleProps,
-            table_analyte_props=self.tableAnalyteProps,
-            table_analyte_members=self.tableAnalyteMembers,
-            table_compare=self.tableCompare,
+            edit_name=self.editAnalyteName,
+            edit_smiles=self.editAnalyteSmiles,
+            tree_compare=self.treeCompare,
+            svg_structure=self.svgAnalyteStructure,
         )
         self.groups_panel = GroupsPanel(
             self.data_source,
-            table=self.tableGroups,
+            combo=self.comboGroups,
             svg=self.svgGroupStructure,
             btn_edit=self.btnGroupEdit,
             btn_delete=self.btnGroupDelete,
@@ -147,13 +150,17 @@ class AlignmentViewer(
     # -- setup --------------------------------------------------------------
 
     def _setup_layout(self):
-        self.verticalLayout_4.setContentsMargins(4, 4, 4, 0)
-        self.splitter_2.setStretchFactor(1, 1)
-        self.splitter_2.setSizes([260, 740])
+        self.verticalLayout_10.setContentsMargins(4, 4, 4, 0)
+        self.splitter_3.setStretchFactor(1, 1)
+        self.splitter_3.setSizes([320, 515])
+        # Inspector column: selection page / analyte panel / groups
+        self.splitter_2.setSizes([200, 420, 160])
         self.splitter.setSizes([550, 450])
         self.plotDendrogram.link_to(self.plot_item)
         self.plotDendrogram.hide()
         self.plotGroupTrack.link_to(self.plot_item)
+        for strip in (self.plotDendrogram, self.plotGroupTrack):
+            self.plot_item.sigColumnsChanged.connect(strip.set_columns)
         self.plotGroupTrack.hide()
         self.plotMS1.pi.hideAxis('bottom')  # m/z-linked to the MS2 plot below
 
@@ -189,10 +196,12 @@ class AlignmentViewer(
         """
         self.status_bar = QtWidgets.QStatusBar()
         self.status_bar.setMaximumHeight(18)  # pixels
-        self.verticalLayout_4.addWidget(self.status_bar)
+        self.verticalLayout_10.addWidget(self.status_bar)
 
     def _connect_signals(self):
-        self.plot_item.sigSelectionChanged.connect(self._on_selection_changed)
+        self.selection_model.sigSelectionChanged.connect(self._on_selection_changed)
+        self.selection_model.sigFocusChanged.connect(self._on_focus_changed)
+        self.selection_model.sigAnchorChanged.connect(self._on_anchor_changed)
         self.plot_item.sigHovered.connect(self._on_hovered)
         self.plot_item.sigEnsembleActivated.connect(
             self.sigViewEnsembleRequested
@@ -203,11 +212,12 @@ class AlignmentViewer(
             self._on_xic_double_clicked
         )
 
-        self.inspector.sigCompareRowSelected.connect(self._on_compare_row)
-        self.inspector.sigAnchorRequested.connect(self._on_anchor_requested)
-        self.inspector.sigMemberActivated.connect(
+        self.inspector.sigFocusRequested.connect(self.selection_model.set_focus)
+        self.inspector.sigAnchorRequested.connect(self.selection_model.set_anchor)
+        self.inspector.sigEnsembleActivated.connect(
             self.sigViewEnsembleRequested
         )
+        self.inspector.sigAnnotationEdited.connect(self._on_annotation_edited)
 
         self.btnLinkRT.toggled.connect(self._update_rt_link)
         self.btnRenderParams.clicked.connect(self._show_params_dialog)
@@ -222,11 +232,12 @@ class AlignmentViewer(
         self.plotGroupTrack.sigGroupClicked.connect(self._select_analytes)
 
         # Formula assignments landing (from EnsembleViewer, auto find-mfs,
-        # ...) change what the Inspector shows
+        # ...) and annotations change what the Inspector shows; the plots
+        # (and their zoom) are left alone
         self.data_source.subscribe_to_changes(
-            addition_callback=self._on_assignment_changed,
-            removal_callback=self._on_assignment_changed,
-            update_callback=self._on_assignment_changed,
+            addition_callback=self._refresh_inspector,
+            removal_callback=self._refresh_inspector,
+            update_callback=self._refresh_inspector,
             change_type='Assignment',
         )
         self.data_source.subscribe_to_changes(
@@ -239,6 +250,12 @@ class AlignmentViewer(
             removal_callback=self._on_groups_changed,
             update_callback=self._on_groups_changed,
             change_type='Group',
+        )
+        self.data_source.subscribe_to_changes(
+            addition_callback=self._refresh_inspector,
+            removal_callback=self._refresh_inspector,
+            update_callback=self._refresh_inspector,
+            change_type='Annotation',
         )
         self.data_source.subscribe_to_changes(
             addition_callback=lambda _: None,
@@ -254,7 +271,6 @@ class AlignmentViewer(
     ):
         self._alignment = alignment
         self._ctx = AlignmentContext(alignment, self.data_source)
-        self._selection = []
         self._clear_cluster_mode()
         if (
             not isinstance(self._cluster_source, ClusterParams)
@@ -265,7 +281,8 @@ class AlignmentViewer(
         if self._cluster_dialog is not None:
             self._cluster_dialog.set_alignment(alignment)
         self.detail_panel.reset()
-        self._render()
+        self._details_state = None
+        self._render()   # clears the selection (and anchor)
         self.inspector.show_summary(alignment)
         self.status_bar.showMessage(self._summary_text())
 
@@ -317,7 +334,6 @@ class AlignmentViewer(
     def reset_for_new_project(self):
         self._alignment = None
         self._ctx = None
-        self._selection = []
         self._clear_cluster_mode()
         if self._cluster_dialog is not None:
             self._cluster_dialog.set_alignment(None)
@@ -325,6 +341,7 @@ class AlignmentViewer(
         self._x_of_analyte = {}
         self._refresh_groups()
         self.detail_panel.reset()
+        self._details_state = None
         self.inspector.show_summary(None)
         self.status_bar.clearMessage()
 
@@ -538,10 +555,10 @@ class AlignmentViewer(
         if additive:
             keys = {t.analyte_id for t in targets}
             targets = [
-                t for t in self.plot_item.selection
+                t for t in self.selection_model.selection
                 if not (t.kind == 'analyte' and t.analyte_id in keys)
             ] + targets
-        self.plot_item.set_selection(targets)
+        self.selection_model.set_selection(targets)
 
     def _on_node_hovered(self, info: Optional[tuple[float, int]]):
         if info is None:
@@ -555,128 +572,133 @@ class AlignmentViewer(
 
     # -- selection ----------------------------------------------------------
 
-    def _on_selection_changed(self, targets: list[HoverTarget]):
-        self._selection = targets
-        self._compare_idx = 1
-        self._show_selection()
+    def _on_selection_changed(self, _targets):
+        self._show_tree()
         self._refresh_groups_panel()
+        self._refresh_details()
 
-    def _show_selection(self):
-        ctx, targets = self._ctx, self._selection
-        # Compare mode only while a comparison is shown (see below)
-        self._compare_items, self._compare_targets = [], []
-        self.plot_item.set_compare_highlight(None, None)
-        if ctx is None or not targets:
+    def _on_focus_changed(self, focus: Optional[HoverTarget]):
+        self.inspector.set_focus(focus)
+        self._show_focus()
+        self._refresh_details()
+
+    def _on_anchor_changed(self, _anchor):
+        self._show_tree()
+        self._refresh_details()
+
+    def _show_tree(self):
+        model = self.selection_model
+        if self._ctx is None or not model.selection:
             self.inspector.show_summary(self._alignment)
+            return
+        self.inspector.show_selection(
+            self._ctx, model.selection, model.focus, model.anchor,
+            self._anchor_similarities(),
+        )
+
+    def _show_focus(self):
+        """The analyte panel follows the focus's analyte (an ensemble's parent)."""
+        focus = self.selection_model.focus
+        if focus is None or self._ctx is None:
+            self.inspector.show_focus(None, None)
+            return
+        self.inspector.show_focus(self._ctx, focus.analyte)
+
+    def _refresh_inspector(self, *_):
+        """Re-show the tree and analyte panel (e.g. a formula or annotation changed)."""
+        self._show_tree()
+        self._show_focus()
+
+    def _refresh_details(self):
+        """
+        The bottom panel: the focus's spectra, mirrored against the anchor
+        if there is one; XICs of the selected items (and a mirrored anchor),
+        coloured by role when there are several.
+        """
+        model, ctx = self.selection_model, self._ctx
+        focus, anchor = model.focus, model.anchor
+        state = (
+            tuple(map(target_key, model.selection)),
+            target_key(focus), target_key(anchor),
+        )
+        # Selection and focus changes arrive as two signals: draw once
+        if state == self._details_state:
+            return
+        self._details_state = state
+        if ctx is None or focus is None:
             self.detail_panel.clear()
             return
 
-        if len(targets) == 1:
-            self._show_single(ctx, targets[0])
-            return
-
-        items: list[ItemSpectra] = []
-        item_targets: list[HoverTarget] = []
-        for target in targets:
-            item = ctx.item_spectra(target)
-            if item is not None:
-                items.append(item)
-                item_targets.append(target)
-        if len(items) < 2:
-            self._show_single(ctx, targets[0])
-            return
-
-        self._compare_items = items
-        self._compare_targets = item_targets
-        self._compare_scores = [None] + [
-            ctx.score(items[0], item) for item in items[1:]
-        ]
-        self._compare_idx = min(self._compare_idx, len(items) - 1)
-        self.inspector.show_compare(
-            items, self._anchor_similarities(items), self._compare_idx,
-        )
-        self._show_compare_plots()
-
-    def _refresh_compare(self):
-        """Re-show a multi-selection (e.g. so Similarity picks up a new clustering)."""
-        if len(self._selection) > 1:
-            self._show_selection()
-
-    def _show_single(self, ctx: AlignmentContext, target: HoverTarget):
-        if target.kind == 'ensemble':
-            self.inspector.show_ensemble(
-                ctx, target.sample_uuid, target.ensemble, target.analyte,
-            )
-            self.detail_panel.show_ensemble(
-                ctx, target.sample_uuid, target.ensemble,
-            )
+        top = bottom = None
+        if anchor is not None and target_key(anchor) != target_key(focus):
+            top, bottom = ctx.item_spectra(anchor), ctx.item_spectra(focus)
+        mirrored = top is not None and bottom is not None
+        if mirrored:
+            self.detail_panel.show_mirror(top, bottom, ctx.score(top, bottom))
         else:
-            self.inspector.show_analyte(ctx, target.analyte)
-            self.detail_panel.show_analyte(ctx, target.analyte)
+            self.detail_panel.show_item(ctx, focus)
 
-    def _anchor_similarities(
-        self,
-        items: list[ItemSpectra],
-    ) -> list[Optional[float]]:
-        """
-        Each item's similarity to the anchor, from the cached clustering for
-        the current cluster settings (modified cosine or imported matrix).
-        None where unavailable: no clustering yet, or an item that isn't an
-        analyte in it.
-        """
-        clustering = self._current_clustering()
-        if clustering is None:
-            return [None] * len(items)
-        slot = {u: i for i, u in enumerate(clustering.analyte_uuids)}
-        anchor = slot.get(items[0].analyte_uuid)
-        if anchor is None:
-            return [None] * len(items)
-        return [
-            None if (i := slot.get(item.analyte_uuid)) is None
-            else float(clustering.similarity[anchor, i])
-            for item in items
-        ]
-
-    def _on_anchor_requested(self, row: int):
-        if row <= 0 or row >= len(self._compare_targets):
-            return
-        target = self._compare_targets[row]
-        self._selection = [target] + [t for t in self._selection if t is not target]
-        self._compare_idx = 1
-        self._show_selection()
-
-    def _on_compare_row(self, row: int):
-        if row == self._compare_idx or row >= len(self._compare_items):
-            return
-        self._compare_idx = row
-        self._show_compare_plots()
-
-    def _show_compare_plots(self):
-        idx = self._compare_idx
-        anchor, current = self._compare_targets[0], self._compare_targets[idx]
-        self.plot_item.set_compare_highlight(anchor, current)
-
+        targets = model.selection
+        if mirrored and not model.contains(anchor):
+            targets.append(anchor)
+        roles = {target_key(anchor): ANCHOR_COLOR, target_key(focus): CURRENT_COLOR}
         sample_uuids, ensembles, colors = [], [], []
-        for target in self._selection:
-            color = (
-                ANCHOR_COLOR if target is anchor
-                else CURRENT_COLOR if target is current
-                else XIC_COLOR
-            )
+        for target in targets:
+            color = roles.get(target_key(target), XIC_COLOR)
             for sample_uuid, ens in self._target_members(target):
                 sample_uuids.append(sample_uuid)
                 ensembles.append(ens)
-                colors.append(color)
-
-        self.detail_panel.show_compare(
-            self._ctx,
-            self._compare_items[0],
-            self._compare_items[idx],
-            self._compare_scores[idx],
-            sample_uuids,
-            ensembles,
-            colors,
+                # A focused member of a selected analyte stands out from it
+                colors.append(roles.get(
+                    ('ensemble', target.analyte_id, sample_uuid), color,
+                ))
+        if not ensembles:
+            self.detail_panel.clear()
+            return
+        self.detail_panel.show_xics(
+            ctx, sample_uuids, ensembles, colors if any(c != colors[0] for c in colors) else None,
         )
+
+    def _refresh_compare(self):
+        """Re-show the tree (e.g. so Similarity picks up a new clustering)."""
+        self._show_tree()
+
+    def _on_annotation_edited(self, analyte_uuid, field: str, value: str):
+        """A Name / SMILES edit: validate, then update the registry."""
+        old = (
+            self.data_source.get_annotation(analyte_uuid)
+            or AnalyteAnnotation(analyte_uuid)
+        )
+        if getattr(old, field) == value:
+            return
+        if field == 'smiles' and value:
+            try:
+                smiles_to_svg(value)
+            except ValueError as e:
+                QtWidgets.QMessageBox.warning(self, "Invalid SMILES", str(e))
+                self._show_focus()   # revert the field
+                return
+        new = dataclasses.replace(old, **{field: value})
+        if new.is_empty:
+            self.data_source.remove_annotation(analyte_uuid)
+        else:
+            self.data_source.register_annotation(new)
+
+    def _anchor_similarities(self) -> dict:
+        """
+        AnalyteUUID -> similarity to the anchor, from the cached clustering
+        for the current cluster settings (modified cosine or imported
+        matrix). Empty unless the anchor is an analyte in that clustering.
+        """
+        anchor = self.selection_model.anchor
+        clustering = self._current_clustering()
+        if anchor is None or anchor.kind != 'analyte' or clustering is None:
+            return {}
+        slot = {u: i for i, u in enumerate(clustering.analyte_uuids)}
+        a = slot.get(anchor.analyte.uuid)
+        if a is None:
+            return {}
+        return {u: float(clustering.similarity[a, i]) for u, i in slot.items()}
 
     def _target_members(
         self,
@@ -691,13 +713,6 @@ class AlignmentViewer(
 
     # -- chromatogram clicks ------------------------------------------------
 
-    def _compare_row_of(self, ensemble_uuid) -> Optional[int]:
-        """The compare row whose item contains this ensemble."""
-        for row, target in enumerate(self._compare_targets):
-            if any(e.uuid == ensemble_uuid for _, e in self._target_members(target)):
-                return row
-        return None
-
     def _xic_target(self, ensemble_uuid) -> Optional[HoverTarget]:
         if self._alignment is None:
             return None
@@ -705,30 +720,20 @@ class AlignmentViewer(
         return None if found is None else self.plot_item.ensemble_target(*found)
 
     def _on_xic_clicked(self, ensemble_uuid, button: int):
-        """Compare mode: like clicking its compare row. Otherwise: like the map."""
+        """
+        Like clicking the XIC's ensemble on the map (a selected one, or a
+        member of a selected analyte, is focused).
+        """
         if button != QtCore.Qt.LeftButton:
             return
-        if self._compare_targets:
-            row = self._compare_row_of(ensemble_uuid)
-            if row:  # not the anchor
-                self.inspector.set_current_compare_row(row)
-                self._on_compare_row(row)
-            return
+        additive = bool(
+            QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier
+        )
         target = self._xic_target(ensemble_uuid)
         if target is not None:
-            additive = bool(
-                QtWidgets.QApplication.keyboardModifiers()
-                & QtCore.Qt.ControlModifier
-            )
             self.plot_item.select(target, additive)
 
     def _on_xic_double_clicked(self, ensemble_uuid):
-        """Compare mode: make its item the anchor. Otherwise: open it."""
-        if self._compare_targets:
-            row = self._compare_row_of(ensemble_uuid)
-            if row:
-                self._on_anchor_requested(row)
-            return
         target = self._xic_target(ensemble_uuid)
         if target is not None and target.ensemble is not None:
             self.sigViewEnsembleRequested.emit(target.ensemble)
@@ -797,19 +802,6 @@ class AlignmentViewer(
 
     # -- registry changes ---------------------------------------------------
 
-    def _on_assignment_changed(self, _assignment):
-        # Only the Inspector shows formulae; leave the plots (and their
-        # zoom) alone.
-        if self._ctx is None or len(self._selection) != 1:
-            return
-        target = self._selection[0]
-        if target.kind == 'ensemble':
-            self.inspector.show_ensemble(
-                self._ctx, target.sample_uuid, target.ensemble, target.analyte,
-            )
-        else:
-            self.inspector.show_analyte(self._ctx, target.analyte)
-
     def _on_alignment_removed(self, alignment: 'EnsembleAlignment'):
         if self._alignment is not None and alignment.uuid == self._alignment.uuid:
             self.reset_for_new_project()
@@ -847,7 +839,7 @@ class AlignmentViewer(
         self._refresh_groups_panel()
 
     def _refresh_groups_panel(self):
-        selected = selection_analyte_uuids(self._selection)
+        selected = selection_analyte_uuids(self.selection_model.selection)
         self.btnGroupSelected.setEnabled(bool(selected))
         in_view = (
             {a.uuid for a in self._alignment.analytes} if self._alignment else set()
@@ -857,7 +849,7 @@ class AlignmentViewer(
     def _group_analytes(self, targets: Optional[list[HoverTarget]] = None):
         """Open the group dialog for `targets` (default: the selection)."""
         analyte_uuids = selection_analyte_uuids(
-            self._selection if targets is None else targets
+            self.selection_model.selection if targets is None else targets
         )
         if self._alignment is None or not analyte_uuids:
             return
@@ -915,11 +907,7 @@ class AlignmentViewer(
         if target is not None:
             self._add_find_mfs_action(menu, target)
 
-            targets = (
-                self._selection
-                if len(self._selection) > 1 and target in self._selection
-                else [target]
-            )
+            targets = self._menu_targets(target)
             if selection_analyte_uuids(targets):
                 if not menu.isEmpty():
                     menu.addSeparator()
@@ -927,10 +915,29 @@ class AlignmentViewer(
                     lambda: self._group_analytes(targets)
                 )
 
+        model = self.selection_model
         if not menu.isEmpty():
             menu.addSeparator()
+        if (
+            target is not None and target.kind in ('ensemble', 'analyte')
+            and target_key(target) != target_key(model.anchor)
+        ):
+            menu.addAction("Set as anchor").triggered.connect(
+                lambda: model.set_anchor(target)
+            )
+        if model.anchor is not None:
+            menu.addAction("Clear anchor").triggered.connect(
+                lambda: model.set_anchor(None)
+            )
         menu.addAction("Export plot as .svg", self._export_plot_svg)
         menu.exec_(global_pos)
+
+    def _menu_targets(self, target: HoverTarget) -> list[HoverTarget]:
+        """Right-clicking inside a multi-selection acts on all of it."""
+        selection = self.selection_model.selection
+        if len(selection) > 1 and target_key(target) in map(target_key, selection):
+            return selection
+        return [target]
 
     def _export_plot_svg(self) -> None:
         # Kept on self: the exporter's (non-modal) file dialog dies with it
@@ -947,12 +954,10 @@ class AlignmentViewer(
         analyte's member ensembles. Right-clicking inside a multi-selection
         applies it to the whole selection.
         """
-        targets = (
-            self._selection
-            if len(self._selection) > 1 and target in self._selection
-            else [target]
-        )
-        targets = [t for t in targets if t.kind in ('ensemble', 'analyte')]
+        targets = [
+            t for t in self._menu_targets(target)
+            if t.kind in ('ensemble', 'analyte')
+        ]
         ensembles = self._ensembles_for(targets)
         if not ensembles:
             return

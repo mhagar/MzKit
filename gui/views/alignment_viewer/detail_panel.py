@@ -2,10 +2,11 @@
 Drives the AlignmentViewer's bottom panel (MS1, MS2 and chromatogram plots)
 for the current selection:
 
- - Ensemble: composite MS1/MS2; its sample's BPC + the ensemble's XIC.
- - Analyte:  representative MS1/MS2; member samples' BPCs + every member's XIC.
- - Compare:  mirror plots (anchor vs one other item); BPCs + XICs of all
-             selected items.
+ - Spectra: the focused item's - an ensemble's composite MS1/MS2, an
+   analyte's representative's - or, with an anchor set, mirror plots of the
+   anchor vs the focused item.
+ - Chromatogram: BPCs of the samples involved + XICs of the selected items'
+   ensembles (an analyte contributes all its members).
 
 Single spectra are shown normalised to their base peak. The MS1 and MS2
 plots share an x-axis, which (like the chromatogram's y-axis) is only
@@ -24,9 +25,9 @@ from core.utils.spectra import normalize_spectrum
 if TYPE_CHECKING:
     from core.cli.align_ensembles import PairScore
     from core.data_structs import Ensemble, EnsembleUUID, SampleUUID
-    from core.data_structs.alignment import AlignedAnalyte
     from core.utils.array_types import SpectrumArray
     from gui.views.alignment_viewer.context import AlignmentContext, ItemSpectra
+    from gui.widgets.alignment_plot.layout import HoverTarget
     from gui.widgets.AlignmentPlotWidget import AlignmentPlotWidget
     from gui.widgets.ChromPlotWidget import ChromPlotWidget
     from gui.widgets.MSPlotWidget import MSPlotWidget
@@ -97,11 +98,14 @@ class DetailPanel:
         self.clear()
 
     def clear(self):
+        self._clear_spectra()
+        self._draw_chroms(None, [], [], "")
+
+    def _clear_spectra(self):
         for plot in (self.ms1_plot, self.ms2_plot):
             plot.setSpectrumArray(_empty_spectrum())
             _set_label(plot, "")
             plot.update_bpc_label("")
-        self._draw_chroms(None, [], [], "")
 
     @property
     def rt_linked(self) -> bool:
@@ -112,62 +116,39 @@ class DetailPanel:
         self.chrom_plot.setXLink(self.map_plot if linked else None)
         self._fit_chrom_view()
 
-    def show_ensemble(
+    def show_item(
         self,
         ctx: 'AlignmentContext',
-        sample_uuid: 'SampleUUID',
-        ensemble: 'Ensemble',
+        target: 'HoverTarget',
     ):
-        composite = ensemble.composite_spectrum
-        name = ctx.sample_name(sample_uuid)
+        """One ensemble's composite spectra, or an analyte's representative's."""
+        if target.kind == 'ensemble':
+            composite = target.ensemble.composite_spectrum
+            titles = [
+                f"Composite {level} · {ctx.sample_name(target.sample_uuid)}"
+                for level in ("MS1", "MS2")
+            ]
+        else:
+            rep = ctx.representative(target.analyte)
+            if rep is None:
+                self._clear_spectra()
+                return
+            composite = rep.composite
+            titles = [
+                f"Representative {level} - {ctx.sample_name(rep.sample_uuid)}"
+                for level in ("MS1", "MS2")
+            ]
         ms_x = self._ms_x_range
-        self._show_single(
-            self.ms1_plot, composite.ms1, f"Composite MS1 · {name}",
-        )
-        self._show_single(
-            self.ms2_plot, composite.ms2, f"Composite MS2 · {name}",
-        )
+        self._show_single(self.ms1_plot, composite.ms1, titles[0])
+        self._show_single(self.ms2_plot, composite.ms2, titles[1])
         self._frame_ms([composite.ms1, composite.ms2], ms_x)
-        self._draw_chroms(ctx, [sample_uuid], [ensemble], f"BPC · {name}")
 
-    def show_analyte(
+    def show_mirror(
         self,
-        ctx: 'AlignmentContext',
-        analyte: 'AlignedAnalyte',
-    ):
-        members = ctx.members(analyte)
-        rep = ctx.representative(analyte)
-        if rep is None:
-            self.clear()
-            return
-
-        source = ctx.sample_name(rep.sample_uuid)
-        ms_x = self._ms_x_range
-        self._show_single(
-            self.ms1_plot, rep.composite.ms1,
-            f"Representative MS1 - {source}",
-        )
-        self._show_single(
-            self.ms2_plot, rep.composite.ms2,
-            f"Representative MS2 - {source}",
-        )
-        self._frame_ms([rep.composite.ms1, rep.composite.ms2], ms_x)
-        self._draw_chroms(
-            ctx, list(members), list(members.values()),
-            f"BPC · {len(members)} samples",
-        )
-
-    def show_compare(
-        self,
-        ctx: 'AlignmentContext',
         top: 'ItemSpectra',
         bottom: 'ItemSpectra',
         score: 'PairScore',
-        sample_uuids: list['SampleUUID'],
-        ensembles: list['Ensemble'],
-        colors: Optional[list] = None,
     ):
-        """:param colors: XIC colour per ensemble (default XIC_COLOR)."""
         ms_x = self._ms_x_range
         self.ms1_plot.set_mirror_spectra(
             top.ms1, bottom.ms1, top.label, bottom.label,
@@ -190,11 +171,20 @@ class DetailPanel:
             self.ms2_plot.update_bpc_label("")
         self._frame_ms([top.ms1, bottom.ms1, top.ms2, bottom.ms2], ms_x)
 
-        self._draw_chroms(
-            ctx, sample_uuids, ensembles,
-            f"BPC · {len(set(sample_uuids))} samples",
-            colors,
+    def show_xics(
+        self,
+        ctx: 'AlignmentContext',
+        sample_uuids: list['SampleUUID'],
+        ensembles: list['Ensemble'],
+        colors: Optional[list] = None,
+    ):
+        """:param colors: XIC colour per ensemble (default XIC_COLOR)."""
+        samples = set(sample_uuids)
+        label = (
+            f"BPC · {ctx.sample_name(sample_uuids[0])}" if len(samples) == 1
+            else f"BPC · {len(samples)} samples"
         )
+        self._draw_chroms(ctx, sample_uuids, ensembles, label, colors)
 
     # -- spectra ------------------------------------------------------------
 

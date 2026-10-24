@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     )
     from core.data_structs.alignment import EnsembleAlignment
     from core.data_structs.analyte_group import AnalyteGroup
+    from core.data_structs.analyte_annotation import AnalyteAnnotation
     from core.data_structs.formula_assignment import FormulaAssignment
     from core.data_structs.similarity_matrix import SimilarityMatrix
 
@@ -72,6 +73,15 @@ class DataRegistry(
     sigGroupUpdated = QtCore.pyqtSignal(
         object  # AnalyteGroup (edited in place: title, notes, membership)
     )
+    sigAnnotationAdded = QtCore.pyqtSignal(
+        object  # AnalyteAnnotation
+    )
+    sigAnnotationRemoved = QtCore.pyqtSignal(
+        object  # AnalyteAnnotation
+    )
+    sigAnnotationUpdated = QtCore.pyqtSignal(
+        object  # AnalyteAnnotation (replaced one for the same analyte)
+    )
     sigMatrixAdded = QtCore.pyqtSignal(
         object  # SimilarityMatrix
     )
@@ -88,6 +98,7 @@ class DataRegistry(
         self._groups: dict['GroupUUID', 'AnalyteGroup'] = {}
         # Reverse index for groups_for_analytes; rebuilt on every group change
         self._groups_by_analyte: dict['AnalyteUUID', set['GroupUUID']] = {}
+        self._annotations: dict['AnalyteUUID', 'AnalyteAnnotation'] = {}
         self._matrices: dict[int, 'SimilarityMatrix'] = {}
         super().__init__()
 
@@ -96,7 +107,9 @@ class DataRegistry(
         addition_callback,
         removal_callback,
         update_callback=None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+        change_type: Literal[
+            'Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'
+        ] = 'Sample',
     ):
         match change_type:
             case 'Sample':
@@ -147,6 +160,20 @@ class DataRegistry(
 
                 if update_callback:
                     self.sigGroupUpdated.connect(
+                        update_callback
+                    )
+
+            case 'Annotation':
+                self.sigAnnotationAdded.connect(
+                    addition_callback
+                )
+
+                self.sigAnnotationRemoved.connect(
+                    removal_callback
+                )
+
+                if update_callback:
+                    self.sigAnnotationUpdated.connect(
                         update_callback
                     )
 
@@ -342,6 +369,8 @@ class DataRegistry(
         # Groups/matrices not caught by orphan collection (e.g. no alignments)
         for group in self.get_all_groups():
             self.remove_group(group.uuid)
+        for annotation in self.get_all_annotations():
+            self.remove_annotation(annotation.analyte_uuid)
         for matrix in self.get_all_matrices():
             self.remove_matrix(matrix.uuid)
 
@@ -400,7 +429,7 @@ class DataRegistry(
 
     def _collect_orphans(self):
         """
-        Drop every group / similarity matrix none of whose analytes appear
+        Drop every group / annotation / similarity matrix none of whose analytes appear
         in any remaining alignment (run after an alignment is removed).
         """
         live = {
@@ -411,6 +440,9 @@ class DataRegistry(
         for group in self.get_all_groups():
             if live.isdisjoint(group.analyte_uuids):
                 self.remove_group(group.uuid)
+        for annotation in self.get_all_annotations():
+            if annotation.analyte_uuid not in live:
+                self.remove_annotation(annotation.analyte_uuid)
         live_ids = {str(uuid) for uuid in live}
         for matrix in self.get_all_matrices():
             if live_ids.isdisjoint(matrix.ids):
@@ -502,6 +534,36 @@ class DataRegistry(
 
     def assignment_count(self) -> int:
         return len(self._assignments)
+
+    # --- Analyte annotation methods ---
+
+    def register_annotation(
+        self,
+        annotation: 'AnalyteAnnotation',
+    ):
+        """Add, or replace its analyte's existing annotation."""
+        existed = annotation.analyte_uuid in self._annotations
+        self._annotations[annotation.analyte_uuid] = annotation
+        if existed:
+            self.sigAnnotationUpdated.emit(annotation)
+        else:
+            self.sigAnnotationAdded.emit(annotation)
+
+    def remove_annotation(
+        self,
+        analyte_uuid: 'AnalyteUUID',
+    ):
+        if analyte_uuid in self._annotations:
+            self.sigAnnotationRemoved.emit(self._annotations.pop(analyte_uuid))
+
+    def get_annotation(
+        self,
+        analyte_uuid: 'AnalyteUUID',
+    ) -> Optional['AnalyteAnnotation']:
+        return self._annotations.get(analyte_uuid)
+
+    def get_all_annotations(self) -> list['AnalyteAnnotation']:
+        return list(self._annotations.values())
 
     # --- Analyte group methods ---
 

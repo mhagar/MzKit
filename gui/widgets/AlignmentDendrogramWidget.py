@@ -18,7 +18,7 @@ from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QColor, QPainter, QPicture, QPolygonF
 
-from gui.widgets.alignment_plot.indicators import OutlineIndicator
+from gui.widgets.alignment_plot.indicators import BandIndicator, OutlineIndicator
 
 if TYPE_CHECKING:
     from core.cli.cluster_analytes import AnalyteClustering
@@ -135,6 +135,7 @@ class AlignmentDendrogramWidget(pg.PlotWidget):
         self._highlight = OutlineIndicator(
             _cosmetic_pen(QColor(255, 255, 255, 255), 2), z_value=100,
         )
+        self._columns = BandIndicator(vertical=True)   # the map's selection
 
     def contextMenuEvent(self, ev):
         menu = QtWidgets.QMenu(self)
@@ -150,6 +151,10 @@ class AlignmentDendrogramWidget(pg.PlotWidget):
         """Share the x axis with the feature map."""
         self.pi.setXLink(plot_item)
 
+    def set_columns(self, bands: list):
+        """The map's selection bands: (x0, x1, QColor)s."""
+        self._columns.set_bands(bands)
+
     def set_clustering(self, clustering: 'AnalyteClustering'):
         self.clear_clustering()
         self._clustering = clustering
@@ -158,6 +163,7 @@ class AlignmentDendrogramWidget(pg.PlotWidget):
         self._item.sigNodeClicked.connect(self._on_node_clicked)
         self.pi.addItem(self._item)
         self.pi.addItem(self._highlight)
+        self.pi.addItem(self._columns, ignoreBounds=True)
         self.pi.setYRange(*Y_RANGE, padding=0)
 
     def clear_clustering(self):

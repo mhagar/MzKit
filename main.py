@@ -23,19 +23,36 @@ if sys.platform == 'linux':
 
 from gui.controllers import MainController
 from core.utils.config import load_config
-from PyQt5.QtWidgets import QApplication
-import qdarkstyle
+from PyQt5.QtWidgets import QApplication, QProxyStyle, QStyle
 import pyqtgraph as pg
+
+COMPACT_QSS = """
+QTableView::item { padding: 0px 3px; }
+QHeaderView::section { padding: 1px 4px; }
+QPushButton, QToolButton { padding: 2px 6px; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { padding: 1px 3px; min-height: 0; }
+QTabBar::tab { padding: 3px 8px; }
+QGroupBox { margin-top: 6px; }
+"""
+
+
+class CompactStyle(QProxyStyle):
+    def pixelMetric(self, metric, option=None, widget=None):
+        # Qt clamps this up to the header's minimum (font height + padding), so rows hug the text
+        if metric == QStyle.PM_HeaderDefaultSectionSizeVertical:
+            return 0
+        return super().pixelMetric(metric, option, widget)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    app.setStyleSheet(
-        qdarkstyle.load_stylesheet(
-            palette=qdarkstyle.DarkPalette,
-            # palette=qdarkstyle.LightPalette,
-        )
-    )
+    # Dark mode (qdarkstyle) disabled for now in favour of a compact layout
+    app.setStyle(CompactStyle(app.style()))
+    font = app.font()
+    font.setPointSizeF(font.pointSizeF() - 1)
+    app.setFont(font)
+    app.setStyleSheet(COMPACT_QSS)
 
     # pg.setConfigOption('background', 'w')
     # pg.setConfigOption('foreground', 'k')

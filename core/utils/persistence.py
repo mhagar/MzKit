@@ -27,6 +27,7 @@ from core.data_structs.formula_assignment import (
     AssignedCandidate,
 )
 from core.data_structs.analyte_group import AnalyteGroup
+from core.data_structs.analyte_annotation import AnalyteAnnotation
 from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
 
 import logging
@@ -45,7 +46,7 @@ from typing import NamedTuple, TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +57,7 @@ class ProjectData(NamedTuple):
     assignments: list[FormulaAssignment]
     groups: list[AnalyteGroup]
     matrices: list[SimilarityMatrix]
+    annotations: list[AnalyteAnnotation]
 
 def save_project(
     filepath: Path,
@@ -162,6 +164,13 @@ def save_project(
             )
             for group in groups:
                 serialize_group(group, zf)
+
+        # Serialize analyte annotations (name + structure)
+        for annotation in data_registry.get_all_annotations():
+            zf.writestr(
+                f"annotations/{annotation.analyte_uuid}.json",
+                data=json.dumps(asdict(annotation), indent=2),
+            )
 
         # Serialize similarity matrices (computed and imported, raw values)
         matrices = data_registry.get_all_matrices()
@@ -551,7 +560,8 @@ def load_project(
     AnalyteGroups.
 
     :param filepath: Path to .mzk file
-    :return: ProjectData(samples, alignments, assignments, groups, matrices)
+    :return: ProjectData(samples, alignments, assignments, groups, matrices,
+        annotations)
     """
     _sanity_checks(filepath)
 
@@ -659,11 +669,19 @@ def load_project(
             if name.startswith('similarity/') and name.endswith('.json')
         ]
 
+        # Load analyte annotations (absent before 1.5.0)
+        annotations = [
+            AnalyteAnnotation(**json.loads(zf.read(name)))
+            for name in zf.namelist()
+            if name.startswith('annotations/') and name.endswith('.json')
+        ]
+
     logger.info(
         f"Loaded {len(samples)} samples, "
         f"{len(alignments)} alignments, "
         f"{len(assignments)} assignments, "
         f"{len(groups)} groups, "
+        f"{len(annotations)} annotations, "
         f"{len(matrices)} similarity matrices."
     )
 
@@ -673,6 +691,7 @@ def load_project(
         assignments=assignments,
         groups=groups,
         matrices=matrices,
+        annotations=annotations,
     )
 
 

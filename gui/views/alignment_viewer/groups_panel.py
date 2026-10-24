@@ -1,6 +1,6 @@
 """
-The Inspector's groups area: every `AnalyteGroup` the selected analytes
-belong to, the chosen group's structure, and edit / delete / membership
+The Inspector's groups area: a combo of every `AnalyteGroup` the selected
+analytes belong to, the chosen group's structure, and edit / delete / membership
 buttons. Every edit goes through the registry (`notify_group_updated`).
 """
 from typing import Iterable, Optional, TYPE_CHECKING
@@ -8,7 +8,6 @@ from typing import Iterable, Optional, TYPE_CHECKING
 from PyQt5 import QtCore, QtWidgets
 
 from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog, show_smiles
-from gui.views.alignment_viewer.inspector import ReadOnlyTableModel
 
 if TYPE_CHECKING:
     from core.data_structs.analyte_group import AnalyteGroup
@@ -37,7 +36,7 @@ class GroupsPanel(QtCore.QObject):
     def __init__(
         self,
         data_source: 'AlignmentViewerDataSource',
-        table: QtWidgets.QTableView,
+        combo: QtWidgets.QComboBox,
         svg,
         btn_edit: QtWidgets.QToolButton,
         btn_delete: QtWidgets.QToolButton,
@@ -46,21 +45,17 @@ class GroupsPanel(QtCore.QObject):
     ):
         super().__init__()
         self.data_source = data_source
-        self.table, self.svg = table, svg
+        self.combo, self.svg = combo, svg
         self.btn_edit, self.btn_delete = btn_edit, btn_delete
         self.btn_add, self.btn_remove = btn_add, btn_remove
         self._selection: list['AnalyteUUID'] = []
         self._in_view: set = set()
 
-        self.model = ReadOnlyTableModel(["Group", "In view", "Notes"])
-        table.setModel(self.model)
-        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.verticalHeader().setVisible(False)
-        table.selectionModel().currentRowChanged.connect(self._update_current)
-        table.doubleClicked.connect(self._edit)
+        combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed,
+        )
+        combo.currentIndexChanged.connect(self._update_current)
 
         for button, text, tip, slot in (
             (btn_edit, "Edit…", "Edit the group's title, notes and structure", self._edit),
@@ -83,24 +78,25 @@ class GroupsPanel(QtCore.QObject):
         current = self.current_group()
         self._in_view, self._selection = in_view, selection
         groups = self.data_source.groups_for_analytes(selection) if selection else []
-        self.model.set_rows(
-            [
-                [g.title or "(untitled)", members_in_view(g, in_view),
-                 g.notes.splitlines()[0] if g.notes else ""]
-                for g in groups
-            ],
-            payloads=groups,
-        )
-        self.table.resizeColumnsToContents()
-        if groups:
-            uuids = [g.uuid for g in groups]
-            row = uuids.index(current.uuid) if current and current.uuid in uuids else 0
-            self.table.setCurrentIndex(self.model.index(row, 0))
+        with QtCore.QSignalBlocker(self.combo):
+            self.combo.clear()
+            for g in groups:
+                self.combo.addItem(
+                    f"{g.title or '(untitled)'} ({members_in_view(g, in_view)})", g,
+                )
+                self.combo.setItemData(
+                    self.combo.count() - 1, g.notes, QtCore.Qt.ToolTipRole,
+                )
+            if groups:
+                uuids = [g.uuid for g in groups]
+                self.combo.setCurrentIndex(
+                    uuids.index(current.uuid) if current and current.uuid in uuids else 0
+                )
+        self.combo.setEnabled(bool(groups))
         self._update_current()
 
     def current_group(self) -> Optional['AnalyteGroup']:
-        index = self.table.currentIndex()
-        return self.model.payload(index.row()) if index.isValid() else None
+        return self.combo.currentData()
 
     def _update_current(self, *_):
         group = self.current_group()
@@ -119,7 +115,7 @@ class GroupsPanel(QtCore.QObject):
         group = self.current_group()
         if group is not None:
             AnalyteGroupDialog(
-                self.data_source, [], group=group, parent=self.table.window(),
+                self.data_source, [], group=group, parent=self.combo.window(),
             ).exec_()
 
     def _delete(self):
@@ -127,7 +123,7 @@ class GroupsPanel(QtCore.QObject):
         if group is None:
             return
         answer = QtWidgets.QMessageBox.question(
-            self.table.window(), "Delete group",
+            self.combo.window(), "Delete group",
             f"Delete the group '{group.title or '(untitled)'}' "
             f"({len(group.analyte_uuids)} members)?",
         )

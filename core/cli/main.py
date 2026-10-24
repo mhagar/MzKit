@@ -60,6 +60,8 @@ def _load_registry(*mzk_paths: Path) -> DataRegistry:
             registry.register_group(group)
         for matrix in data.matrices:
             registry.register_matrix(matrix)
+        for annotation in data.annotations:
+            registry.register_annotation(annotation)
     return registry
 
 

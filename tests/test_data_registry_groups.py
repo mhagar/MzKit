@@ -81,3 +81,27 @@ def test_filter_keeps_groups():
     reg.remove_alignment(parent.uuid)
     assert reg.get_all_groups() == [group]
     assert reg.group_titles() == {a[2].uuid: "late eluter"}
+
+
+def test_annotations_replace_and_collect_orphans():
+    from core.data_structs import AnalyteAnnotation
+
+    a = _analytes(2)
+    alignment = _alignment(a)
+    reg = DataRegistry()
+    reg.register_alignment(alignment)
+
+    added, updated, removed = [], [], []
+    reg.sigAnnotationAdded.connect(added.append)
+    reg.sigAnnotationUpdated.connect(updated.append)
+    reg.sigAnnotationRemoved.connect(removed.append)
+
+    first = AnalyteAnnotation(a[0].uuid, name="Psammaplin A")
+    second = AnalyteAnnotation(a[0].uuid, name="Psammaplin A", smiles="CCO")
+    reg.register_annotation(first)
+    reg.register_annotation(second)   # same analyte: replaces
+    assert (added, updated) == ([first], [second])
+    assert reg.get_annotation(a[0].uuid) == second
+
+    reg.remove_alignment(alignment.uuid)
+    assert reg.get_all_annotations() == [] and removed == [second]

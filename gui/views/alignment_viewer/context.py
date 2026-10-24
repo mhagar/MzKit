@@ -96,6 +96,12 @@ class AlignmentContext:
         formula, count = Counter(formulas).most_common(1)[0]
         return formula, count, len(members)
 
+    def analyte_label(self, analyte: 'AlignedAnalyte') -> str:
+        """"m/z @ RT", prefixed by the analyte's annotated name, if any."""
+        label = f"{analyte.consensus_mz:.4f} @ {analyte.consensus_rt:.1f}s"
+        annotation = self.data_source.get_annotation(analyte.uuid)
+        return f"{annotation.name} ({label})" if annotation and annotation.name else label
+
     def formula_label(self, analyte: 'AlignedAnalyte') -> str:
         """`formula_agreement` as "C10H12O (3/4)"; empty if no formula."""
         agreement = self.formula_agreement(analyte)
@@ -125,10 +131,7 @@ class AlignmentContext:
                 return None
             agreement = self.formula_agreement(analyte)
             return ItemSpectra(
-                label=(
-                    f"{analyte.consensus_mz:.4f} @ "
-                    f"{analyte.consensus_rt:.1f}s "
-                ),
+                label=self.analyte_label(analyte),
                 ms1=rep.composite.ms1,
                 ms2=rep.composite.ms2,
                 rt=float(analyte.consensus_rt),

@@ -863,6 +863,8 @@ class MainController:
             self.data_registry.register_group(group)
         for matrix in result.matrices:
             self.data_registry.register_matrix(matrix)
+        for annotation in result.annotations:
+            self.data_registry.register_annotation(annotation)
 
     def _handle_generate_ensemble_request(
         self,

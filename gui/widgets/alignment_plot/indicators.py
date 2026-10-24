@@ -7,7 +7,7 @@ from typing import Optional
 
 import pyqtgraph as pg
 from PyQt5.QtCore import QRectF
-from PyQt5.QtGui import QPen, QPolygonF
+from PyQt5.QtGui import QColor, QPen, QPolygonF
 
 
 class OutlineIndicator(pg.GraphicsObject):
@@ -50,29 +50,50 @@ class OutlineIndicator(pg.GraphicsObject):
         return rect.adjusted(-2, -2, 2, 2) if rect.isValid() else QRectF()
 
 
-class LaneIndicator(pg.GraphicsObject):
-    """Translucent band spanning a whole sample lane (lane hover)."""
-
-    def __init__(self, brush):
-        super().__init__()
-        self._brush = brush
-        self._rect: Optional[QRectF] = None
-        self.setZValue(-10)  # behind the strips
-
-    def set_lane(self, y: Optional[float], x_range: tuple = (0.0, 1.0)):
-        self.prepareGeometryChange()
-        if y is None:
-            self._rect = None
+def merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Union of (lo, hi) intervals, sorted (so translucent bands don't stack)."""
+    merged: list[list[float]] = []
+    for lo, hi in sorted(intervals):
+        if merged and lo <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], hi)
         else:
-            x0, x1 = x_range
-            self._rect = QRectF(x0, y - 0.5, x1 - x0, 1.0)
-        self.update()
+            merged.append([lo, hi])
+    return [(lo, hi) for lo, hi in merged]
 
-    def paint(self, p, *args):
-        if self._rect is not None:
-            p.setPen(pg.mkPen(None))
-            p.setBrush(self._brush)
-            p.drawRect(self._rect)
 
-    def boundingRect(self):
-        return QRectF(self._rect) if self._rect is not None else QRectF()
+class BandIndicator(pg.ItemGroup):
+    """
+    Translucent bands spanning the whole view (LinearRegionItems): horizontal
+    (sample lanes, by y) or vertical (columns, by x). Add it with
+    `ignoreBounds=True`.
+    """
+
+    def __init__(self, vertical: bool):
+        super().__init__()
+        self._orientation = 'vertical' if vertical else 'horizontal'
+        self._bands: list[tuple[float, float, QColor]] = []   # merged
+        self._regions: list[pg.LinearRegionItem] = []
+        self.setZValue(-10)  # behind everything else
+
+    def set_bands(self, bands: list[tuple[float, float, QColor]]):
+        """(lo, hi, colour) intervals; overlapping ones of a colour are merged."""
+        by_color: dict = {}
+        for lo, hi, color in bands:
+            by_color.setdefault(color.rgba(), (color, []))[1].append((lo, hi))
+        self._bands = [
+            (lo, hi, color)
+            for color, intervals in by_color.values()
+            for lo, hi in merge_intervals(intervals)
+        ]
+        for region in self._regions:
+            region.setParentItem(None)
+            if region.scene() is not None:
+                region.scene().removeItem(region)
+        self._regions = []
+        for lo, hi, color in self._bands:
+            region = pg.LinearRegionItem(
+                (lo, hi), self._orientation, brush=color,
+                pen=pg.mkPen(None), movable=False,
+            )
+            region.setParentItem(self)
+            self._regions.append(region)

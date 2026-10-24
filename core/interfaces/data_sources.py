@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     )
     from core.data_structs.alignment import EnsembleAlignment
     from core.data_structs.analyte_group import AnalyteGroup
+    from core.data_structs.analyte_annotation import AnalyteAnnotation
     from core.data_structs.formula_assignment import FormulaAssignment
     from core.data_structs.similarity_matrix import SimilarityMatrix
 
@@ -56,7 +57,7 @@ class SampleDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to notifications when the registry changes.
@@ -95,7 +96,7 @@ class AlignmentDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to alignment change notifications; call with
@@ -154,7 +155,7 @@ class AssignmentDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to assignment change notifications; call with
@@ -212,12 +213,51 @@ class GroupDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to group change notifications; call with
         change_type='Group'. See SampleDataSource.subscribe_to_changes
         for the full parameter contract.
+        """
+        ...
+
+
+class AnnotationDataSource(Protocol):
+    """
+    Structural contract for the read/subscribe surface over
+     AnalyteAnnotations (one per analyte).
+    """
+    def get_annotation(
+        self,
+        analyte_uuid: 'AnalyteUUID',
+    ) -> Optional['AnalyteAnnotation']:
+        ...
+
+    def register_annotation(
+        self,
+        annotation: 'AnalyteAnnotation',
+    ):
+        """Add, or replace its analyte's existing annotation."""
+        ...
+
+    def remove_annotation(
+        self,
+        analyte_uuid: 'AnalyteUUID',
+    ):
+        ...
+
+    def subscribe_to_changes(
+        self,
+        addition_callback: Callable[..., None],
+        removal_callback: Callable[..., None],
+        update_callback: Optional[Callable[..., None]] = None,
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'] = 'Sample',
+    ):
+        """
+        Subscribe to annotation change notifications; call with
+        change_type='Annotation'. update_callback fires when an analyte's
+        annotation is replaced.
         """
         ...
 
@@ -268,7 +308,7 @@ class MatrixDataSource(Protocol):
         addition_callback: Callable[..., None],
         removal_callback: Callable[..., None],
         update_callback: Optional[Callable[..., None]] = None,
-        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Matrix'] = 'Sample',
+        change_type: Literal['Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'] = 'Sample',
     ):
         """
         Subscribe to matrix change notifications; call with

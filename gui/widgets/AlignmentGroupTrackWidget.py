@@ -19,7 +19,7 @@ from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPicture, QPolygonF
 
-from gui.widgets.alignment_plot.indicators import OutlineIndicator
+from gui.widgets.alignment_plot.indicators import BandIndicator, OutlineIndicator
 
 if TYPE_CHECKING:
     from core.data_structs.analyte_group import AnalyteGroup
@@ -180,6 +180,7 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
         self._highlight = OutlineIndicator(
             _cosmetic_pen(QColor(255, 255, 255, 255), 2), z_value=100,
         )
+        self._columns = BandIndicator(vertical=True)   # the map's selection
         self.pi.sigXRangeChanged.connect(self._update_labels)
         self.pi.getViewBox().sigResized.connect(self._update_labels)
         self._set_lanes(1)
@@ -197,6 +198,10 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
     def link_to(self, plot_item: pg.PlotItem):
         """Share the x axis with the feature map."""
         self.pi.setXLink(plot_item)
+
+    def set_columns(self, bands: list):
+        """The map's selection bands: (x0, x1, QColor)s."""
+        self._columns.set_bands(bands)
 
     def has_visible_groups(self) -> bool:
         return bool(self._rows)
@@ -226,6 +231,7 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
         self._item.sigRowClicked.connect(self._on_row_clicked)
         self.pi.addItem(self._item)
         self.pi.addItem(self._highlight)
+        self.pi.addItem(self._columns, ignoreBounds=True)
         font = QFont()
         font.setPointSize(LABEL_PT)
         for row in self._rows:

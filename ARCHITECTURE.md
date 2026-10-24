@@ -200,9 +200,10 @@ the round-trip.
 
 - A `.mzk` is a **ZIP archive** of JSON (primitives, metadata, alignments) +
   pickle (numpy/scipy arrays: ScanArrays, fingerprint arrays, ensembles).
-- `load_project()` returns a `ProjectData(samples, alignments, assignments, groups, matrices)`.
+- `load_project()` returns a `ProjectData(samples, alignments, assignments, groups, matrices, annotations)`.
 - Layout inside the zip: `project_metadata.json`, `samples/<name>/…`,
-  `alignments/<uuid>.json`, `groups/<uuid>.json`, and
+  `alignments/<uuid>.json`, `groups/<uuid>.json`,
+  `annotations/<analyte_uuid>.json` (per-analyte name + SMILES), and
   `similarity/<uuid>.npz` (raw values, no pickle) + `similarity/<uuid>.json`.
 - **Back-compat is intentional:** every deserializer uses `.get(..., default)`
   for fields added over time, so old `.mzk` files keep loading as the model

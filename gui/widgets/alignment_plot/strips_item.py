@@ -303,11 +303,8 @@ class EnsembleStripsItem(pg.GraphicsObject):
             analyte=self._analytes.get(aid),
         )
 
-    def lane_span(self, sample_uuid) -> Optional[tuple]:
-        y = self._lanes.y_of_sample.get(sample_uuid)
-        if y is None:
-            return None
-        return y, self._x_range
+    def lane_y(self, sample_uuid) -> Optional[float]:
+        return self._lanes.y_of_sample.get(sample_uuid)
 
 
 def _point_near_polyline(

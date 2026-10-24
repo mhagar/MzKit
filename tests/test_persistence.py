@@ -115,6 +115,23 @@ def test_analyte_group_roundtrip(tmp_path):
     assert sorted(groups, key=lambda g: g.created_at) == [big, small]
 
 
+def test_analyte_annotation_roundtrip(tmp_path):
+    from core.data_structs import AnalyteAnnotation
+
+    reg = DataRegistry()
+    named = AnalyteAnnotation(analyte_uuid=7, name="Psammaplin A", smiles="CCO")
+    reg.register_annotation(named)
+    reg.register_annotation(AnalyteAnnotation(analyte_uuid=8, name="unknown 1"))
+
+    path = tmp_path / "annotations.mzk"
+    persistence.save_project(filepath=path, data_registry=reg)
+    loaded = persistence.load_project(filepath=path).annotations
+
+    assert sorted(loaded, key=lambda x: x.analyte_uuid) == [
+        named, AnalyteAnnotation(analyte_uuid=8, name="unknown 1"),
+    ]
+
+
 def test_pre_1_4_file_has_no_groups(tmp_path):
     """Files saved before 1.4.0 have no groups/ entries; they load as []."""
     import json
@@ -129,6 +146,7 @@ def test_pre_1_4_file_has_no_groups(tmp_path):
     data = persistence.load_project(filepath=path)
     assert data.groups == []
     assert data.matrices == []
+    assert data.annotations == []
 
 
 def test_pre_1_2_assignment_is_skipped_not_fatal(tmp_path, caplog):
