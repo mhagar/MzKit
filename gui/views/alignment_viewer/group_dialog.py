@@ -43,6 +43,12 @@ def jsonable(value):
     return value
 
 
+# shortcut: hard-coded database files (in <repo>/coconut/); move to config once SNAP-MFs is kept
+_SNAP_MFS_DATABASES = {
+    'COCONUT': 'coconut_csv_lite-10-2026.csv',
+    'NPAtlas': 'NPAtlas_download_2024_09.tsv',
+}
+
 _SVG_SCALE = 2.0  # ACS1996 bonds are 14.4 px: too small on screen
 _SVG_MAX_HEIGHT = 400
 
@@ -121,6 +127,15 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         self.editSmiles.textChanged.connect(self._update_preview)
         self.listOverlapping.currentRowChanged.connect(self._on_overlap_picked)
         self.radioEditExisting.toggled.connect(self._on_mode_toggled)
+        self.btnSnapMfs.clicked.connect(self._run_snap_mfs)
+        from core.cli.snap_mfs import METRICS, MIN_FAMILY_SIZE, TANIMOTO_CUTOFF
+        for key, label in METRICS.items():
+            self.comboSnapMfsMetric.addItem(label, key)
+        self.spinSnapMfsCutoff.setValue(TANIMOTO_CUTOFF)
+        self.spinSnapMfsMinSize.setMinimum(1)
+        self.spinSnapMfsMinSize.setValue(MIN_FAMILY_SIZE)
+        for label, filename in _SNAP_MFS_DATABASES.items():
+            self.comboDatabase.addItem(label, filename)
 
         self._load(group)
 
@@ -149,6 +164,47 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         warnings = show_smiles(self.svgPreview, self.editSmiles.text())
         self.labelSmilesWarning.setText("\n".join(warnings))
         self.labelSmilesWarning.setVisible(bool(warnings))
+
+    def _member_formulas(self) -> list[str]:
+        """Each member analyte's consensus formula, as the viewer shows it."""
+        from gui.views.alignment_viewer.context import AlignmentContext
+        group = self._group or (
+            self._picked() if self.radioEditExisting.isChecked() else None
+        )
+        uuids = group.analyte_uuids if group is not None else self._analyte_uuids
+        formulas: dict['AnalyteUUID', str] = {}
+        for alignment_uuid in self.data_source.get_all_alignment_uuids():
+            ctx = AlignmentContext(
+                self.data_source.get_alignment(alignment_uuid), self.data_source,
+            )
+            for uuid in uuids:
+                analyte = ctx.alignment.get_analyte(uuid)
+                if uuid not in formulas and analyte is not None:
+                    if agreement := ctx.formula_agreement(analyte):
+                        formulas[uuid] = agreement[0]
+        return list(formulas.values())
+
+    def _run_snap_mfs(self):
+        """Testing hook: run SNAP-MFs on the members' formulae, print to stdout (blocks)."""
+        from core.cli.snap_mfs import format_families, snap_mfs
+        from core.utils.config import get_project_root
+        metric = self.comboSnapMfsMetric.currentData()
+        cutoff = self.spinSnapMfsCutoff.value()
+        min_size = self.spinSnapMfsMinSize.value()
+        db_path = get_project_root() / 'coconut' / self.comboDatabase.currentData()
+        formulas = self._member_formulas()
+        print(f"SNAP-MFs on {len(formulas)} analyte formulae: {sorted(set(formulas))}")
+        if not formulas:
+            return
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            print(format_families(snap_mfs(
+                formulas, db_path, cutoff, min_size, metric=metric, log=print,
+            ), formulas))
+        except (OSError, ValueError) as e:
+            print(f"SNAP-MFs failed: {e}")
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
 
     def accept(self):
         smiles = self.editSmiles.text().strip()
