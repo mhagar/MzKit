@@ -251,6 +251,12 @@ def main():
         assert err < 1e-5
 
     torch.backends.mha.set_fastpath_enabled(False)  # fused attention has no ONNX export
+
+    def in_projection_packed(q, k, v, w, b=None):
+        # torch's packed version (unflatten/transpose/squeeze) bakes the key length into the trace
+        bs = b.chunk(3) if b is not None else (None,) * 3
+        return tuple(nn.functional.linear(x, wi, bi) for x, wi, bi in zip((q, k, v), w.chunk(3), bs))
+    nn.functional._in_projection_packed = in_projection_packed
     args.out.mkdir(parents=True, exist_ok=True)
     for name, (mod, inputs, in_names, out_names, axes) in blocks.items():
         mod.eval()
@@ -303,6 +309,19 @@ def main():
         print(f"{i} n={n:3d} |x diff|={x_err:.1e} edges_equal={e_ok} rows={len(ref_i['spec']):5d} "
               f"frags_identical={exact} max|spec diff| (up to symmetry)={spec_err:.1e}")
         assert x_err < 1e-5 and e_ok and spec_err < 1e-4, f"port disagrees with torch on {s}"
+
+    # The blocks were traced on the batch above; check that other shapes work and agree too
+    for sub in ([1], [0, 3]):
+        pick = lambda xs: [xs[j] for j in sub]
+        sm = pick(SMILES)
+        r = model.predict_mol(sm, pick(CES), pick(ADDUCTS), device="cpu", instrument=pick(INSTRUMENTS))
+        p = port.predict(sm, np.array(pick(CES)), pick(ADDUCTS), pick(INSTRUMENTS))
+        for j, s in enumerate(sm):
+            mol = Chem.MolFromSmiles(s)
+            ref_j = {"spec": r["spec"][j].numpy(), "frag": r["frag"][j][:, :mol.GetNumAtoms()].numpy().astype(bool)}
+            err = glacier.max_diff_up_to_symmetry(mol, p[j], ref_j, port.rows_per_frag)
+            print(f"batch {sub}: {s} max|spec diff|={err:.1e}")
+            assert err < 1e-4, f"port disagrees with torch on {s} in batch {sub}"
     print("PARITY OK")
 
     np.savez_compressed(

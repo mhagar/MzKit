@@ -19,10 +19,12 @@ def _ez_labels(
 
 
 def smiles_to_svg(
-        smiles: str
+        smiles: str,
+        highlight_atoms: list[int] | None = None,
 ) -> tuple[str, list[str]]:
     """
     Return (svg_text, warnings). Raises ValueError on empty/unparseable SMILES.
+    highlight_atoms: atom indices (as parsed from `smiles`) to highlight, with the bonds between them.
     """
     from rdkit import Chem
     from rdkit.Chem import rdCoordGen
@@ -40,7 +42,13 @@ def smiles_to_svg(
     rdMolDraw2D.SetACS1996Mode(
         d.drawOptions(), rdMolDraw2D.MeanBondLength(mol)
     )
-    d.DrawMolecule(mol)
+    if highlight_atoms:
+        keep = set(highlight_atoms)
+        bonds = [b.GetIdx() for b in mol.GetBonds()
+                 if b.GetBeginAtomIdx() in keep and b.GetEndAtomIdx() in keep]
+        d.DrawMolecule(mol, highlightAtoms=list(keep), highlightBonds=bonds)
+    else:
+        d.DrawMolecule(mol)
     d.FinishDrawing()
     svg = d.GetDrawingText()
 

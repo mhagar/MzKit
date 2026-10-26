@@ -19,3 +19,9 @@ def test_renders_without_warnings(smiles):
 def test_invalid_smiles_raises(smiles):
     with pytest.raises(ValueError):
         smiles_to_svg(smiles)
+
+
+def test_highlight_atoms_draws_highlight():
+    plain, _ = smiles_to_svg("CCO")
+    lit, _ = smiles_to_svg("CCO", highlight_atoms=[1, 2])
+    assert lit != plain

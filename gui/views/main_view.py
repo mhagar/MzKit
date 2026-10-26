@@ -174,6 +174,11 @@ class MainView(
     def _on_trigger_label_peaks(self) -> None:
         self.sigLabelingRequested.emit()
 
+    def _on_trigger_glacier(self) -> None:
+        from gui.dialogues.GlacierDialog import GlacierDialog
+        self._glacier_dialog = GlacierDialog(parent=self)  # held so it isn't garbage collected
+        self._glacier_dialog.show()
+
     def _on_trigger_show_samples(self) -> None:
         if not self.listViewSamples.selectionModel().hasSelection():
             return

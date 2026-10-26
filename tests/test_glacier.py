@@ -29,6 +29,13 @@ def test_predictions_match_torch():
             assert err < 1e-4, f"{s}: max |spec diff| {err}"
 
 
+@needs_model
+def test_predicts_shapes_other_than_the_export_batch():
+    # The blocks were traced on the fixture batch; a lone, smaller molecule must still run
+    (pred,) = glacier.load_model().predict(["OC(=O)c1ccccc1"], np.array([30.0]), ["[M+H]+"], ["Orbitrap"])
+    assert len(pred["spec"]) and pred["spec"][:, 1].max() > 0
+
+
 def test_fragments_are_components_left_after_breaks():
     # Butane C0-C1-C2-C3; deleting C1 leaves {C0} (dropped: a lone atom reaches nothing) and {C2, C3}
     adj = np.zeros((1, 4, 4), np.float32)
