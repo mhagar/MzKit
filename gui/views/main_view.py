@@ -34,6 +34,9 @@ class MainView(
     sigLabelingRequested = QtCore.pyqtSignal(
         #
     )
+    sigCompoundDbRequested = QtCore.pyqtSignal(
+        #
+    )
     sigShowSampleViewerRequested = QtCore.pyqtSignal(
         list,  #list[QModelIndex]
     )
@@ -178,6 +181,9 @@ class MainView(
         from gui.dialogues.GlacierDialog import GlacierDialog
         self._glacier_dialog = GlacierDialog(parent=self)  # held so it isn't garbage collected
         self._glacier_dialog.show()
+
+    def _on_trigger_compound_db(self) -> None:
+        self.sigCompoundDbRequested.emit()
 
     def _on_trigger_show_samples(self) -> None:
         if not self.listViewSamples.selectionModel().hasSelection():

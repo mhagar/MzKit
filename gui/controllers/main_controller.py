@@ -148,6 +148,9 @@ class MainController:
         self.main_view.sigLabelingRequested.connect(
             self._handle_labeling_request
         )
+        self.main_view.sigCompoundDbRequested.connect(
+            self._handle_compound_db_request
+        )
 
         self._connect_window_menu()
 
@@ -427,6 +430,14 @@ class MainController:
 
     def _handle_import_feature_table_request(self) -> None:
         self.sample_controller.show_feature_table_import_wizard()
+
+    def _handle_compound_db_request(self) -> None:
+        from gui.dialogues.CompoundDbDialog import CompoundDbDialog
+        # Held so it isn't garbage collected
+        self._compound_db_dialog = CompoundDbDialog(
+            self.process_controller, parent=self.main_view,
+        )
+        self._compound_db_dialog.show()
 
     def _handle_labeling_request(self) -> None:
         from PyQt5.QtWidgets import QMessageBox

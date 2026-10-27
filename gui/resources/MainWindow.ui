@@ -187,6 +187,7 @@
     </property>
     <addaction name="actionLabel_peaks"/>
     <addaction name="actionGLACIER"/>
+    <addaction name="actionCompoundDb"/>
    </widget>
    <widget class="QMenu" name="menuWindow">
     <property name="title">
@@ -253,6 +254,11 @@
   <action name="actionGLACIER">
    <property name="text">
     <string>GLACIER</string>
+   </property>
+  </action>
+  <action name="actionCompoundDb">
+   <property name="text">
+    <string>Browse compound databases…</string>
    </property>
   </action>
   <action name="actionLabel_peaks">
@@ -468,6 +474,22 @@
     </hint>
    </hints>
   </connection>
+  <connection>
+   <sender>actionCompoundDb</sender>
+   <signal>triggered()</signal>
+   <receiver>MainWindow</receiver>
+   <slot>_on_trigger_compound_db()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>-1</x>
+     <y>-1</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>605</x>
+     <y>412</y>
+    </hint>
+   </hints>
+  </connection>
  </connections>
  <slots>
   <slot>_on_trigger_import_mzmls()</slot>
@@ -477,5 +499,6 @@
   <slot>_on_filter_changed()</slot>
   <slot>_on_trigger_label_peaks()</slot>
   <slot>_on_trigger_glacier()</slot>
+  <slot>_on_trigger_compound_db()</slot>
  </slots>
 </ui>

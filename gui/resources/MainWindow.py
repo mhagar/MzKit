@@ -113,6 +113,8 @@ class Ui_MainWindow(object):
         self.actionImport_Feature_Table.setObjectName("actionImport_Feature_Table")
         self.actionGLACIER = QtWidgets.QAction(MainWindow)
         self.actionGLACIER.setObjectName("actionGLACIER")
+        self.actionCompoundDb = QtWidgets.QAction(MainWindow)
+        self.actionCompoundDb.setObjectName("actionCompoundDb")
         self.actionLabel_peaks = QtWidgets.QAction(MainWindow)
         self.actionLabel_peaks.setObjectName("actionLabel_peaks")
         self.actionWindowSamples = QtWidgets.QAction(MainWindow)
@@ -149,6 +151,7 @@ class Ui_MainWindow(object):
         self.menuImport.addSeparator()
         self.menuTools.addAction(self.actionLabel_peaks)
         self.menuTools.addAction(self.actionGLACIER)
+        self.menuTools.addAction(self.actionCompoundDb)
         self.menuWindow.addAction(self.actionWindowSamples)
         self.menuWindow.addAction(self.actionWindowEnsemble)
         self.menuWindow.addAction(self.actionWindowAlignment)
@@ -170,6 +173,7 @@ class Ui_MainWindow(object):
         self.btnFilterInjection.toggled['bool'].connect(MainWindow._on_filter_changed) # type: ignore
         self.actionLabel_peaks.triggered.connect(MainWindow._on_trigger_label_peaks) # type: ignore
         self.actionGLACIER.triggered.connect(MainWindow._on_trigger_glacier) # type: ignore
+        self.actionCompoundDb.triggered.connect(MainWindow._on_trigger_compound_db) # type: ignore
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
 
     def retranslateUi(self, MainWindow):
@@ -199,6 +203,7 @@ class Ui_MainWindow(object):
         self.actionImport_Sample_Metadata.setText(_translate("MainWindow", "Import Sample Metadata"))
         self.actionImport_Feature_Table.setText(_translate("MainWindow", "Import Feature Table"))
         self.actionGLACIER.setText(_translate("MainWindow", "GLACIER"))
+        self.actionCompoundDb.setText(_translate("MainWindow", "Browse compound databases…"))
         self.actionLabel_peaks.setText(_translate("MainWindow", "Label peaks"))
         self.actionWindowSamples.setText(_translate("MainWindow", "Sample Viewer"))
         self.actionWindowEnsemble.setText(_translate("MainWindow", "Ensemble Viewer"))

@@ -43,12 +43,6 @@ def jsonable(value):
     return value
 
 
-# shortcut: hard-coded database files (in <repo>/coconut/); move to config once SNAP-MFs is kept
-_SNAP_MFS_DATABASES = {
-    'COCONUT': 'coconut_csv_lite-10-2026.csv',
-    'NPAtlas': 'NPAtlas_download_2024_09.tsv',
-}
-
 _SVG_SCALE = 2.0  # ACS1996 bonds are 14.4 px: too small on screen
 _SVG_MAX_HEIGHT = 400
 
@@ -134,8 +128,9 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         self.spinSnapMfsCutoff.setValue(TANIMOTO_CUTOFF)
         self.spinSnapMfsMinSize.setMinimum(1)
         self.spinSnapMfsMinSize.setValue(MIN_FAMILY_SIZE)
-        for label, filename in _SNAP_MFS_DATABASES.items():
-            self.comboDatabase.addItem(label, filename)
+        from core.utils import compound_db
+        if compound_db.cache_ok():
+            self.comboDatabase.addItems(compound_db.available_sources())
 
         self._load(group)
 
@@ -187,11 +182,17 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
     def _run_snap_mfs(self):
         """Testing hook: run SNAP-MFs on the members' formulae, print to stdout (blocks)."""
         from core.cli.snap_mfs import format_families, snap_mfs
-        from core.utils.config import get_project_root
+        from core.utils import compound_db
+        if not compound_db.cache_ok():
+            QtWidgets.QMessageBox.warning(
+                self, "No compound database",
+                "Build (or rebuild) the cache first: Tools > Browse compound databases.",
+            )
+            return
         metric = self.comboSnapMfsMetric.currentData()
         cutoff = self.spinSnapMfsCutoff.value()
         min_size = self.spinSnapMfsMinSize.value()
-        db_path = get_project_root() / 'coconut' / self.comboDatabase.currentData()
+        source = self.comboDatabase.currentText()
         formulas = self._member_formulas()
         print(f"SNAP-MFs on {len(formulas)} analyte formulae: {sorted(set(formulas))}")
         if not formulas:
@@ -199,7 +200,7 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             print(format_families(snap_mfs(
-                formulas, db_path, cutoff, min_size, metric=metric, log=print,
+                formulas, source, cutoff, min_size, metric=metric, log=print,
             ), formulas))
         except (OSError, ValueError) as e:
             print(f"SNAP-MFs failed: {e}")
