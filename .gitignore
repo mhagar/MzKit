@@ -30,3 +30,6 @@ trash
 
 # MS2DeepScore weights (see tools/ms2deepscore/)
 /models/
+
+# Compound database dumps + SQLite cache (core/utils/compound_db.py)
+/coconut/
