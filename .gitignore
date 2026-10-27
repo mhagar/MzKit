@@ -33,3 +33,4 @@ trash
 
 # Compound database dumps + SQLite cache (core/utils/compound_db.py)
 /coconut/
+/.claude/worktrees/
