@@ -132,13 +132,15 @@ class AlignmentPlotItem(pg.PlotItem):
         width_scale: float = 1.0,
         x_axis_visible: bool = True,
         stagger: bool = True,
+        sample_order: Optional[list] = None,
     ):
         """
         (Re)draw an alignment. `preserve_range` keeps the view range;
         `preserve_selection` keeps the selection (and focus, anchor) if it
         is the same alignment; otherwise they are cleared. `x_of` / `width_scale` place the strips (RT by default);
         `x_axis_visible` shows/hides the bottom axis + x grid; `stagger`
-        toggles the within-lane vertical stagger of strips.
+        toggles the within-lane vertical stagger of strips; `sample_order`
+        sets the lane order (default: by name, see `build_lane_map`).
         """
         prev_range = self.getViewBox().viewRange() if preserve_range else None
         preserve = preserve_selection and alignment.uuid == self._alignment_uuid
@@ -152,7 +154,7 @@ class AlignmentPlotItem(pg.PlotItem):
             self._update_selection_indicator()
             return
 
-        lane_map = build_lane_map(alignment, data_source)
+        lane_map = build_lane_map(alignment, data_source, sample_order)
 
         # Y axis = sample lanes.
         ticks = [

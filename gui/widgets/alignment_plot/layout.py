@@ -69,18 +69,22 @@ class HoverTarget(NamedTuple):
 def build_lane_map(
     alignment: 'EnsembleAlignment',
     data_source: 'SampleDataSource',
+    order: Optional[list['SampleUUID']] = None,
 ) -> LaneMap:
     """
-    Resolve sample names and lay the lanes out top-to-bottom, natural-sorted
-    by sample name (falls back to a uuid-tail label for missing samples).
+    Resolve sample names and lay the lanes out top-to-bottom: in `order`
+    if given, else (and for samples `order` leaves out, after it)
+    natural-sorted by sample name (falls back to a uuid-tail label for
+    missing samples).
     """
     names: dict['SampleUUID', str] = {}
     for uuid in alignment.sample_uuids:
         sample = data_source.get_sample(uuid)
         names[uuid] = sample.name if sample else f"...{str(uuid)[-5:]}"
 
-    ordered = sorted(
-        alignment.sample_uuids,
+    first = [u for u in (order or []) if u in names]
+    ordered = first + sorted(
+        set(alignment.sample_uuids) - set(first),
         key=lambda u: natural_sort_key(names[u]),
     )
     y_of_sample = {uuid: float(i) for i, uuid in enumerate(ordered)}

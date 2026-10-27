@@ -12,6 +12,10 @@ MS2DeepScore, core/cli/cluster_analytes.py) or imported
 (gui/widgets/AlignmentDendrogramWidget.py). Matrix computation and clustering
 run in the background via MainController (sigClusterRequested).
 
+Sample cluster mode orders the lanes by Jaccard similarity of the samples'
+analyte presence (core/cli/cluster_samples.py), with a dendrogram left of
+the map; it combines with either analyte layout.
+
 User AnalyteGroups (core/data_structs/analyte_group.py) are drawn on the
 group track above the map in either layout (gui/widgets/AlignmentGroupTrackWidget.py)
 and edited from the Inspector's groups panel (groups_panel.py, group_dialog.py).
@@ -39,6 +43,7 @@ from core.cli.cluster_analytes import (
     ClusterKey, ClusterParams, cluster_params_from_config, linkage_from_config,
     scoring_name, similarity_provenance,
 )
+from core.cli.cluster_samples import SampleClustering, cluster_samples
 from core.data_structs.analyte_annotation import AnalyteAnnotation
 from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
 from core.utils.config import load_config
@@ -109,6 +114,8 @@ class AlignmentViewer(
         self._clusterings: dict[ClusterKey, 'AnalyteClustering'] = {}
         self._shown_clustering: Optional['AnalyteClustering'] = None
         self._cluster_dialog: Optional[ClusterParamsDialog] = None
+        # Sample cluster mode: computed on demand, once per alignment
+        self._sample_clustering: Optional[SampleClustering] = None
 
         self.plot_item = self.plotAlignment.pi
         self.selection_model = self.plot_item.selection_model
@@ -158,6 +165,9 @@ class AlignmentViewer(
         self.splitter.setSizes([550, 450])
         self.plotDendrogram.link_to(self.plot_item)
         self.plotDendrogram.hide()
+        self.plotSampleDendrogram.set_orientation('left')
+        self.plotSampleDendrogram.link_to(self.plot_item)
+        self.plotSampleDendrogram.hide()
         self.plotGroupTrack.link_to(self.plot_item)
         for strip in (self.plotDendrogram, self.plotGroupTrack):
             self.plot_item.sigColumnsChanged.connect(strip.set_columns)
@@ -180,6 +190,11 @@ class AlignmentViewer(
         self.btnClusterMode.setToolTip(
             "Order analytes by hierarchical clustering of their MS2 "
             "(modified cosine) instead of by retention time"
+        )
+        self.btnSampleClusterMode.setText("Cluster (Samples)")
+        self.btnSampleClusterMode.setToolTip(
+            "Order samples by hierarchical clustering of their composition "
+            "(Jaccard similarity of analyte presence) instead of by name"
         )
         self.btnClusterParams.setText("Clustering…")
         self.btnClusterParams.setToolTip("Edit clustering parameters")
@@ -225,6 +240,12 @@ class AlignmentViewer(
         self.btnClusterParams.clicked.connect(self._show_cluster_dialog)
         self.plotDendrogram.sigSubtreeClicked.connect(self._select_analytes)
         self.plotDendrogram.sigNodeHovered.connect(self._on_node_hovered)
+        self.btnSampleClusterMode.toggled.connect(
+            lambda _: self._render(preserve_selection=True)
+        )
+        self.plotSampleDendrogram.sigNodeHovered.connect(
+            self._on_sample_node_hovered
+        )
         self.btnGroupSelected.clicked.connect(lambda: self._group_analytes())
         self.plotGroupTrack.sigGroupHovered.connect(
             self.plot_item.set_hover_analytes
@@ -338,6 +359,8 @@ class AlignmentViewer(
         if self._cluster_dialog is not None:
             self._cluster_dialog.set_alignment(None)
         self.plot_item.clear_alignment()
+        self.plotSampleDendrogram.clear_clustering()
+        self.plotSampleDendrogram.hide()
         self._x_of_analyte = {}
         self._refresh_groups()
         self.detail_panel.reset()
@@ -360,6 +383,7 @@ class AlignmentViewer(
         if self._alignment is None:
             return
 
+        sample_order = self._update_sample_dendrogram()
         clustering = self._active_clustering()
         if clustering is not self._shown_clustering:
             if clustering is None:
@@ -377,6 +401,7 @@ class AlignmentViewer(
                 self._alignment, self.data_source, self._params,
                 preserve_range=preserve_range,
                 preserve_selection=preserve_selection,
+                sample_order=sample_order,
             )
         else:
             slot_of = {u: i for i, u in enumerate(clustering.analyte_uuids)}
@@ -389,10 +414,42 @@ class AlignmentViewer(
                 width_scale=self._params.cluster_width_scale,
                 x_axis_visible=False,
                 stagger=False,   # one analyte per column: nothing to overlap
+                sample_order=sample_order,
             )
+        self.plotSampleDendrogram.show_bottom_axis(clustering is None)
         self._refresh_groups()
         self._update_rt_link()
         self.status_bar.showMessage(self._summary_text())
+
+    def _update_sample_dendrogram(self) -> Optional[list]:
+        """
+        Show / hide the sample dendrogram for sample cluster mode, and
+        return the lane order to render with (None: by name).
+        """
+        if not self.btnSampleClusterMode.isChecked():
+            self.plotSampleDendrogram.hide()
+            return None
+        if self._sample_clustering is None:
+            # shortcut: sync in GUI thread (binary S x A pdist is ms-scale), move to ProcessController if abundance-based metrics get slow
+            self._sample_clustering = cluster_samples(
+                self._alignment,
+                {u: self._ctx.sample_name(u) for u in self._alignment.sample_uuids},
+                self._cluster_linkage,
+            )
+            self.plotSampleDendrogram.set_clustering(
+                self._sample_clustering, self._sample_clustering.sample_uuids,
+            )
+        self.plotSampleDendrogram.show()
+        return self._sample_clustering.sample_uuids
+
+    def _on_sample_node_hovered(self, info: Optional[tuple[float, int]]):
+        if info is None:
+            self.status_bar.showMessage(self._summary_text())
+            return
+        similarity, n = info
+        self.status_bar.showMessage(
+            f"Merge at Jaccard similarity {similarity:.2f}  ·  {n} samples"
+        )
 
     def _show_params_dialog(self):
         if self._params_dialog is None:
@@ -457,10 +514,15 @@ class AlignmentViewer(
         return self._current_clustering()
 
     def _clear_cluster_mode(self):
-        """Drop cached clusterings and fall back to RT mode (no re-render)."""
+        """
+        Drop cached clusterings and fall back to RT mode and name-sorted
+        lanes (no re-render).
+        """
         self._clusterings.clear()
-        with QtCore.QSignalBlocker(self.btnClusterMode):
-            self.btnClusterMode.setChecked(False)
+        self._sample_clustering = None
+        for btn in (self.btnClusterMode, self.btnSampleClusterMode):
+            with QtCore.QSignalBlocker(btn):
+                btn.setChecked(False)
         self._update_rt_link()
 
     def _on_cluster_mode_toggled(self, checked: bool):
