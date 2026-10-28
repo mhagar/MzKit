@@ -133,6 +133,10 @@ class MainController:
             self._handle_filter_alignment_request
         )
 
+        self.main_view.sigFormulaBatchRequested.connect(
+            self._handle_formula_batch_request
+        )
+
         self.main_view.sigExportAlignmentRequested.connect(
             self._handle_export_alignment_request
         )
@@ -1148,6 +1152,59 @@ class MainController:
                 "keep": self.data_registry.user_chosen_sources(),
             },
             on_completion_func=self._on_auto_find_mf_complete,
+        )
+
+    def _handle_formula_batch_request(
+        self,
+        kind: str,
+        action: str,
+        indexes: list[QtCore.QModelIndex],
+    ):
+        """
+        From the sidebar: auto find-mfs on ('find'), or remove the formula
+        assignments of ('clear'), every ensemble in the selected samples /
+        alignments (kind 'Sample' / 'Alignment').
+        """
+        ensembles: dict = {}
+        if kind == 'Sample':
+            for sample in self.sample_controller.get_samples_by_index(indexes):
+                if sample.injection is not None:
+                    ensembles.update(sample.injection.ensembles)
+        else:
+            for index in indexes:
+                alignment = self.sample_controller.get_alignment_by_index(index)
+                for analyte in alignment.analytes if alignment else []:
+                    for ensemble in analyte.resolve_members(
+                        self.data_registry.get_sample
+                    ).values():
+                        ensembles[ensemble.uuid] = ensemble
+
+        if action == 'find':
+            if not ensembles:
+                self.main_view.statusbar.showMessage("No ensembles to annotate")
+            self._handle_auto_find_mf_batch_request(list(ensembles.values()))
+            return
+
+        assigned = [
+            u for u in ensembles
+            if self.data_registry.get_assignment_for_source(u) is not None
+        ]
+        if not assigned:
+            self.main_view.statusbar.showMessage("No formula assignments to remove")
+            return
+        from PyQt5.QtWidgets import QMessageBox
+        n = len(assigned)
+        answer = QMessageBox.question(
+            self.main_view, "Remove formula assignments",
+            f"Remove the formula assignments of {n} ensemble"
+            f"{'' if n == 1 else 's'}, including formulae you picked yourself?",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        for uuid in assigned:
+            self.data_registry.remove_assignment(uuid)
+        self.main_view.statusbar.showMessage(
+            f"Removed {n} formula assignment{'' if n == 1 else 's'}"
         )
 
     def _on_auto_find_mf_complete(

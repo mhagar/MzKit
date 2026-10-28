@@ -97,10 +97,10 @@ class AlignmentContext:
         return formula, count, len(members)
 
     def analyte_label(self, analyte: 'AlignedAnalyte') -> str:
-        """"m/z @ RT", prefixed by the analyte's annotated name, if any."""
+        """"m/z @ RT", followed by the analyte's annotated name, if any."""
         label = f"{analyte.consensus_mz:.4f} @ {analyte.consensus_rt:.1f}s"
         annotation = self.data_source.get_annotation(analyte.uuid)
-        return f"{annotation.name} ({label})" if annotation and annotation.name else label
+        return f"{label} ({annotation.name})" if annotation and annotation.name else label
 
     def formula_label(self, analyte: 'AlignedAnalyte') -> str:
         """`formula_agreement` as "C10H12O (3/4)"; empty if no formula."""

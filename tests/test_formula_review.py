@@ -200,9 +200,11 @@ def test_alignment_viewer_find_mfs_action(qapp):
     analyte_a, analyte_b = object(), object()
     members = {analyte_a: {'s1': e1, 's2': e2}, analyte_b: {'s1': e2, 's3': e3}}
     emitted = []
+    selection_model = SimpleNamespace(selection=[])
+    selection_model.contains = lambda t: t in selection_model.selection
     viewer = SimpleNamespace(
         _ctx=SimpleNamespace(members=lambda a: members[a]),
-        selection_model=SimpleNamespace(selection=[]),
+        selection_model=selection_model,
         sigAutoFindMfsRequested=SimpleNamespace(emit=emitted.append),
     )
     viewer._ensembles_for = lambda ts: AlignmentViewer._ensembles_for(viewer, ts)
@@ -241,3 +243,48 @@ def test_alignment_viewer_find_mfs_action(qapp):
 
     # Samples aren't annotatable
     assert menu_for(HoverTarget(kind='sample', sample_uuid='s1')) == []
+
+
+def test_sidebar_formula_batch_collects_and_clears(qapp, monkeypatch):
+    from core.data_structs.data_registry import DataRegistry
+    from gui.controllers.main_controller import MainController
+
+    e1, e2, e3 = (SimpleNamespace(uuid=i) for i in (1, 2, 3))
+    samples = [
+        SimpleNamespace(injection=SimpleNamespace(ensembles={1: e1, 2: e2})),
+        SimpleNamespace(injection=None),   # a fingerprint-only sample
+    ]
+    alignment = SimpleNamespace(analytes=[
+        SimpleNamespace(resolve_members=lambda get: {'s1': e2, 's2': e3}),
+        SimpleNamespace(resolve_members=lambda get: {'s1': e3}),
+    ])
+    registry = DataRegistry()
+    for uuid in (2, 3):
+        registry.register_assignment(SimpleNamespace(source_uuid=uuid))
+    batches, messages = [], []
+    controller = SimpleNamespace(
+        sample_controller=SimpleNamespace(
+            get_samples_by_index=lambda idx: samples,
+            get_alignment_by_index=lambda idx: alignment,
+        ),
+        data_registry=registry,
+        main_view=SimpleNamespace(statusbar=SimpleNamespace(showMessage=messages.append)),
+        _handle_auto_find_mf_batch_request=batches.append,
+    )
+
+    def run(kind, action):
+        MainController._handle_formula_batch_request(controller, kind, action, [None])
+
+    run('Sample', 'find')
+    run('Alignment', 'find')                 # shared members deduplicated
+    assert batches == [[e1, e2], [e2, e3]]
+
+    from PyQt5.QtWidgets import QMessageBox
+    answers = [QMessageBox.No, QMessageBox.Yes]
+    monkeypatch.setattr(QMessageBox, "question", lambda *a: answers.pop(0))
+    run('Sample', 'clear')                   # declined: kept
+    assert registry.get_assignment_for_source(2) is not None
+    run('Sample', 'clear')                   # only the samples' ensembles go
+    assert registry.get_assignment_for_source(2) is None
+    assert registry.get_assignment_for_source(3) is not None
+    assert messages[-1] == "Removed 1 formula assignment"

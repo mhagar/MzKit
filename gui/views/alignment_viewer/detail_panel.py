@@ -76,6 +76,8 @@ class DetailPanel:
         self.map_plot = map_plot
 
         self._rt_linked = False
+        # Unlinked: re-frame the chromatogram's x on every selection
+        self._frame_selection = False
         self._bpc_cache: dict['SampleUUID', np.ndarray] = {}
         # (chromatograms drawn, RTs of the XIC'd ensembles) for re-ranging
         self._chroms: list[np.ndarray] = []
@@ -114,6 +116,10 @@ class DetailPanel:
     def set_rt_linked(self, linked: bool):
         self._rt_linked = linked
         self.chrom_plot.setXLink(self.map_plot if linked else None)
+        self._fit_chrom_view()
+
+    def set_frame_selection(self, frame: bool):
+        self._frame_selection = frame
         self._fit_chrom_view()
 
     def show_item(
@@ -321,13 +327,14 @@ class DetailPanel:
     def _fit_chrom_view(self):
         """
         Linked: x follows the feature map.
-        Unlinked: frame the XIC'd peaks (+/- CHROM_RT_PAD).
+        Unlinked, framing the selection: frame the XIC'd peaks
+        (+/- CHROM_RT_PAD); else x is left to the user.
         y is fitted to the visible data only on the first draw after a reset.
         """
         if not self._chroms:
             return
         vb = self.chrom_plot.getViewBox()
-        if not self._rt_linked and self._focus_rts:
+        if not self._rt_linked and self._frame_selection and self._focus_rts:
             vb.setXRange(
                 min(self._focus_rts) - CHROM_RT_PAD,
                 max(self._focus_rts) + CHROM_RT_PAD,

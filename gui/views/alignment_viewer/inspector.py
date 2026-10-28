@@ -5,7 +5,8 @@ touches, each with its member ensembles), plus an always-visible analyte
 editor (name / SMILES) for the focused item's analyte.
 
 The tree mirrors the viewer's SelectionModel: picking a row asks to focus
-it; its context menu sets / clears the anchor.
+it; its context menu copies rows, expands / collapses them and sets / clears
+the anchor.
 """
 from typing import Optional, TYPE_CHECKING
 
@@ -18,7 +19,7 @@ from gui.views.alignment_viewer.group_dialog import show_smiles
 from gui.widgets.alignment_plot.layout import (
     ANCHOR_COLOR, CURRENT_COLOR, HoverTarget,
 )
-from gui.widgets.alignment_plot.selection import display_order, target_key
+from gui.widgets.alignment_plot.selection import target_key
 
 if TYPE_CHECKING:
     from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
@@ -43,6 +44,19 @@ def _copy_selection(table: QtWidgets.QAbstractItemView):
     ))
 
 
+def _copy_formulae(tree: QtWidgets.QTreeView):
+    """Copy the selected rows' formulae (FORMULA_COLUMN), one per line, in display order."""
+    def order(index):
+        parent = index.parent()
+        return (parent.row(), index.row()) if parent.isValid() else (index.row(), -1)
+
+    formulae = [
+        (index.data() or "").rstrip('?')   # '?': an unconfirmed pick
+        for index in sorted(tree.selectionModel().selectedRows(FORMULA_COLUMN), key=order)
+    ]
+    QtWidgets.QApplication.clipboard().setText('\n'.join(f for f in formulae if f))
+
+
 def _add_copy_action(view: QtWidgets.QAbstractItemView):
     copy = QtWidgets.QAction(view)
     copy.setShortcut(QtGui.QKeySequence.Copy)
@@ -54,6 +68,7 @@ def _add_copy_action(view: QtWidgets.QAbstractItemView):
 # Selection tree: the HoverTarget behind a row, on its first cell (None on
 # analyte header rows)
 ITEM_ROLE = Qt.UserRole
+FORMULA_COLUMN = 2
 
 
 def _fmt_intsy(value: float) -> str:
@@ -122,6 +137,9 @@ class Inspector(QtCore.QObject):
         self.tree_compare = tree_compare
         tree_compare.setModel(self.compare_model)
         tree_compare.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        # Whole rows, several at once (for copying)
+        tree_compare.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        tree_compare.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         tree_compare.header().setStretchLastSection(True)
         _add_copy_action(tree_compare)
         # Target key -> its row's first cell and label (for marks / current)
@@ -195,13 +213,9 @@ class Inspector(QtCore.QObject):
         :param similarities: AnalyteUUID -> similarity to the anchor (an
             analyte), from the clustering; shown for analyte rows.
 
-        One row per analyte the selection touches (display_order), with
-        all its member ensembles under it (a selected analyte's members are
-        selected with it). Rows that aren't selected are disabled (muted,
-        and can't be focused): an analyte only some of whose ensembles are
-        selected, and its other members. Analytes with a
-        selected ensemble start expanded, the rest collapsed. An anchor
-        not in the tree gets a disabled row on top. With an anchor, columns
+        One row per selected analyte, with all its member ensembles under
+        it; collapsed, except the focused ensemble's analyte. An anchor not
+        in the tree gets a disabled row on top. With an anchor, columns
         comparing each item to it are added.
         """
         self.stack.setCurrentWidget(self.tree_compare.parentWidget())
@@ -253,40 +267,21 @@ class Inspector(QtCore.QObject):
             self._item_cells[target_key(target)] = (row[0], label)
             return row
 
-        selected = {target_key(t): t for t in targets}
-        self._listed = set(selected)
-        groups: dict = {}
-        for target in display_order(targets):
-            groups.setdefault(target.analyte_id, []).append(target)
+        self._listed = {target_key(t) for t in targets}
+        focused_aid = focus.analyte_id if focus and focus.kind == 'ensemble' else None
 
         rows = []   # (top-level row, expanded)
-        for aid, group in groups.items():
-            analyte = group[0].analyte
-            head = selected.get(('analyte', aid, None))
-            if head is not None:
-                parent = item_row(head)
-            else:
-                agreement = ctx.formula_agreement(analyte)
-                parent = _cells([
-                    ctx.analyte_label(analyte), "",
-                    agreement[0] if agreement else "",
-                    f"{agreement[1]}/{agreement[2]}" if agreement else "",
-                ])
-                for cell in parent:
-                    cell.setEnabled(False)
+        for head in targets:
+            aid, analyte = head.analyte_id, head.analyte
+            parent = item_row(head)
             members = sorted(
                 ctx.members(analyte).items(),
                 key=lambda kv: natural_sort_key(ctx.sample_name(kv[0])),
             )
             for sample_uuid, ensemble in members:
                 member = HoverTarget('ensemble', aid, sample_uuid, ensemble, analyte)
-                target = selected.get(target_key(member))
-                child = item_row(target or member)
-                if target is None and head is None:
-                    for cell in child:
-                        cell.setEnabled(False)
-                parent[0].appendRow(child)
-            rows.append((parent, any(t.kind == 'ensemble' for t in group)))
+                parent[0].appendRow(item_row(member))
+            rows.append((parent, aid == focused_aid))
 
         if anchor is not None and anchor_key not in self._item_cells:
             pinned = item_row(anchor)
@@ -307,14 +302,19 @@ class Inspector(QtCore.QObject):
         """Mark the focused row and make it current, silently."""
         self._focus = focus
         self._set_marks()
-        blocker = QtCore.QSignalBlocker(self.tree_compare.selectionModel())
         found = self._item_cells.get(target_key(focus))
+        current = self._target_at(self.tree_compare.currentIndex())
+        if found is not None and target_key(current) == target_key(focus):
+            return   # picked in the tree: keep the user's row selection (copying)
+        blocker = QtCore.QSignalBlocker(self.tree_compare.selectionModel())
         if found is None:
             self.tree_compare.clearSelection()
         else:
             self.tree_compare.setCurrentIndex(found[0].index())
             self.tree_compare.scrollTo(found[0].index())   # expands its parent
         del blocker
+        # The view repaints selections on the (blocked) selection signals
+        self.tree_compare.viewport().update()
 
     def _set_marks(self):
         """● the anchor's label, and the focus's within a multi-selection."""
@@ -325,7 +325,7 @@ class Inspector(QtCore.QObject):
             marks.setdefault(focus_key, CURRENT_COLOR)
         for key, (cell, label) in self._item_cells.items():
             color = marks.get(key)
-            cell.setText(f"● {label}" if color else label)
+            cell.setText(f"{label} ●" if color else label)
             # None clears the role (theme colour); an empty QBrush paints black
             cell.setData(QtGui.QBrush(color) if color else None, Qt.ForegroundRole)
 
@@ -363,4 +363,10 @@ class Inspector(QtCore.QObject):
                 lambda: self._activate(target)
             )
         if not menu.isEmpty():
-            menu.exec_(self.tree_compare.viewport().mapToGlobal(pos))
+            menu.addSeparator()
+        tree = self.tree_compare
+        menu.addAction("Copy", lambda: _copy_selection(tree))
+        menu.addAction("Copy formulae", lambda: _copy_formulae(tree))
+        menu.addAction("Expand all", tree.expandAll)
+        menu.addAction("Collapse all", tree.collapseAll)
+        menu.exec_(tree.viewport().mapToGlobal(pos))

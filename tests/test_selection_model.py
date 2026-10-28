@@ -11,7 +11,9 @@ from gui.widgets.alignment_plot.selection import (  # noqa: E402
     SelectionModel, display_order, target_key,
 )
 
-A = HoverTarget('analyte', 0)
+A = A0 = HoverTarget('analyte', 0)
+A1 = HoverTarget('analyte', 1)
+A2 = HoverTarget('analyte', 2)
 E0 = HoverTarget('ensemble', 0, 's1')
 E1 = HoverTarget('ensemble', 1, 's1')
 E2 = HoverTarget('ensemble', 2, 's1')
@@ -31,20 +33,20 @@ def recording_model():
 
 def test_focus_follows_selection():
     model, events = recording_model()
-    model.set_selection([E0, E1, E0])           # deduplicated, last focused
-    assert keys(model.selection) == keys([E0, E1])
-    assert model.focus == E1
-    assert events == [('selection', keys([E0, E1])), ('focus', target_key(E1))]
+    model.set_selection([E0, E1, E0])           # analytes listed, last focused
+    assert keys(model.selection) == keys([A0, A1])
+    assert model.focus == E0
+    assert events == [('selection', keys([A0, A1])), ('focus', target_key(E0))]
 
     model.set_focus(E2)                          # not selected: ignored
-    assert model.focus == E1
+    assert model.focus == E0
 
-    model.toggle(E2)                             # added + focused
-    assert model.focus == E2
-    model.toggle(E0)                             # removed; focus unaffected
-    assert keys(model.selection) == keys([E1, E2]) and model.focus == E2
+    model.toggle(E2)                             # its analyte added, E2 focused
+    assert keys(model.selection) == keys([A0, A1, A2]) and model.focus == E2
+    model.toggle(E0)                             # its analyte removed; focus unaffected
+    assert keys(model.selection) == keys([A1, A2]) and model.focus == E2
     model.toggle(E2)                             # focus removed: falls to the last
-    assert keys(model.selection) == keys([E1]) and model.focus == E1
+    assert keys(model.selection) == keys([A1]) and model.focus == A1
 
     model.clear()
     assert model.selection == [] and model.focus is None
@@ -80,9 +82,10 @@ def test_remap_swaps_targets_and_drops_missing():
     events.clear()
 
     fresh = {target_key(E0): E0._replace(ensemble='new')}
-    model.remap(fresh.get)                       # E1 (focus) and E2 (anchor) gone
-    assert model.selection == [fresh[target_key(E0)]]
-    assert model.focus == fresh[target_key(E0)] and model.anchor is None
+    fresh[target_key(A0)] = A0._replace(analyte='new')
+    model.remap(fresh.get)                       # A1, E1 (focus) and E2 (anchor) gone
+    assert model.selection == [fresh[target_key(A0)]]
+    assert model.focus == fresh[target_key(A0)] and model.anchor is None
     assert [e[0] for e in events] == ['selection', 'focus', 'anchor']
 
 
@@ -93,16 +96,13 @@ def test_display_order_groups_by_analyte_analyte_first():
 
 def test_selected_analyte_covers_its_ensembles():
     model, _ = recording_model()
-    a0 = HoverTarget('analyte', 0)
-    model.set_selection([a0, E1])
+    model.set_selection([A0, E1])
     assert model.contains(E0) and not model.lists(E0)
     model.set_focus(E0)                          # a member: focusable
     assert model.focus == E0
-    model.toggle(E0)                             # can't leave on its own: focus only
-    assert keys(model.selection) == keys([a0, E1]) and model.focus == E0
-    model.toggle(a0)                             # its analyte leaves: so does the focus
-    assert keys(model.selection) == keys([E1]) and model.focus == E1
-    model.set_selection([a0], focus=E0)
+    model.toggle(E0)                             # a member toggles its analyte out
+    assert keys(model.selection) == keys([A1]) and model.focus == A1
+    model.set_selection([A0], focus=E0)
     assert model.focus == E0
 
 

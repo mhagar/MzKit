@@ -58,10 +58,10 @@ class GroupsPanel(QtCore.QObject):
         combo.currentIndexChanged.connect(self._update_current)
 
         for button, text, tip, slot in (
-            (btn_edit, "Edit…", "Edit the group's title, notes and structure", self._edit),
-            (btn_delete, "Delete", "Delete the group", self._delete),
-            (btn_add, "Add selected", "Add the selected analytes to the group", self._add),
-            (btn_remove, "Remove selected",
+            (btn_edit, "Edit", "Edit the group's title, notes and structure", self._edit),
+            (btn_delete, "Del", "Delete the group", self._delete),
+            (btn_add, "Add", "Add the selected analytes to the group", self._add),
+            (btn_remove, "Remove",
              "Remove the selected analytes from the group "
              "(removing the last member deletes it)", self._remove),
         ):

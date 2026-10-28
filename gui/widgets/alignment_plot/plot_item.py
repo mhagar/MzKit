@@ -5,9 +5,10 @@ Owns the strips graphics object, the hover/selection overlay indicators and
 the SelectionModel (selection, focus and anchor; see selection.py), which
 clicks and keys edit:
 
- - click an unselected strip / line -> select just that ensemble / analyte
+ - click an unselected strip / line -> select just its analyte, focusing
+                                      the strip (ensemble) / analyte
  - click a selected one             -> focus it
- - Ctrl+click                       -> toggle it in/out of the selection
+ - Ctrl+click                       -> toggle its analyte in/out of the selection
  - click a lane's background, or Esc -> clear the selection (not the anchor)
  - arrow keys -> one selected: step to a neighbouring ensemble / analyte;
                  several: move the focus through them
@@ -361,15 +362,12 @@ class AlignmentPlotItem(pg.PlotItem):
 
     def handle_key(self, key: int) -> bool:
         """
-        Arrow-key navigation. Focus in a selected analyte: Up/Down move the
-        focus through its ensembles (top- / bottom-most from the analyte).
-        Otherwise, several items selected: Left/Up and Right/Down move the
-        focus to the previous / next of them (in display_order). One:
-        select a neighbour of it. Returns True if the key was handled.
-
-        Ensemble: Left/Right -> neighbouring ensemble in the same lane;
-                  Up/Down    -> same analyte in the next lane that has it.
-        Analyte:  Left/Right -> neighbouring multi-sample analyte.
+        Arrow-key navigation. Up/Down move the focus through the focused
+        analyte's ensembles (top- / bottom-most from the analyte itself).
+        Left/Right: several analytes selected -> focus the previous / next
+        of them (in display_order); one -> select a neighbour of the focus:
+        an ensemble's neighbour in the same lane, or the neighbouring
+        multi-sample analyte. Returns True if the key was handled.
         """
         model = self.selection_model
         if key == QtCore.Qt.Key_Escape:
@@ -388,8 +386,7 @@ class AlignmentPlotItem(pg.PlotItem):
         step = -1 if key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Up) else 1
         horizontal = key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right)
 
-        analyte = self._strips.analyte_target(current.analyte_id)
-        if not horizontal and model.lists(analyte):
+        if not horizontal:
             nxt = (
                 self._analyte_member(current, first=step < 0)
                 if current.kind == 'analyte'
@@ -399,11 +396,9 @@ class AlignmentPlotItem(pg.PlotItem):
                 model.set_focus(nxt)
                 self._ensure_visible(nxt)
             return True
-        if not model.lists(current):   # a member of a selected analyte: from the analyte
-            current = analyte
-
         selection = model.selection
         if len(selection) > 1:
+            current = self._strips.analyte_target(current.analyte_id)
             order = display_order(selection)
             i = [target_key(t) for t in order].index(target_key(current)) + step
             nxt = order[min(max(i, 0), len(order) - 1)]
@@ -416,7 +411,7 @@ class AlignmentPlotItem(pg.PlotItem):
                 self._step_in_lane(current, step) if horizontal
                 else self._step_across_lanes(current, step)
             )
-        else:   # horizontal: Up/Down on a selected analyte were handled above
+        else:
             nxt = self._step_analyte(current, step)
 
         if nxt is not None:

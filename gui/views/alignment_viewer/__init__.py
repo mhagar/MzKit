@@ -178,8 +178,22 @@ class AlignmentViewer(
 
     def _setup_layout(self):
         self.verticalLayout_10.setContentsMargins(4, 4, 4, 0)
+        # The Inspector is a sidebar: let it shrink well below the map. Its
+        # floor was the group buttons' labels and the group structure's width
+        self.splitter_2.setSizePolicy(
+            QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding,
+        )
+        self.svgGroupStructure.setMinimumWidth(0)
+        # [Group] | [Edit] [Del] | [Add] [Remove]
+        for btn in (self.btnGroupDelete, self.btnGroupSelected):
+            line = QtWidgets.QFrame()
+            line.setFrameShape(QtWidgets.QFrame.VLine)
+            line.setFrameShadow(QtWidgets.QFrame.Sunken)
+            self.horizontalLayout_2.insertWidget(
+                self.horizontalLayout_2.indexOf(btn) + 1, line,
+            )
         self.splitter_3.setStretchFactor(1, 1)
-        self.splitter_3.setSizes([320, 515])
+        self.splitter_3.setSizes([260, 575])
         # Inspector column: selection page / analyte panel / groups
         self.splitter_2.setSizes([200, 420, 160])
         self.splitter.setSizes([550, 450])
@@ -203,14 +217,25 @@ class AlignmentViewer(
         self.btnLinkRT.setToolTip(
             "Link the chromatogram's RT axis to the alignment map's"
         )
+        self.btnFrameSelection = QtWidgets.QToolButton()
+        self.btnFrameSelection.setText("Frame")
+        self.btnFrameSelection.setCheckable(True)
+        self.btnFrameSelection.setToolTip(
+            "Pan the chromatogram to the selected peaks on each selection "
+            "(when its RT axis isn't linked)"
+        )
+        self.horizontalLayout.insertWidget(
+            self.horizontalLayout.indexOf(self.btnLinkRT) + 1,
+            self.btnFrameSelection,
+        )
         self.btnRenderParams.setText("Display…")
         self.btnRenderParams.setToolTip("Edit strip / line display settings")
-        self.btnClusterMode.setText("Cluster (MS2)")
+        self.btnClusterMode.setText("By MS2")
         self.btnClusterMode.setToolTip(
             "Order analytes by hierarchical clustering of their MS2 "
             "similarity instead of by retention time (arrow: parameters)"
         )
-        self.btnSampleClusterMode.setText("Cluster (Samples)")
+        self.btnSampleClusterMode.setText("By sample")
         self.btnSampleClusterMode.setToolTip(
             "Order samples by hierarchical clustering of their composition "
             "or an imported lineage instead of by name (arrow: parameters)"
@@ -220,7 +245,7 @@ class AlignmentViewer(
             menu = QtWidgets.QMenu(btn)
             menu.addAction("Parameters…", slot)
             btn.setMenu(menu)
-        self.btnGroupSelected.setText("Group selected…")
+        self.btnGroupSelected.setText("Group")
         self.btnGroupSelected.setToolTip(
             "Name / annotate the selected analytes as a group"
         )
@@ -257,6 +282,7 @@ class AlignmentViewer(
         self.inspector.sigAnnotationEdited.connect(self._on_annotation_edited)
 
         self.btnLinkRT.toggled.connect(self._update_rt_link)
+        self.btnFrameSelection.toggled.connect(self.detail_panel.set_frame_selection)
         self.btnRenderParams.clicked.connect(self._show_params_dialog)
         self.btnClusterMode.toggled.connect(self._on_cluster_mode_toggled)
         self.plotDendrogram.sigSubtreeClicked.connect(self._select_analytes)
@@ -265,6 +291,7 @@ class AlignmentViewer(
         self.plotSampleDendrogram.sigNodeHovered.connect(
             self._on_sample_node_hovered
         )
+        self.plotSampleDendrogram.sigSubtreeClicked.connect(self._select_samples)
         self.btnGroupSelected.clicked.connect(lambda: self._group_analytes())
         self.plotGroupTrack.sigGroupHovered.connect(
             self.plot_item.set_hover_analytes
@@ -464,8 +491,17 @@ class AlignmentViewer(
         else:
             kind = "Jaccard similarity"
         self.status_bar.showMessage(
-            f"Merge at {kind} {similarity:.2f}  ·  {n} samples"
+            f"Merge at {kind} {similarity:.2f}  ·  {n} samples  "
+            f"(click to select their analytes, Ctrl+click to add)"
         )
+
+    def _select_samples(self, sample_uuids: list, additive: bool):
+        """A sample dendrogram subtree click: select the analytes in those samples."""
+        samples = set(sample_uuids)
+        self._select_analytes([
+            a.uuid for a in self._alignment.analytes
+            if not samples.isdisjoint(a.ensemble_map)
+        ], additive)
 
     def _grouping_clustering(self) -> Optional['AnalyteClustering']:
         """The analyte clustering sample MS2 grouping cuts (None: not used / not computed)."""
@@ -1063,7 +1099,7 @@ class AlignmentViewer(
     def _menu_targets(self, target: HoverTarget) -> list[HoverTarget]:
         """Right-clicking inside a multi-selection acts on all of it."""
         selection = self.selection_model.selection
-        if len(selection) > 1 and target_key(target) in map(target_key, selection):
+        if len(selection) > 1 and self.selection_model.contains(target):
             return selection
         return [target]
 

@@ -2,10 +2,11 @@
 The alignment map's selection state, shared by the plot and the Inspector.
 Three independent pieces, each with its own signal:
 
- - selection: ordered ensemble / analyte targets. A selected analyte also
-              selects its member ensembles (implicitly: they aren't listed)
- - focus:     the one selected target being inspected, listed or a member
-              of a listed analyte (None only when the selection is empty)
+ - selection: ordered analyte targets. Ensembles are never listed: selecting
+              one selects its analyte (and focuses the ensemble), and a
+              selected analyte covers its member ensembles
+ - focus:     the one target being inspected, a listed analyte or one of its
+              members (None only when the selection is empty)
  - anchor:    the reference for mirror comparisons; any target, kept across
               selection changes
 
@@ -47,6 +48,13 @@ def _covered(target: HoverTarget, keys) -> bool:
     )
 
 
+def _analyte_of(target: HoverTarget) -> HoverTarget:
+    """The analyte target an ensemble target belongs to (analytes: themselves)."""
+    if target.kind == 'analyte':
+        return target
+    return target._replace(kind='analyte', sample_uuid=None, ensemble=None)
+
+
 class SelectionModel(QtCore.QObject):
     sigSelectionChanged = QtCore.pyqtSignal(object)  # list[HoverTarget]
     sigFocusChanged = QtCore.pyqtSignal(object)      # HoverTarget | None
@@ -84,9 +92,15 @@ class SelectionModel(QtCore.QObject):
         targets: list[HoverTarget],
         focus: Optional[HoverTarget] = None,
     ):
-        """Replace the selection; `focus` (if covered) else the last target is focused."""
+        """
+        Replace the selection with the analytes of `targets`; `focus` (if
+        covered) else the last of `targets` (an ensemble stays the focus) is
+        focused.
+        """
+        if focus is None and targets:
+            focus = targets[-1]
         unique: dict = {}
-        for target in targets:
+        for target in map(_analyte_of, targets):
             unique.setdefault(target_key(target), target)
         targets = list(unique.values())
         if focus is None or not _covered(focus, unique):
@@ -105,15 +119,13 @@ class SelectionModel(QtCore.QObject):
 
     def toggle(self, target: HoverTarget):
         """
-        Ctrl+click: add and focus `target`, or remove it. A member of a
-        selected analyte is only focused (it can't leave on its own).
+        Ctrl+click: add `target`'s analyte and focus `target`, or remove
+        the analyte if it's already selected.
         """
-        key = target_key(target)
+        key = target_key(_analyte_of(target))
         kept = [t for t in self._selection if target_key(t) != key]
         if len(kept) < len(self._selection):
             self.set_selection(kept, focus=self._focus)
-        elif self.contains(target):
-            self.set_focus(target)
         else:
             self.set_selection(self._selection + [target], focus=target)
 

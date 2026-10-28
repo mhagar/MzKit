@@ -106,11 +106,11 @@ def test_viewer_shows_group_track_and_panel(data_registry, sample, ensemble, mon
     assert viewer.plotGroupTrack.isHidden()
     assert combo.count() == 0
 
-    # An ensemble: under its (disabled: not selected) analyte, expanded
+    # An ensemble: its analyte is selected, expanded to the focused member
     target = viewer.plot_item.ensemble_target(0, sample.uuid)
     viewer.selection_model.set_selection([target])
-    assert not tree.item(0).isEnabled()
-    assert tree.item(0).child(0).text() == sample.name
+    assert tree.item(0).isEnabled()
+    assert tree.item(0).child(0).text() == f"{sample.name} ●"
     assert tree.item(0).child(0).isEnabled()
     assert viewer.treeCompare.isExpanded(tree.item(0).index())
 
@@ -174,44 +174,27 @@ def test_viewer_selection_focus_and_anchor(data_registry, sample, ensemble):
     def keys(targets):
         return [target_key(t) for t in targets]
 
-    # Ctrl+clicking a member of a selected analyte only focuses it
-    plot.select(ta)
-    plot.select(te, additive=True)
+    # Clicking an ensemble selects its analyte and focuses the ensemble
+    plot.select(te)
     assert keys(model.selection) == keys([ta]) and target_key(model.focus) == target_key(te)
-
-    plot.select(None)
-    plot.select(te)
-    plot.select(ta, additive=True)
-    assert keys(model.selection) == keys([te, ta])
-    assert target_key(model.focus) == target_key(ta)
-
-    # A plain click on a selected item only focuses it
-    plot.select(te)
-    assert len(model.selection) == 2 and target_key(model.focus) == target_key(te)
-
-    # Several selected: arrows move the focus (tree order), clamped at the ends
-    plot.handle_key(Qt.Key_Left)
-    assert target_key(model.focus) == target_key(ta)
-    plot.handle_key(Qt.Key_Left)
-    assert target_key(model.focus) == target_key(ta)
-    plot.handle_key(Qt.Key_Right)
-    assert target_key(model.focus) == target_key(te)
-    assert len(model.selection) == 2
+    # A plain click on the selected analyte's line focuses it
+    plot.select(ta)
+    assert keys(model.selection) == keys([ta]) and target_key(model.focus) == target_key(ta)
+    # Ctrl+clicking a member of a selected analyte deselects the analyte
+    plot.select(te, additive=True)
+    assert model.selection == [] and model.focus is None
 
     # The tree: the analyte's row with its ensemble under it; picking a row focuses
+    plot.select(te)
     tree, inspector = viewer.treeCompare, viewer.inspector
     analyte_row = inspector.compare_model.item(0)
-    assert analyte_row.child(0).text() == f"● {sample.name}"   # focus, marked
+    assert analyte_row.isEnabled()
+    assert analyte_row.child(0).text() == f"{sample.name} ●"   # focus, marked
     tree.setCurrentIndex(analyte_row.index())
     assert target_key(model.focus) == target_key(ta)
-
-    # A lone analyte's member is selected with it: the tree row focuses it
-    model.set_selection([ta])
-    analyte_row = inspector.compare_model.item(0)
-    assert analyte_row.child(0).isEnabled()
     tree.setCurrentIndex(analyte_row.child(0).index())
     assert target_key(model.focus) == target_key(te) and len(model.selection) == 1
-    assert analyte_row.child(0).text() == f"● {sample.name}"   # focus, marked
+    assert tree.currentIndex() == analyte_row.child(0).index()   # the user's pick stays
 
     # Up/Down step the focus through a selected analyte's ensembles
     model.set_selection([ta])
@@ -227,21 +210,19 @@ def test_viewer_selection_focus_and_anchor(data_registry, sample, ensemble):
     assert [c for *_, c in plot._column_bands._bands] == [SELECTION_BAND, FOCUS_BAND]
     assert columns[-1][-1][2] == FOCUS_BAND
     assert viewer.plotGroupTrack._columns._bands
-    model.set_selection([te, ta], focus=ta)
+    model.set_selection([ta])
     assert inspector.compare_model.columnCount() == 4
 
     # The anchor leaves the selection alone and adds the comparison columns
     model.set_anchor(te)
-    assert len(model.selection) == 2
+    assert len(model.selection) == 1
     assert inspector.compare_model.columnCount() == 7
 
-    # Deselecting the focus moves it; the anchor stays, marked in its member row
-    plot.select(ta, additive=True)
-    assert keys(model.selection) == keys([te]) and target_key(model.focus) == target_key(te)
+    # The anchor stays, marked in its member row
     model.set_selection([ta])
     member = inspector.compare_model.item(0).child(0)
     assert target_key(model.anchor) == target_key(te)
-    assert member.isEnabled() and member.text() == f"● {sample.name}"
+    assert member.isEnabled() and member.text() == f"{sample.name} ●"
 
     # Esc clears the selection, not the anchor; a new alignment clears both
     plot.handle_key(Qt.Key_Escape)
@@ -310,7 +291,9 @@ def test_selection_tree_groups_items_under_analytes():
         return HoverTarget('ensemble', aid, sample_uuid, members[id(analyte)][sample_uuid], analyte)
 
     e0, e1 = ens(0, a, 's1'), ens(0, a, 's2')
+    ta = HoverTarget('analyte', 0, analyte=a)
     tb = HoverTarget('analyte', 1, analyte=b)
+    tc = HoverTarget('analyte', 2, analyte=c)
     e2 = ens(2, c, 's1')
     spec = to_spec_arr(np.array([100.0]), np.array([1.0]))
     ctx = SimpleNamespace(
@@ -335,20 +318,19 @@ def test_selection_tree_groups_items_under_analytes():
         QtWidgets.QLabel(), stack, summary, QtWidgets.QLineEdit(), QtWidgets.QLineEdit(), tree,
         QtSvg.QSvgWidget(),
     )
-    inspector.show_selection(ctx, [e0, tb, e1, e2], focus=e1, anchor=e0, similarities={})
+    inspector.show_selection(ctx, [ta, tb, tc], focus=e1, anchor=e0, similarities={})
 
     model = inspector.compare_model
     top = [model.item(r) for r in range(model.rowCount())]
-    assert [t.text() for t in top] == [f"analyte {1 << 100}", "1/None", "analyte 3"]
+    assert [t.text() for t in top] == ["0/None", "1/None", "2/None"]
     children = [top[0].child(r) for r in range(top[0].rowCount())]
     assert [ch.text() for ch in children] == [
-        "● 0/s1", "● 0/s2", "0/s3",   # anchor + focus are marked; by sample name
+        "0/s1 ●", "0/s2 ●", "0/s3",   # anchor + focus are marked; by sample name
     ]
-    assert [ch.isEnabled() for ch in children] == [True, True, False]
+    assert all(ch.isEnabled() for ch in children) and all(t.isEnabled() for t in top)
     assert model.item(0).child(2, 1).text() == "3.00e+05"   # intensity
-    assert not top[0].isEnabled() and top[1].isEnabled()
-    assert [tree.isExpanded(t.index()) for t in top] == [True, False, True]
-    assert top[1].rowCount() == 1 and top[1].child(0).isEnabled()  # selected with tb
+    assert [tree.isExpanded(t.index()) for t in top] == [True, False, False]
+    assert top[1].rowCount() == 1
     assert tree.currentIndex() == children[1].index()
     assert model.columnCount() == 7
 
@@ -358,9 +340,29 @@ def test_selection_tree_groups_items_under_analytes():
     assert focused == [e2]
 
     # No anchor: no comparison columns; one outside the tree is pinned
-    inspector.show_selection(ctx, [e0, e1], focus=e0, anchor=None, similarities={})
+    inspector.show_selection(ctx, [ta], focus=e0, anchor=None, similarities={})
     assert model.columnCount() == 4
     anchor = ens(3, d, 's9')
-    inspector.show_selection(ctx, [e0], focus=e0, anchor=anchor, similarities={})
-    assert model.item(0).text() == "● 3/s9" and not model.item(0).isEnabled()
+    inspector.show_selection(ctx, [ta], focus=ta, anchor=anchor, similarities={})
+    assert model.item(0).text() == "3/s9 ●" and not model.item(0).isEnabled()
     assert model.item(1).child(0).text() == "0/s1"   # a lone item: no focus mark
+
+
+def test_copy_formulae_copies_selected_rows_formula_column():
+    from PyQt5 import QtCore, QtGui
+    from gui.views.alignment_viewer.inspector import _copy_formulae
+
+    model = QtGui.QStandardItemModel()
+    for label, formula in (("a", "C10H12O"), ("b", ""), ("c", "C6H6?")):
+        model.appendRow([QtGui.QStandardItem(v) for v in (label, "", formula)])
+    tree = QtWidgets.QTreeView()
+    tree.setModel(model)
+    tree.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+    tree.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+    for row in (2, 0, 1):   # picked out of order: copied in display order
+        tree.selectionModel().select(
+            model.index(row, 0),
+            QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows,
+        )
+    _copy_formulae(tree)
+    assert QtWidgets.QApplication.clipboard().text() == "C10H12O\nC6H6"

@@ -31,6 +31,12 @@ class MainView(
     sigMergeAlignmentsRequested = QtCore.pyqtSignal(
         list,  # list[QModelIndex]
     )
+    # Formula assignments of every ensemble in the selected samples / alignments
+    sigFormulaBatchRequested = QtCore.pyqtSignal(
+        str,   # 'Sample' | 'Alignment'
+        str,   # 'find' (auto find-mfs) | 'clear' (remove assignments)
+        list,  # list[QModelIndex]
+    )
     sigLabelingRequested = QtCore.pyqtSignal(
         #
     )
@@ -161,6 +167,20 @@ class MainView(
             self._on_trigger_merge_alignments,
         )
 
+        # Auto find-mfs / remove formulae, on the selected samples / alignments
+        self._formula_actions = {}
+        for kind in ('Sample', 'Alignment'):
+            for action, text in (
+                ('find', "Auto find-mfs on all Ensembles"),
+                ('clear', "Remove all formula assignments"),
+            ):
+                qaction = QtWidgets.QAction(text)
+                qaction.triggered.connect(
+                    lambda _, kind=kind, action=action:
+                    self._on_trigger_formula_batch(kind, action)
+                )
+                self._formula_actions[kind, action] = qaction
+
 
     def _on_trigger_import_mzmls(self) -> None:
         self.sigImportMzMLsRequested.emit()
@@ -207,7 +227,21 @@ class MainView(
 
         menu = QtWidgets.QMenu(self)
         menu.addAction(self.actionShowSelectedSamples)
+        self._add_formula_actions(menu, 'Sample')
         menu.exec_(self.listViewSamples.mapToGlobal(pos))
+
+    def _add_formula_actions(self, menu: QtWidgets.QMenu, kind: str) -> None:
+        menu.addSeparator()
+        for action in ('find', 'clear'):
+            menu.addAction(self._formula_actions[kind, action])
+
+    def _on_trigger_formula_batch(self, kind: str, action: str) -> None:
+        indexes = (
+            self.listViewSamples.selectedIndexes() if kind == 'Sample'
+            else self._selected_alignment_indexes()
+        )
+        if indexes:
+            self.sigFormulaBatchRequested.emit(kind, action, indexes)
 
     def _on_trigger_filter_alignment(self) -> None:
         if not self.listViewAlignments.selectionModel().hasSelection():
@@ -248,6 +282,7 @@ class MainView(
             len(self._selected_alignment_indexes()) >= 2
         )
         menu.addAction(self.actionMergeAlignments)
+        self._add_formula_actions(menu, 'Alignment')
         menu.exec_(self.listViewAlignments.mapToGlobal(pos))
 
     def _on_filter_changed(self) -> None:
