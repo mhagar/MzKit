@@ -16,10 +16,12 @@ if TYPE_CHECKING:
     )
 
 
+# Data the suite reads (gitignored; distinct from the tests/test_files scratch)
+DATA_DIR = Path(__file__).parent / 'data'
+
 # Path to TestSoln2 .mzk
-TEST_SOLN_2_MZK_PATH = Path(
-    '/home/mh/Dropbox/MzKit/tests/test_soln_2.mzk'
-)
+TEST_SOLN_2_MZK_PATH = DATA_DIR / 'test_soln_2.mzk'
+TEST_ALIGNMENT_MZK = DATA_DIR / 'test_alignment.mzk'
 
 # Cycloheximide M+H
 TARGET_MZ = 282.17024
@@ -51,6 +53,19 @@ def data_registry() -> DataRegistry:
         registry.register_annotation(annotation)
 
     return registry
+
+
+@pytest.fixture(scope='session')
+def alignment_project():
+    """(samples, alignment) from test_alignment.mzk, loaded once per run.
+    Shared across tests: treat as read-only."""
+    if not TEST_ALIGNMENT_MZK.exists():
+        pytest.skip(
+            f"test data not present: {TEST_ALIGNMENT_MZK} "
+            "(MS data is gitignored; place it locally to run this test)"
+        )
+    data = load_project(TEST_ALIGNMENT_MZK)
+    return data.samples, data.alignments[0]
 
 
 @pytest.fixture
@@ -85,14 +100,14 @@ def ensemble(search_ftr_ptr, injection) -> 'Ensemble':
     )
 
 @pytest.fixture
-def input_filepaths() -> list[str]:
+def input_filepaths() -> list[Path]:
     paths = [
-        'tests/test_files/hifan_fractions/20250708_L97117_5_1.mzML',
-        'tests/test_files/hifan_fractions/20250708_L97117_5_3.mzML',
-        'tests/test_files/hifan_fractions/20250708_L97117_5_5.mzML',
-        'tests/test_files/hifan_fractions/20250708_L97117_5_7.mzML',
+        DATA_DIR / 'hifan_fractions/20250708_L97117_5_1.mzML',
+        DATA_DIR / 'hifan_fractions/20250708_L97117_5_3.mzML',
+        DATA_DIR / 'hifan_fractions/20250708_L97117_5_5.mzML',
+        DATA_DIR / 'hifan_fractions/20250708_L97117_5_7.mzML',
     ]
-    missing = [p for p in paths if not Path(p).exists()]
+    missing = [p for p in paths if not p.exists()]
     if missing:
         pytest.skip(
             f"test data not present (e.g. {missing[0]}); "

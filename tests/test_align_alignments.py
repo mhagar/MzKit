@@ -7,7 +7,6 @@ multi-sample .mzk fixture into two batches, aligns each independently, then
 merges the two alignments — and is skipped when the (gitignored) fixture is
 absent.
 """
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -16,9 +15,6 @@ from core.data_structs.alignment import AlignmentParams, EnsembleAlignment
 import core.cli.align_alignments as M
 import core.cli.align_ensembles as A
 
-TEST_ALIGNMENT_MZK = Path(
-    '/home/mh/Dropbox/MzKit/tests/test_files/test_alignment.mzk'
-)
 
 
 def _item(align_idx, ensemble_map, rt=1.0, mz=100.0):
@@ -134,16 +130,9 @@ def test_merge_spectra_empty_input():
 
 # --- integration ------------------------------------------------------------
 
-@pytest.fixture
-def two_batches():
-    if not TEST_ALIGNMENT_MZK.exists():
-        pytest.skip(
-            f"test data not present: {TEST_ALIGNMENT_MZK} "
-            "(MS data is gitignored; place it locally to run this test)"
-        )
-    from core.utils.persistence import load_project
-    samples = load_project(TEST_ALIGNMENT_MZK).samples
-    samples = [s for s in samples if s.injection is not None]
+@pytest.fixture(scope='module')
+def two_batches(alignment_project):
+    samples = [s for s in alignment_project[0] if s.injection is not None]
     if len(samples) < 4:
         pytest.skip("need >= 4 samples with MS data to split into two batches")
 

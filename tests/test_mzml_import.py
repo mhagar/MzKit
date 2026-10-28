@@ -27,10 +27,10 @@ def test_mzml_import(
     assert len(samples) == len(sample_names)
 
 FILEPATHS = [
-    'tests/test_files/hifan_fractions/20250708_L97117_5_1.mzML',
-    'tests/test_files/hifan_fractions/20250708_L97117_5_3.mzML',
-    'tests/test_files/hifan_fractions/20250708_L97117_5_5.mzML',
-    'tests/test_files/hifan_fractions/20250708_L97117_5_7.mzML',
+    'tests/data/hifan_fractions/20250708_L97117_5_1.mzML',
+    'tests/data/hifan_fractions/20250708_L97117_5_3.mzML',
+    'tests/data/hifan_fractions/20250708_L97117_5_5.mzML',
+    'tests/data/hifan_fractions/20250708_L97117_5_7.mzML',
 ]
 
 SAMPLENAMES = [

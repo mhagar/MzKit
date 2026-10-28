@@ -5,7 +5,7 @@ find-mfs itself is mocked (a synthetic AnalyteAnnotation): these exercise OUR
 integration — result conversion, top-hit auto-pick, adduct-label attachment,
 re-run replacement, and the DDA precursor pin — without loading MistNet or depending on
 its output. A real DIA `Ensemble` (composite spectrum + cofeature validation)
-comes from the committed tests/std_mix.mzk.
+comes from the gitignored tests/data/std_mix.mzk.
 """
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -29,9 +29,9 @@ from core.data_structs.ensemble import GenericAnnotation
 
 @pytest.fixture(scope='module')
 def _std_mix_registry():
-    p = Path('tests/std_mix.mzk')
+    p = Path(__file__).parent / 'data' / 'std_mix.mzk'
     if not p.exists():
-        pytest.skip('tests/std_mix.mzk absent')
+        pytest.skip('tests/data/std_mix.mzk absent')
     return _load_registry(p)
 
 

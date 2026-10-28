@@ -6,7 +6,6 @@ The tables and network are tested with lightweight stubs (no MS data
 needed). The MGF/file writing is tested end-to-end against the gitignored
 multi-sample alignment fixture, and skipped when that file is absent.
 """
-from pathlib import Path
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
 
@@ -28,9 +27,6 @@ from core.cli.export_table import (
 from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
 from core.utils.array_types import to_spec_arr
 
-TEST_ALIGNMENT_MZK = Path(
-    '/home/mh/Dropbox/MzKit/tests/test_files/test_alignment.mzk'
-)
 
 
 # --- tables (pure, stubbed) -------------------------------------------------
@@ -237,28 +233,6 @@ def test_graphml_imported_network(stubbed, tmp_path):
 
 # --- integration (needs the alignment fixture) ------------------------------
 
-@pytest.fixture
-def aligned():
-    if not TEST_ALIGNMENT_MZK.exists():
-        pytest.skip(
-            f"test data not present: {TEST_ALIGNMENT_MZK} "
-            "(MS data is gitignored; place it locally to run this test)"
-        )
-    from core.utils.persistence import load_project
-    samples, alignments, *_ = load_project(TEST_ALIGNMENT_MZK)
-    if not alignments:
-        from core.data_structs.alignment import AlignmentParams
-        import core.cli.align_ensembles as A
-        params = AlignmentParams(
-            rt_tolerance=10.0, mz_tolerance=0.01,
-            ms1_similarity_threshold=0.7, ms2_similarity_threshold=0.6,
-        )
-        alignment = A.align_ensembles(samples, params)
-    else:
-        alignment = alignments[0]
-    return samples, alignment
-
-
 def _samples_by_uuid(samples):
     return {s.uuid: s for s in samples}
 
@@ -267,8 +241,8 @@ def _representative(analyte, by_uuid):
     return analyte.representative_spectrum(analyte.resolve_members(by_uuid.get))
 
 
-def test_export_feature_mgf_consensus(aligned):
-    samples, alignment = aligned
+def test_export_feature_mgf_consensus(alignment_project):
+    samples, alignment = alignment_project
     by_uuid = _samples_by_uuid(samples)
 
     mgf = export_feature_mgf(alignment, by_uuid, mode='consensus')
@@ -291,10 +265,10 @@ def test_export_feature_mgf_consensus(aligned):
     assert len(feature_ids) <= 2 * n_detectable
 
 
-def test_export_feature_mgf_writes_consensus_formula(aligned):
+def test_export_feature_mgf_writes_consensus_formula(alignment_project):
     """In consensus mode FORMULA is the analyte's consensus formula, even if
     the representative ensemble itself has none."""
-    samples, alignment = aligned
+    samples, alignment = alignment_project
     by_uuid = _samples_by_uuid(samples)
 
     analyte = next(
@@ -314,8 +288,8 @@ def test_export_feature_mgf_writes_consensus_formula(aligned):
     assert 'FORMULA=' not in export_feature_mgf(alignment, by_uuid, mode='consensus')
 
 
-def test_export_feature_mgf_per_sample_has_more_entries(aligned):
-    samples, alignment = aligned
+def test_export_feature_mgf_per_sample_has_more_entries(alignment_project):
+    samples, alignment = alignment_project
     by_uuid = _samples_by_uuid(samples)
 
     per_sample = export_feature_mgf(alignment, by_uuid, mode='per_sample')
@@ -327,8 +301,8 @@ def test_export_feature_mgf_per_sample_has_more_entries(aligned):
     assert 'SAMPLE=' not in export_feature_mgf(alignment, by_uuid, mode='consensus')
 
 
-def test_export_to_file_writes_siblings(aligned, tmp_path):
-    samples, alignment = aligned
+def test_export_to_file_writes_siblings(alignment_project, tmp_path):
+    samples, alignment = alignment_project
     by_uuid = _samples_by_uuid(samples)
     names = {s.uuid: s.name for s in samples}
 
@@ -356,8 +330,8 @@ def test_export_to_file_writes_siblings(aligned, tmp_path):
     assert np.allclose(np.diag(matrix.values), 1.0)
 
 
-def test_export_to_file_respects_no_mgf_no_graphml(aligned, tmp_path):
-    samples, alignment = aligned
+def test_export_to_file_respects_no_mgf_no_graphml(alignment_project, tmp_path):
+    samples, alignment = alignment_project
     by_uuid = _samples_by_uuid(samples)
     names = {s.uuid: s.name for s in samples}
 

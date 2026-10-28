@@ -6,7 +6,6 @@ The integration test runs the full aligner on a multi-sample .mzk fixture and
 is skipped when that (gitignored) file is absent.
 """
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,9 +13,6 @@ import pytest
 from core.data_structs.alignment import AlignmentParams, EnsembleAlignment
 import core.cli.align_ensembles as A
 
-TEST_ALIGNMENT_MZK = Path(
-    '/home/mh/Dropbox/MzKit/tests/test_files/test_alignment.mzk'
-)
 
 
 def _bundle(sample_idxs):
@@ -92,14 +88,8 @@ def test_spectrum_from_sorts_and_drops_zeros():
 # --- integration ------------------------------------------------------------
 
 @pytest.fixture
-def aligned():
-    if not TEST_ALIGNMENT_MZK.exists():
-        pytest.skip(
-            f"test data not present: {TEST_ALIGNMENT_MZK} "
-            "(MS data is gitignored; place it locally to run this test)"
-        )
-    from core.utils.persistence import load_project
-    samples = load_project(TEST_ALIGNMENT_MZK).samples
+def aligned(alignment_project):
+    samples, _ = alignment_project
     params = AlignmentParams(
         rt_tolerance=10.0, mz_tolerance=0.01,
         ms1_similarity_threshold=0.7, ms2_similarity_threshold=0.6,

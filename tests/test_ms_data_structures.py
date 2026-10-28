@@ -7,7 +7,7 @@ from core.data_structs.scan_array import ScanArrayParameters
 from core.cli.mzml_import import mzml_to_injection
 
 
-MZML_PATH = Path("tests/WATERS_DDA_STDMIX_R1.mzML")
+MZML_PATH = Path(__file__).parent / "data" / "WATERS_DDA_STDMIX_R1.mzML"
 
 
 def test_mzml_to_injection():

@@ -14,7 +14,6 @@ from core.data_structs.alignment import EnsembleAlignment
 from core.data_structs.similarity_matrix import ImportParams
 from core.utils import persistence
 from tests.test_cluster_analytes import FRAGS_A, FRAGS_B, FRAGS_C, _build
-from tests.test_export_table import aligned  # noqa: F401 (fixture)
 
 
 def _synthetic():
@@ -45,9 +44,9 @@ def test_computed_matrix_shape():
     assert not matrix.is_imported
 
 
-def test_new_path_matches_old_on_test_alignment(aligned):  # noqa: F811
+def test_new_path_matches_old_on_test_alignment(alignment_project):
     """transform(floor=0) on computed cosine is a no-op: same clustering."""
-    samples, alignment = aligned
+    samples, alignment = alignment_project
     params = ClusterParams(scoring=MODIFIED_COSINE)
     analytes, spectra = analyte_ms2_spectra(alignment, samples)
     sim, _ = similarity_matrix(spectra, params)

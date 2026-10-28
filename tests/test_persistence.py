@@ -1,38 +1,31 @@
 from core.utils import persistence
 
-from core.cli.mzml_import import mzml_to_injection
-from core.data_structs import DataRegistry, Sample
-from core.data_structs.scan_array import ScanArrayParameters
+from core.data_structs import DataRegistry
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from core.data_structs import (
-        Injection, Fingerprint,
-    )
 
 logging.basicConfig(
     level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
-mzml_paths = [
-    'test_files/hifan_fractions/20250708_L97117_5_6.mzML',
-    # 'test_files/hifan_fractions/20250708_L97117_5_7.mzML',
-    # 'test_files/hifan_fractions/20250708_L97117_5_8.mzML',
-]
-
-fingerprint_csv_path = 'test_files/L97117_5_1_to_19_biological_response.csv'
-
-
-def test_save_project(
+def test_save_load_project(
     data_registry: DataRegistry,
+    tmp_path,
 ):
+    filepath = tmp_path / 'test_project.mzk'
     persistence.save_project(
-        filepath=Path('test_project.mzk'),
+        filepath=filepath,
         data_registry=data_registry
     )
+    samples = persistence.load_project(filepath=filepath).samples
+
+    # Check if loaded and saved samples are indeed the same
+    sample_uuids_original = data_registry.get_all_sample_uuids()
+    sample_uuids_loaded = [ x.uuid for x in samples ]
+
+    assert sample_uuids_loaded == sample_uuids_original
 
 
 def test_formula_assignment_roundtrip(tmp_path):
@@ -119,7 +112,10 @@ def test_analyte_annotation_roundtrip(tmp_path):
     from core.data_structs import AnalyteAnnotation
 
     reg = DataRegistry()
-    named = AnalyteAnnotation(analyte_uuid=7, name="Psammaplin A", smiles="CCO")
+    named = AnalyteAnnotation(
+        analyte_uuid=7, name="Psammaplin A", smiles="CCO",
+        source="NPAtlas", db_id="NPA1", scores={"explained": "7/10", "cosine": 0.61},
+    )
     reg.register_annotation(named)
     reg.register_annotation(AnalyteAnnotation(analyte_uuid=8, name="unknown 1"))
 
@@ -191,71 +187,3 @@ def test_alignment_analyte_uuid_roundtrip(tmp_path):
     assert loaded.uuid == analyte.uuid
     assert alignments[0].get_analyte(analyte.uuid) is loaded
     assert loaded.ensemble_map == {1: 11, 2: 22}
-
-
-def test_load_project(
-    data_registry: DataRegistry,
-):
-    samples = persistence.load_project(
-        filepath=Path('test_project.mzk')
-    ).samples
-
-    # Check if loaded and saved samples are indeed the same
-    sample_uuids_original = data_registry.get_all_sample_uuids()
-    sample_uuids_loaded = [ x.uuid for x in samples ]
-
-    assert sample_uuids_loaded == sample_uuids_original
-
-
-def test_populate_data_registry(
-) -> DataRegistry:
-    """
-    Populates a DataRegistry using test files
-    :return:
-    """
-    import pytest
-    missing = [p for p in mzml_paths if not Path(p).exists()]
-    if missing:
-        pytest.skip(
-            f"test data not present (e.g. {missing[0]}); mzML is gitignored"
-        )
-
-    data_registry = DataRegistry()
-
-    scan_array_params = ScanArrayParameters(
-        ms_level=1,
-        mz_tolerance=0.03,
-        scan_gap_tolerance=3,
-        min_intsy=3000,
-        scan_nums=None,
-    )
-
-    for mzml_path in mzml_paths:
-        injection: 'Injection' = mzml_to_injection(
-            input_filepath=Path(mzml_path),
-            scan_array_params=( scan_array_params, scan_array_params),
-            verbose=True,
-        )
-
-        sample = Sample(
-            name="Test Sample",
-            injection=injection,
-        )
-
-        data_registry.register_sample(
-            sample
-        )
-
-    return data_registry
-
-
-if __name__ == "__main__":
-    data_registry = test_populate_data_registry()
-
-    test_save_project(data_registry)
-    test_load_project(data_registry)
-
-
-
-
-
