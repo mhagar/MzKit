@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from core.cli.cluster_analytes import ClusterParams, cluster_analytes
+from core.cli.cluster_analytes import MODIFIED_COSINE, ClusterParams, cluster_analytes
 from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
 from core.utils.array_types import to_spec_arr
 
@@ -61,7 +61,7 @@ def test_related_analytes_cluster_and_no_ms2_dropped():
         (500.0, 214.0, FRAGS_B),     # analogue of the first
         (50.0, 180.0, None),         # no MS2
     ])
-    result = cluster_analytes(alignment, samples, ClusterParams())
+    result = cluster_analytes(alignment, samples, ClusterParams(scoring=MODIFIED_COSINE))
 
     assert result.n_dropped == 1
     assert analytes[3].uuid not in result.analyte_uuids
@@ -91,7 +91,7 @@ def test_unrelated_analytes_form_rt_sorted_comb():
         entries.append((float(rt), 500.0 + i, frags))
     alignment, samples, analytes = _build(entries)
 
-    result = cluster_analytes(alignment, samples, ClusterParams())
+    result = cluster_analytes(alignment, samples, ClusterParams(scoring=MODIFIED_COSINE))
     rt_of = {a.uuid: a.consensus_rt for a in analytes}
     rts = [rt_of[u] for u in result.analyte_uuids]
     assert rts == sorted(rts)
@@ -104,7 +104,7 @@ def test_min_matched_peaks_zeroes_weak_matches():
         (200.0, 214.0, FRAGS_B),
     ])
     strict = cluster_analytes(
-        alignment, samples, ClusterParams(min_matched_peaks=10),
+        alignment, samples, ClusterParams(min_matched_peaks=10, scoring=MODIFIED_COSINE),
     )
     assert strict.similarity[0, 1] == 0.0
     assert len(strict.nodes) == 0
@@ -119,5 +119,18 @@ def test_cancel_returns_none():
     cancel = threading.Event()
     cancel.set()
     assert cluster_analytes(
-        alignment, samples, ClusterParams(), cancel_event=cancel,
+        alignment, samples, ClusterParams(scoring=MODIFIED_COSINE), cancel_event=cancel,
     ) is None
+
+
+def test_config_round_trip_omits_scoring():
+    import configparser
+    from core.cli.cluster_analytes import (
+        CLUSTERING_SECTION, MS2DEEPSCORE, cluster_params_from_config, cluster_params_to_config,
+    )
+    config = configparser.ConfigParser()
+    config.read_dict({CLUSTERING_SECTION: {'scoring': MODIFIED_COSINE}})   # stale saved choice
+    cluster_params_to_config(config, ClusterParams(tolerance=0.05, scoring=MODIFIED_COSINE), 'complete')
+    assert not config.has_option(CLUSTERING_SECTION, 'scoring')
+    params = cluster_params_from_config(config)
+    assert params.tolerance == 0.05 and params.scoring == MS2DEEPSCORE

@@ -8,7 +8,7 @@ Usage:
     mzkit align            - Align ensembles across samples by spectral similarity
     mzkit merge-alignments - Merge existing alignments by matching analytes
     mzkit filter           - Filter an alignment by expression
-    mzkit export-table     - Export alignment as feature tables (+ .mgf, .graphml)
+    mzkit export-table     - Export alignment as feature tables (+ .mgf, .graphml, sample similarity)
     mzkit export-bpcs      - Export base peak chromatograms
     mzkit export-compound  - Export XIC + spectra for a single analyte
     mzkit import-similarity  - Import an external similarity matrix
@@ -611,11 +611,27 @@ def cmd_filter(args: argparse.Namespace) -> None:
 
 
 def cmd_export_table(args: argparse.Namespace) -> None:
-    from core.cli.cluster_analytes import cluster_params_from_config
+    from core.cli.cluster_analytes import (
+        MS2DEEPSCORE, cluster_params_from_config, linkage_from_config,
+        similarity_provenance,
+    )
+    from core.cli.cluster_samples import sample_cluster_params_from_config
+    from core.utils import ms2deepscore
     from core.utils.config import load_config
+
+    config = load_config()
+    network_params = cluster_params_from_config(config)
+    sample_params = sample_cluster_params_from_config(config)
 
     registry = _load_registry(Path(args.mzk))
     alignment = _get_alignment(registry, args.alignment_name)
+
+    # A matrix saved in the .mzk is reused; otherwise one is computed
+    matrix = registry.find_matrix(similarity_provenance(network_params), alignment)
+    if (matrix is None and (args.graphml or sample_params.ms2_grouping)
+            and network_params.scoring == MS2DEEPSCORE
+            and not ms2deepscore.model_available()):
+        raise SystemExit(ms2deepscore.missing_model_message())
 
     all_samples = {s.uuid: s for s in registry.get_all_samples()}
     sample_names = {s.uuid: s.name for s in registry.get_all_samples()}
@@ -633,8 +649,11 @@ def cmd_export_table(args: argparse.Namespace) -> None:
         formulas=registry.chosen_formulas(),
         groups=registry.group_titles(),
         write_graphml=args.graphml,
-        min_edge_cosine=args.min_edge_cosine,
-        network_params=cluster_params_from_config(load_config()),
+        min_edge_score=args.min_edge_cosine,
+        network_params=network_params,
+        matrix=matrix,
+        analyte_linkage=linkage_from_config(config),
+        sample_params=sample_params,
     )
 
 
@@ -1147,7 +1166,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_export = subparsers.add_parser(
         'export-table',
         help='Export alignment as abundance + formula tables '
-             '(+ .mgf, .graphml)',
+             '(+ .mgf, .graphml, sample similarity)',
     )
     p_export.add_argument(
         'mzk',
@@ -1157,7 +1176,8 @@ def build_parser() -> argparse.ArgumentParser:
         '-o', '--output',
         required=True,
         help='Output path; e.g. features.tsv writes features_abundance.tsv, '
-             'features_formulas.tsv, features.mgf, features.graphml',
+             'features_formulas.tsv, features.mgf, features.graphml, '
+             'features_sample_similarity.tsv',
     )
     p_export.add_argument(
         '-f', '--format',
@@ -1188,16 +1208,16 @@ def build_parser() -> argparse.ArgumentParser:
         '--graphml',
         action=argparse.BooleanOptionalAction,
         default=True,
-        help='Also write a .graphml MS2 modified-cosine network, scored per '
-             'the [analyte_clustering] config (default: on; disable with '
+        help='Also write a .graphml MS2 similarity network (a matching '
+             'matrix saved in the .mzk, else MS2DeepScore, or modified cosine '
+             'per the [analyte_clustering] config; default: on; disable with '
              '--no-graphml)',
     )
     p_export.add_argument(
         '--min-edge-cosine',
         type=float,
         default=0.7,
-        help='Drop network edges with modified cosine below this '
-             '(default: 0.7)',
+        help='Drop network edges scoring below this (default: 0.7)',
     )
     p_export.set_defaults(func=cmd_export_table)
 

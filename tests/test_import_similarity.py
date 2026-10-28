@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from core.cli.cluster_analytes import (
-    ClusterKey, ClusterParams, analyte_ms2_spectra, cluster_analytes,
+    MODIFIED_COSINE, ClusterKey, ClusterParams, analyte_ms2_spectra, cluster_analytes,
     cluster_matrix, similarity_matrix,
 )
 from core.cli.import_similarity import (
@@ -171,7 +171,7 @@ def test_imported_cosine_matrix_clusters_like_cosine():
         (500.0, 214.0, FRAGS_B),
         (50.0, 180.0, None),
     ])
-    params = ClusterParams()
+    params = ClusterParams(scoring=MODIFIED_COSINE)
     expected = cluster_analytes(alignment, samples, params)
 
     ms2_analytes, spectra = analyte_ms2_spectra(alignment, samples)

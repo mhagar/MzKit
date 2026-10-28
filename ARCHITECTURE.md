@@ -72,10 +72,12 @@ DataRegistry                       core/data_structs/data_registry.py
 
 - **SimilarityMatrix** — raw, labelled analyte similarity (ids = analyte uuid
   strings), either computed (`cluster_analytes.compute_similarity_matrix`:
-  MS2 modified cosine / MS2DeepScore) or imported from CSV/TSV
+  MS2DeepScore by default / MS2 modified cosine) or imported from CSV/TSV
   (`import_similarity.read_similarity_csv`). Both cluster through one path,
   `cluster_analytes.cluster_matrix` = `transform` (under the matrix's
-  `ImportParams`; floor 0 for computed scores, a no-op) + `cluster_from_similarity`.
+  `ImportParams`; for computed scores only the floor, 0 until edited) + `cluster_from_similarity`.
+  The export's .graphml is built from the same matrix and transform
+  (`export_network.build_matrix_network_graphml`).
   Not scoped to an alignment: offered for any alignment sharing an id
   (`matrices_for_analytes`), reused instead of recomputed when provenance
   matches and it covers the alignment (`find_matrix`), and dropped once no

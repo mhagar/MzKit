@@ -2,32 +2,25 @@
 Export an EnsembleAlignment as a molecular network (.graphml, e.g. for
 Cytoscape), GNPS-FBMN style.
 
-Nodes are analytes (all of them; those without a representative MS2 are
-singletons). Edges are pairwise modified cosine between the analytes'
-representative MS2 spectra, scored exactly as in Alignment Viewer cluster
-mode (`core.cli.cluster_analytes`, same ClusterParams / config section).
-Only pairs scoring at least `min_edge_cosine` get an edge (pairs under
-`min_matched_peaks` score 0).
-
-`build_imported_network_graphml` does the same for an imported similarity
-matrix (see `core.cli.import_similarity`).
+Nodes are analytes (all of them; those not in the matrix, e.g. without a
+representative MS2, are singletons). Edges are pairwise similarity from a
+`SimilarityMatrix` - computed (MS2DeepScore by default, or modified cosine;
+`core.cli.cluster_analytes.compute_similarity_matrix`) or imported
+(`core.cli.import_similarity`) - under the same transform the Alignment
+Viewer clusters by. Only pairs scoring at least `min_edge_score` get an edge.
 
 Node ids are the analyte row ids used by the feature tables / MGF
 (`analyte_id` / `FEATURE_ID`).
 """
-import threading
-from typing import Callable, Mapping, Optional, TYPE_CHECKING
+from typing import Mapping, Optional, TYPE_CHECKING
 from xml.sax.saxutils import escape, quoteattr
 
 import numpy as np
 
-from core.cli.cluster_analytes import (
-    ClusterParams, analyte_ms2_spectra, similarity_matrix,
-)
 from core.cli.import_similarity import transform
 
 if TYPE_CHECKING:
-    from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
+    from core.data_structs.similarity_matrix import SimilarityMatrix
     from core.data_structs import Sample
     from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
     from core.data_structs.uuid_types import AnalyteUUID, EnsembleUUID
@@ -44,89 +37,41 @@ _NODE_KEYS = [
     ('n_samples', 'int'),
     ('group', 'string'),
 ]
-_COSINE_EDGE_KEYS = [
-    ('cosine', 'double'),
-    ('matched_peaks', 'int'),
-    ('mz_delta', 'double'),
-]
-_IMPORTED_EDGE_KEYS = [
+_EDGE_KEYS = [
     ('similarity', 'double'),
     ('mz_delta', 'double'),
 ]
 
 
-def build_network_graphml(
+def build_matrix_network_graphml(
     alignment: 'EnsembleAlignment',
     samples: list['Sample'],
-    params: ClusterParams = ClusterParams(),
+    matrix: 'SimilarityMatrix',
     formulas: Optional[Mapping['EnsembleUUID', str]] = None,
     groups: Optional[Mapping['AnalyteUUID', str]] = None,
-    min_edge_cosine: float = 0.7,
-    progress_callback: Optional[Callable[[float, str], None]] = None,
-    cancel_event: Optional[threading.Event] = None,
-) -> Optional[str]:
+    min_edge_score: float = 0.7,
+) -> str:
     """
-    GraphML text for `alignment`'s MS2 similarity network.
+    GraphML text for `alignment`'s network by `matrix`, transformed under
+    its `default_transform` (as clustered in the Alignment Viewer).
 
-    :param params: scoring parameters (see `cluster_params_from_config`).
     :param formulas: accepted formula per ensemble, for the
         consensus_formula node attributes.
     :param groups: group titles per analyte, for the group node attribute.
-    :param min_edge_cosine: drop edges scoring below this (GNPS default
-        0.7). Must be > 0; unscored pairs are 0.
-    :return: None if cancelled.
+    :param min_edge_score: drop edges scoring below this (GNPS default
+        0.7), or below the transform's floor if that is higher.
     """
-    ms2_analytes, spectra = analyte_ms2_spectra(alignment, samples)
-    scored = similarity_matrix(
-        spectra, params, progress_callback, cancel_event,
+    analytes, similarity, _report = transform(
+        matrix, alignment, matrix.default_transform,
     )
-    if scored is None:
-        return None
-    similarity, matches = scored
-
-    if matches is None:  # MS2DeepScore: no matched peaks
-        edge_keys = _IMPORTED_EDGE_KEYS
-        edges = [
-            (ms2_analytes[a], ms2_analytes[b], {'similarity': f"{similarity[a, b]:.4f}"})
-            for a, b in _pairs_above(similarity, min_edge_cosine)
-        ]
-    else:
-        edge_keys = _COSINE_EDGE_KEYS
-        edges = [
-            (ms2_analytes[a], ms2_analytes[b], {
-                'cosine': f"{similarity[a, b]:.4f}",
-                'matched_peaks': int(matches[a, b]),
-            })
-            for a, b in _pairs_above(similarity, min_edge_cosine)
-        ]
-    return _graphml(
-        alignment, samples, formulas, groups, 'has_ms2',
-        {a.uuid for a in ms2_analytes}, edge_keys, edges,
-    )
-
-
-def build_imported_network_graphml(
-    alignment: 'EnsembleAlignment',
-    samples: list['Sample'],
-    raw: 'SimilarityMatrix',
-    import_params: 'ImportParams',
-    formulas: Optional[Mapping['EnsembleUUID', str]] = None,
-    groups: Optional[Mapping['AnalyteUUID', str]] = None,
-) -> str:
-    """
-    GraphML text for `alignment`'s network by an imported similarity
-    matrix, transformed under `import_params` (its floor is the edge
-    threshold). Node attributes are as in `build_network_graphml`, with
-    `in_matrix` in place of `has_ms2`.
-    """
-    analytes, similarity, _report = transform(raw, alignment, import_params)
     edges = [
         (analytes[a], analytes[b], {'similarity': f"{similarity[a, b]:.4f}"})
-        for a, b in _pairs_above(similarity, 0.0)
+        for a, b in _pairs_above(similarity, min_edge_score)
     ]
     return _graphml(
-        alignment, samples, formulas, groups, 'in_matrix',
-        {a.uuid for a in analytes}, _IMPORTED_EDGE_KEYS, edges,
+        alignment, samples, formulas, groups,
+        'in_matrix' if matrix.is_imported else 'has_ms2',
+        {a.uuid for a in analytes}, _EDGE_KEYS, edges,
     )
 
 

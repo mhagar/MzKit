@@ -5,7 +5,7 @@ the same clustering path, live in the DataRegistry, and persist in .mzk.
 import numpy as np
 
 from core.cli.cluster_analytes import (
-    MS2DEEPSCORE, ClusterParams, analyte_ms2_spectra, cluster_analytes,
+    MODIFIED_COSINE, MS2DEEPSCORE, ClusterParams, analyte_ms2_spectra, cluster_analytes,
     cluster_from_similarity, compute_similarity_matrix, similarity_matrix,
     similarity_provenance,
 )
@@ -36,19 +36,19 @@ def _imported(ids):
 
 def test_computed_matrix_shape():
     alignment, samples, analytes = _synthetic()
-    matrix = compute_similarity_matrix(alignment, samples, ClusterParams())
+    matrix = compute_similarity_matrix(alignment, samples, ClusterParams(scoring=MODIFIED_COSINE))
     assert matrix.ids == tuple(str(a.uuid) for a in analytes[:3])
     assert matrix.uncovered == (str(analytes[3].uuid),)
     assert matrix.values.dtype == np.float32
     assert matrix.default_transform == ImportParams(floor=0.0)
-    assert matrix.provenance == similarity_provenance(ClusterParams())
+    assert matrix.provenance == similarity_provenance(ClusterParams(scoring=MODIFIED_COSINE))
     assert not matrix.is_imported
 
 
 def test_new_path_matches_old_on_test_alignment(aligned):  # noqa: F811
     """transform(floor=0) on computed cosine is a no-op: same clustering."""
     samples, alignment = aligned
-    params = ClusterParams()
+    params = ClusterParams(scoring=MODIFIED_COSINE)
     analytes, spectra = analyte_ms2_spectra(alignment, samples)
     sim, _ = similarity_matrix(spectra, params)
     old = cluster_from_similarity(
@@ -74,7 +74,7 @@ def test_registry_lookup_reuse_and_orphans():
     reg.register_alignment(alignment)
     reg.register_alignment(child)
 
-    computed = compute_similarity_matrix(alignment, samples, ClusterParams())
+    computed = compute_similarity_matrix(alignment, samples, ClusterParams(scoring=MODIFIED_COSINE))
     imported = _imported([str(analytes[0].uuid), 'stranger'])
     added = []
     reg.subscribe_to_changes(added.append, lambda m: None, change_type='Matrix')
@@ -86,10 +86,10 @@ def test_registry_lookup_reuse_and_orphans():
     assert reg.matrices_for_analytes([a.uuid for a in child.analytes]) == [computed, imported]
 
     # Reuse: same provenance, alignment covered by ids ∪ uncovered (incl. a child)
-    prov = similarity_provenance(ClusterParams())
+    prov = similarity_provenance(ClusterParams(scoring=MODIFIED_COSINE))
     assert reg.find_matrix(prov, alignment) is computed
     assert reg.find_matrix(prov, child) is computed
-    assert reg.find_matrix(similarity_provenance(ClusterParams(tolerance=0.05)), alignment) is None
+    assert reg.find_matrix(similarity_provenance(ClusterParams(tolerance=0.05, scoring=MODIFIED_COSINE)), alignment) is None
     assert reg.find_matrix(similarity_provenance(ClusterParams(scoring=MS2DEEPSCORE)), alignment) is None
 
     # Removing the parent keeps both (the child still shares ids)...
@@ -108,7 +108,7 @@ def test_registry_lookup_reuse_and_orphans():
 
 def test_matrix_roundtrip(tmp_path):
     alignment, samples, analytes = _synthetic()
-    computed = compute_similarity_matrix(alignment, samples, ClusterParams())
+    computed = compute_similarity_matrix(alignment, samples, ClusterParams(scoring=MODIFIED_COSINE))
     imported = _imported([str(a.uuid) for a in analytes])
     imported.values[0, 1] = np.nan
 

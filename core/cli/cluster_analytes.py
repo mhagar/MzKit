@@ -1,13 +1,13 @@
 """
 Hierarchical clustering of an EnsembleAlignment's AlignedAnalytes.
 
-By default, this uses modified cosine scores:
+By default, this uses MS2DeepScore:
 1. Each analyte's representative MS2 (`AlignedAnalyte.representative_spectrum`)
    is converted to a matchms Spectrum; analytes without MS2 are dropped.
-2. All pairs are scored by modified cosine (`matchms.similarity.ModifiedCosine`,
-   the greedy implementation), or by MS2DeepScore (`core.utils.ms2deepscore`,
-   positive mode assumed, scores clipped to [0, 1]) if `ClusterParams.scoring`
-   says so.
+2. All pairs are scored by MS2DeepScore (`core.utils.ms2deepscore`, positive
+   mode assumed, scores clipped to [0, 1]), or by modified cosine
+   (`matchms.similarity.ModifiedCosine`, the greedy implementation) if
+   `ClusterParams.scoring` says so.
 3. Average-linkage (by default) clustering on distance = 1 - similarity.
 
 Steps 1-2 (`compute_similarity_matrix`) produce a `SimilarityMatrix`, the
@@ -61,7 +61,7 @@ class ClusterParams(NamedTuple):
     tolerance: m/z tolerance for matching peaks (ModifiedCosine).
     mz_power / intensity_power: peak weighting in the cosine.
     min_matched_peaks: pairs matching fewer peaks than this score 0.
-    scoring: MODIFIED_COSINE or MS2DEEPSCORE (which ignores the cosine fields).
+    scoring: MS2DEEPSCORE (default; ignores the cosine fields) or MODIFIED_COSINE.
 
     Describes how to *compute* a similarity matrix; the linkage is a
     clustering option (`cluster_matrix`).
@@ -70,7 +70,7 @@ class ClusterParams(NamedTuple):
     mz_power: float = 0.0
     intensity_power: float = 1.0
     min_matched_peaks: int = 3
-    scoring: str = MODIFIED_COSINE
+    scoring: str = MS2DEEPSCORE
 
 
 def scoring_name(scoring: str) -> str:
@@ -152,13 +152,17 @@ def cluster_params_to_config(
 ) -> None:
     """
     Write ClusterParams and the linkage into the ``[analyte_clustering]``
-    section (in memory; caller persists via ``save_config``).
+    section (in memory; caller persists via ``save_config``). `scoring` is
+    left out on purpose so every session starts on the default
+    (MS2DeepScore); a stale saved one is removed.
     """
     s = CLUSTERING_SECTION
     if not config.has_section(s):
         config.add_section(s)
     for key, value in params._asdict().items():
-        config.set(s, key, str(value))
+        if key != 'scoring':
+            config.set(s, key, str(value))
+    config.remove_option(s, 'scoring')
     config.set(s, "linkage_method", linkage_method)
 
 

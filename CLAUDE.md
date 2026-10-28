@@ -53,9 +53,10 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 - `align_ensembles.py` - Cross-sample alignment by spectral cosine similarity
 - `filter_alignment.py` - Filter an EnsembleAlignment by Python expression
 - `import_feature_table.py` - Import external feature coordinates (MZmine CSV) and generate Ensembles + alignment
-- `export_table.py` - Export an EnsembleAlignment as abundance + formula tables (CSV/TSV), plus companion .mgf and .graphml
-- `export_network.py` - MS2 modified-cosine network of an alignment's analytes as GraphML (scored via `cluster_analytes.py`)
-- `cluster_analytes.py` - Hierarchical clustering of an alignment's analytes by MS2 modified cosine or MS2DeepScore (Alignment Viewer cluster mode)
+- `export_table.py` - Export an EnsembleAlignment as abundance + formula tables (CSV/TSV), plus companion .mgf, .graphml and sample similarity (GUI: following the Alignment Viewer's applied clustering settings)
+- `export_network.py` - Similarity network of an alignment's analytes as GraphML, from a SimilarityMatrix (computed via `cluster_analytes.py`, MS2DeepScore by default, or imported)
+- `cluster_samples.py` - Hierarchical clustering of an alignment's samples: Jaccard of analyte presence (optionally MS2-grouped) or an imported lineage (Alignment Viewer sample cluster mode)
+- `cluster_analytes.py` - Hierarchical clustering of an alignment's analytes by MS2DeepScore (default) or MS2 modified cosine (Alignment Viewer cluster mode)
 - `find_cofeatures.py` - Core cofeature detection (Pearson correlation of extracted ion chromatograms)
 - `segment_chromatogram.py` - Peak boundary detection
 - `export_bpcs.py` - Export base peak chromatograms for all samples in an .mzk file (JSON)

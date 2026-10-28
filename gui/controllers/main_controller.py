@@ -589,6 +589,53 @@ class MainController:
         if not alignment:
             return
 
+        from PyQt5.QtWidgets import QMessageBox
+        from core.cli.cluster_analytes import (
+            MS2DEEPSCORE, ClusterParams, cluster_params_from_config,
+            linkage_from_config, similarity_provenance,
+        )
+        from core.cli.cluster_samples import LINEAGE, sample_cluster_params_from_config
+        from core.utils import ms2deepscore
+        from core.utils.config import load_config
+
+        # Network + sample similarity follow the viewer's applied clustering settings
+        alignment_viewer = self.subwindow_manager.get_window('alignment_viewer')
+        if alignment_viewer is not None:
+            settings = alignment_viewer.export_settings()
+        else:
+            config = load_config()
+            settings = (
+                cluster_params_from_config(config), linkage_from_config(config),
+                sample_cluster_params_from_config(config), None,
+            )
+        source, analyte_linkage, sample_params, sample_ranks = settings
+        if isinstance(source, ClusterParams):
+            network_params = source
+            matrix = self.data_registry.find_matrix(
+                similarity_provenance(source), alignment,
+            )
+        else:
+            network_params = ClusterParams()
+            matrix = self.data_registry.get_matrix(source)
+            if matrix not in self.data_registry.matrices_for_analytes(
+                a.uuid for a in alignment.analytes
+            ):
+                QMessageBox.warning(
+                    self.main_view, "Similarity matrix doesn't cover this alignment",
+                    "Analytes are clustered by an imported matrix sharing no "
+                    "analytes with this alignment. Pick another method in "
+                    "the Alignment Viewer's analyte clustering parameters.",
+                )
+                return
+        # Refuse before asking for a path if scores must be computed without weights
+        if (matrix is None and network_params.scoring == MS2DEEPSCORE
+                and not ms2deepscore.model_available()):
+            QMessageBox.warning(
+                self.main_view, "MS2DeepScore weights missing",
+                ms2deepscore.missing_model_message(),
+            )
+            return
+
         filepath, _ = QFileDialog.getSaveFileName(
             self.main_view,
             "Export Feature Table",
@@ -599,8 +646,6 @@ class MainController:
             return
 
         from pathlib import Path
-        from core.cli.cluster_analytes import cluster_params_from_config
-        from core.utils.config import load_config
 
         path = Path(filepath)
         separator = ',' if path.suffix.lower() == '.csv' else '\t'
@@ -615,7 +660,7 @@ class MainController:
             else:
                 sample_names[uuid] = str(uuid)
 
-        # Background: the .graphml's pairwise MS2 scoring can take a while
+        # Background: computing a similarity matrix can take a while
         self.process_controller.start_process(
             module_path="core.cli.export_table",
             function_name="export_feature_table_to_file",
@@ -627,11 +672,11 @@ class MainController:
                 "separator": separator,
                 "formulas": self.data_registry.chosen_formulas(),
                 "groups": self.data_registry.group_titles(),
-                "network_params": cluster_params_from_config(load_config()),
-                # TODO: imported-matrix networks disabled until reworked
-                # "imported_similarities": self.subwindow_manager.get_window(
-                #     'alignment_viewer'
-                # ).imported_similarities(),
+                "network_params": network_params,
+                "matrix": matrix,
+                "analyte_linkage": analyte_linkage,
+                "sample_params": sample_params,
+                "sample_ranks": sample_ranks if sample_params.method == LINEAGE else None,
             },
             on_completion_func=lambda written: print(
                 "Exported:\n" + "\n".join(f"  - {p}" for p in written or [])

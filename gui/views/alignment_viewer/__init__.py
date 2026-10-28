@@ -10,11 +10,17 @@ clustering by a registered SimilarityMatrix - computed (MS2 modified cosine /
 MS2DeepScore, core/cli/cluster_analytes.py) or imported
 (core/cli/import_similarity.py) - with the dendrogram drawn above the map
 (gui/widgets/AlignmentDendrogramWidget.py). Matrix computation and clustering
-run in the background via MainController (sigClusterRequested).
+run in the background via MainController (sigClusterRequested). Parameters:
+the analyte cluster button's menu (cluster_params_dialog.py).
 
-Sample cluster mode orders the lanes by Jaccard similarity of the samples'
-analyte presence (core/cli/cluster_samples.py), with a dendrogram left of
-the map; it combines with either analyte layout.
+Sample cluster mode orders the lanes by a sample clustering
+(core/cli/cluster_samples.py), with a dendrogram left of the map; it
+combines with either analyte layout. By default that's Jaccard similarity
+of analyte presence, optionally over MS2 groups cut from the analyte
+clustering (computed on demand; the analyte layout is unaffected), or an
+imported lineage (e.g. a taxonomy). Parameters: the sample cluster
+button's menu (sample_cluster_params_dialog.py). Exports
+(MainController) use both modes' applied settings (`export_settings`).
 
 User AnalyteGroups (core/data_structs/analyte_group.py) are drawn on the
 group track above the map in either layout (gui/widgets/AlignmentGroupTrackWidget.py)
@@ -43,9 +49,12 @@ from core.cli.cluster_analytes import (
     ClusterKey, ClusterParams, cluster_params_from_config, linkage_from_config,
     scoring_name, similarity_provenance,
 )
-from core.cli.cluster_samples import SampleClustering, cluster_samples
+from core.cli.cluster_samples import (
+    LINEAGE, SampleClusterParams, SampleClustering, cluster_samples_by,
+    sample_cluster_params_from_config,
+)
 from core.data_structs.analyte_annotation import AnalyteAnnotation
-from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
+from core.data_structs.similarity_matrix import SimilarityMatrix
 from core.utils.config import load_config
 from core.utils.render_molecule import smiles_to_svg
 from gui.resources.AlignmentViewerWindow import Ui_Form
@@ -58,6 +67,9 @@ from gui.views.alignment_viewer.groups_panel import (
 )
 from gui.views.alignment_viewer.inspector import Inspector
 from gui.views.alignment_viewer.render_params_dialog import RenderParamsDialog
+from gui.views.alignment_viewer.sample_cluster_params_dialog import (
+    SampleClusterParamsDialog,
+)
 from gui.widgets.alignment_plot.layout import (
     ANCHOR_COLOR, CURRENT_COLOR, HoverTarget,
 )
@@ -114,8 +126,16 @@ class AlignmentViewer(
         self._clusterings: dict[ClusterKey, 'AnalyteClustering'] = {}
         self._shown_clustering: Optional['AnalyteClustering'] = None
         self._cluster_dialog: Optional[ClusterParamsDialog] = None
-        # Sample cluster mode: computed on demand, once per alignment
+        # Sample cluster mode: computed on demand, and again whenever the
+        # inputs in _sample_inputs (params, ranks, analyte clustering) change
+        self._sample_params: SampleClusterParams = (
+            sample_cluster_params_from_config(config)
+        )
+        # sample name -> ranks (coarse to fine), for a LINEAGE _sample_params
+        self._sample_ranks: Optional[dict[str, tuple[str, ...]]] = None
         self._sample_clustering: Optional[SampleClustering] = None
+        self._sample_inputs: tuple = (None, None, None)
+        self._sample_dialog: Optional[SampleClusterParamsDialog] = None
 
         self.plot_item = self.plotAlignment.pi
         self.selection_model = self.plot_item.selection_model
@@ -185,19 +205,21 @@ class AlignmentViewer(
         )
         self.btnRenderParams.setText("Display…")
         self.btnRenderParams.setToolTip("Edit strip / line display settings")
-        self.btnClusterMode.setCheckable(True)
         self.btnClusterMode.setText("Cluster (MS2)")
         self.btnClusterMode.setToolTip(
             "Order analytes by hierarchical clustering of their MS2 "
-            "(modified cosine) instead of by retention time"
+            "similarity instead of by retention time (arrow: parameters)"
         )
         self.btnSampleClusterMode.setText("Cluster (Samples)")
         self.btnSampleClusterMode.setToolTip(
             "Order samples by hierarchical clustering of their composition "
-            "(Jaccard similarity of analyte presence) instead of by name"
+            "or an imported lineage instead of by name (arrow: parameters)"
         )
-        self.btnClusterParams.setText("Clustering…")
-        self.btnClusterParams.setToolTip("Edit clustering parameters")
+        for btn, slot in ((self.btnClusterMode, self._show_cluster_dialog),
+                          (self.btnSampleClusterMode, self._show_sample_dialog)):
+            menu = QtWidgets.QMenu(btn)
+            menu.addAction("Parameters…", slot)
+            btn.setMenu(menu)
         self.btnGroupSelected.setText("Group selected…")
         self.btnGroupSelected.setToolTip(
             "Name / annotate the selected analytes as a group"
@@ -237,12 +259,9 @@ class AlignmentViewer(
         self.btnLinkRT.toggled.connect(self._update_rt_link)
         self.btnRenderParams.clicked.connect(self._show_params_dialog)
         self.btnClusterMode.toggled.connect(self._on_cluster_mode_toggled)
-        self.btnClusterParams.clicked.connect(self._show_cluster_dialog)
         self.plotDendrogram.sigSubtreeClicked.connect(self._select_analytes)
         self.plotDendrogram.sigNodeHovered.connect(self._on_node_hovered)
-        self.btnSampleClusterMode.toggled.connect(
-            lambda _: self._render(preserve_selection=True)
-        )
+        self.btnSampleClusterMode.toggled.connect(self._on_sample_cluster_mode_toggled)
         self.plotSampleDendrogram.sigNodeHovered.connect(
             self._on_sample_node_hovered
         )
@@ -337,21 +356,6 @@ class AlignmentViewer(
             return self.plot_item.reveal('ensemble', aid, sample_uuid)
         return False
 
-    def imported_similarities(self) -> list[tuple[SimilarityMatrix, ImportParams]]:
-        """
-        The registered imported matrices sharing analytes with the shown
-        alignment, each with the transform it was last clustered with.
-        """
-        if self._alignment is None:
-            return []
-        return [
-            (m, m.default_transform)
-            for m in self.data_source.matrices_for_analytes(
-                a.uuid for a in self._alignment.analytes
-            )
-            if m.is_imported
-        ]
-
     def reset_for_new_project(self):
         self._alignment = None
         self._ctx = None
@@ -361,6 +365,11 @@ class AlignmentViewer(
         self.plot_item.clear_alignment()
         self.plotSampleDendrogram.clear_clustering()
         self.plotSampleDendrogram.hide()
+        self._sample_ranks = None
+        if self._sample_params.method == LINEAGE:
+            self._sample_params = self._sample_params._replace(
+                method=SampleClusterParams().method,
+            )
         self._x_of_analyte = {}
         self._refresh_groups()
         self.detail_panel.reset()
@@ -429,13 +438,13 @@ class AlignmentViewer(
         if not self.btnSampleClusterMode.isChecked():
             self.plotSampleDendrogram.hide()
             return None
-        if self._sample_clustering is None:
+        inputs = (self._sample_params, self._sample_ranks, self._grouping_clustering())
+        stale = any(a is not b for a, b in zip(inputs, self._sample_inputs))
+        if self._sample_clustering is None or stale:
             # shortcut: sync in GUI thread (binary S x A pdist is ms-scale), move to ProcessController if abundance-based metrics get slow
-            self._sample_clustering = cluster_samples(
-                self._alignment,
-                {u: self._ctx.sample_name(u) for u in self._alignment.sample_uuids},
-                self._cluster_linkage,
-            )
+            names = {u: self._ctx.sample_name(u) for u in self._alignment.sample_uuids}
+            self._sample_clustering = cluster_samples_by(self._alignment, names, *inputs)
+            self._sample_inputs = inputs
             self.plotSampleDendrogram.set_clustering(
                 self._sample_clustering, self._sample_clustering.sample_uuids,
             )
@@ -447,8 +456,64 @@ class AlignmentViewer(
             self.status_bar.showMessage(self._summary_text())
             return
         similarity, n = info
+        params, _ranks, analytes = self._sample_inputs
+        if params.method == LINEAGE:
+            kind = "lineage similarity"
+        elif analytes is not None:
+            kind = f"Jaccard similarity (MS2-grouped ≥ {params.ms2_threshold:.2f})"
+        else:
+            kind = "Jaccard similarity"
         self.status_bar.showMessage(
-            f"Merge at Jaccard similarity {similarity:.2f}  ·  {n} samples"
+            f"Merge at {kind} {similarity:.2f}  ·  {n} samples"
+        )
+
+    def _grouping_clustering(self) -> Optional['AnalyteClustering']:
+        """The analyte clustering sample MS2 grouping cuts (None: not used / not computed)."""
+        params = self._sample_params
+        if params.method == LINEAGE or not params.ms2_grouping:
+            return None
+        return self._current_clustering()
+
+    def _on_sample_cluster_mode_toggled(self, checked: bool):
+        params = self._sample_params
+        if (checked and self._alignment is not None and params.method != LINEAGE
+                and params.ms2_grouping and self._current_clustering() is None):
+            # Lanes show plain Jaccard until the analyte clustering lands
+            self._request_clustering()
+        self._render(preserve_selection=True)
+
+    def _show_sample_dialog(self):
+        if self._sample_dialog is None:
+            self._sample_dialog = SampleClusterParamsDialog(
+                self._sample_params, self._sample_ranks, parent=self,
+            )
+            self._sample_dialog.sigApply.connect(self._on_sample_params)
+        if self._alignment is not None:
+            self._sample_dialog.set_sample_names({
+                self._ctx.sample_name(u) for u in self._alignment.sample_uuids
+            })
+        self._sample_dialog.show()
+        self._sample_dialog.raise_()
+
+    def _on_sample_params(self, params: SampleClusterParams, ranks):
+        self._sample_params = params
+        self._sample_ranks = ranks
+        if self._alignment is None:
+            return
+        if not self.btnSampleClusterMode.isChecked():
+            self.btnSampleClusterMode.setChecked(True)   # requests / renders
+        else:
+            self._on_sample_cluster_mode_toggled(True)
+
+    def export_settings(self) -> tuple:
+        """
+        (analyte source: ClusterParams | matrix uuid, analyte linkage,
+        SampleClusterParams, sample ranks): the applied clustering settings
+        exports follow.
+        """
+        return (
+            self._cluster_source, self._cluster_linkage,
+            self._sample_params, self._sample_ranks,
         )
 
     def _show_params_dialog(self):
@@ -574,17 +639,18 @@ class AlignmentViewer(
             self.status_bar.showMessage(self._summary_text())
             return
         self._clusterings[clustering.params] = clustering
-        if self._active_clustering() is clustering:
+        if (self._active_clustering() is clustering
+                or (self.btnSampleClusterMode.isChecked()
+                    and self._grouping_clustering() is clustering)):
             self._render(preserve_selection=True)
         self._refresh_compare()
 
     def _show_cluster_dialog(self):
         if self._cluster_dialog is None:
-            config = load_config()
             self._cluster_dialog = ClusterParamsDialog(
                 self.data_source,
-                cluster_params_from_config(config),
-                linkage_from_config(config),
+                self._cluster_source,
+                self._cluster_linkage,
                 parent=self,
             )
             self._cluster_dialog.sigApply.connect(self._on_cluster_params)

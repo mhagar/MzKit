@@ -17,7 +17,12 @@ From an output path like `features.tsv`, this writes:
 
 - `features.mgf`: see below
 - `features.graphml`: see `core.cli.export_network`.
-- `features_<matrix>.graphml`: one per imported similarity matrix passed in.
+- `features_sample_similarity.tsv`: sample x sample similarity (leaf order),
+    see `core.cli.cluster_samples.cluster_samples_by`.
+
+The network and the sample similarity's MS2 grouping use one analyte
+similarity matrix: the one passed in (as clustered in the Alignment Viewer),
+else one computed under `network_params`.
 
 The MGF is built via `core.cli.export_ensemble` (same as single cmpd exports)
 Two modes:
@@ -33,17 +38,18 @@ Each analyte's row id is recorded as `FEATURE_ID` to cross-reference the MGF
 import logging
 import threading
 from pathlib import Path
-from typing import Callable, Literal, Mapping, Optional, Sequence, TYPE_CHECKING
+from typing import Callable, Literal, Mapping, Optional, TYPE_CHECKING
 
-from core.cli.cluster_analytes import ClusterParams
-from core.cli.export_ensemble import build_ensemble_export
-from core.cli.export_network import (
-    build_imported_network_graphml, build_network_graphml,
+from core.cli.cluster_analytes import (
+    ClusterParams, cluster_matrix, compute_similarity_matrix,
 )
-from core.cli.import_similarity import ANALYTE_ID_TAG
+from core.cli.cluster_samples import LINEAGE, SampleClusterParams, cluster_samples_by
+from core.cli.export_ensemble import build_ensemble_export
+from core.cli.export_network import build_matrix_network_graphml
+from core.cli.import_similarity import ANALYTE_ID_TAG, write_similarity_csv
 
 if TYPE_CHECKING:
-    from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
+    from core.data_structs.similarity_matrix import SimilarityMatrix
     from core.data_structs import Sample, SampleUUID
     from core.data_structs.uuid_types import AnalyteUUID, EnsembleUUID
     from core.data_structs.alignment import EnsembleAlignment
@@ -216,18 +222,22 @@ def export_feature_table_to_file(
     groups: Optional[Mapping['AnalyteUUID', str]] = None,
     write_graphml: bool = True,
     network_params: ClusterParams = ClusterParams(),
-    min_edge_cosine: float = 0.7,
-    imported_similarities: Sequence[tuple['SimilarityMatrix', 'ImportParams']] = (),
+    matrix: Optional['SimilarityMatrix'] = None,
+    analyte_linkage: str = 'average',
+    min_edge_score: float = 0.7,
+    sample_params: Optional[SampleClusterParams] = SampleClusterParams(),
+    sample_ranks: Optional[dict[str, tuple[str, ...]]] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
 ) -> list[Path]:
     """
     Export the abundance + formula tables, and (by default) the companion
-    .mgf and .graphml, all named after ``output``
+    .mgf, .graphml and sample similarity, all named after ``output``
     (``features.tsv`` -> ``features_abundance.tsv``,
-    ``features_formulas.tsv``, ``features.mgf``, ``features.graphml``).
+    ``features_formulas.tsv``, ``features.mgf``, ``features.graphml``,
+    ``features_sample_similarity.tsv``).
 
-    ProcessController-compatible (the network scoring is the slow part).
+    ProcessController-compatible (computing a matrix is the slow part).
 
     :param separator: ``','`` writes .csv tables, anything else .tsv.
     :param write_mgf: also write the companion MGF.
@@ -237,12 +247,17 @@ def export_feature_table_to_file(
     :param groups: group titles per analyte (DataRegistry.group_titles()),
         for the abundance table and network nodes.
     :param write_graphml: also write the MS2 similarity network.
-    :param network_params: network scoring parameters
-        (see `cluster_params_from_config`).
-    :param min_edge_cosine: network edges scoring below this are dropped.
-    :param imported_similarities: (matrix, transform params) to also write
-        a network for each, as ``features_<matrix name>.graphml``.
-    :return: the written paths (the .graphml is skipped if cancelled).
+    :param network_params: how to compute the analyte similarity matrix
+        when `matrix` isn't given (see `cluster_params_from_config`).
+    :param matrix: the analyte similarity matrix (under its
+        `default_transform`) for the network and MS2 grouping.
+    :param analyte_linkage: linkage of the analyte clustering MS2 groups
+        are cut from.
+    :param min_edge_score: network edges scoring below this are dropped.
+    :param sample_params: how to score sample similarity; None skips it.
+    :param sample_ranks: sample name -> ranks, for a LINEAGE `sample_params`.
+    :return: the written paths (matrix-dependent ones are skipped if
+        cancelled).
     """
     stem = output.with_suffix('').name
     suffix = '.csv' if separator == ',' else '.tsv'
@@ -281,31 +296,37 @@ def export_feature_table_to_file(
             ),
         )
 
-    if write_graphml:
-        graphml = build_network_graphml(
-            alignment,
-            list(samples.values()),
-            params=network_params,
-            formulas=formulas,
-            groups=groups,
-            min_edge_cosine=min_edge_cosine,
-            progress_callback=progress_callback,
-            cancel_event=cancel_event,
+    grouping = (
+        sample_params is not None and sample_params.method != LINEAGE
+        and sample_params.ms2_grouping
+    )
+    if matrix is None and (write_graphml or grouping):
+        matrix = compute_similarity_matrix(
+            alignment, list(samples.values()), network_params,
+            progress_callback, cancel_event,
         )
-        if graphml is None:
-            logger.info("Cancelled; skipped the .graphml")
-        else:
-            write(sibling('.graphml'), graphml)
+        if matrix is None:
+            logger.info("Cancelled; skipped the .graphml / sample similarity")
+            return written
 
-    for raw, import_params in imported_similarities:
-        path = sibling(f"_{raw.name}.graphml")
-        n = 2
-        while path in written:  # two matrices with the same file name
-            path = sibling(f"_{raw.name}_{n}.graphml")
-            n += 1
-        write(path, build_imported_network_graphml(
-            alignment, list(samples.values()), raw, import_params, formulas,
-            groups,
+    if write_graphml:
+        write(sibling('.graphml'), build_matrix_network_graphml(
+            alignment, list(samples.values()), matrix, formulas, groups,
+            min_edge_score,
         ))
+
+    if sample_params is not None:
+        clustering = cluster_samples_by(
+            alignment, sample_names, sample_params, sample_ranks,
+            cluster_matrix(alignment, matrix, linkage_method=analyte_linkage)
+            if grouping else None,
+        )
+        path = sibling(f"_sample_similarity{suffix}")
+        write_similarity_csv(
+            path, [sample_names[u] for u in clustering.sample_uuids],
+            clustering.similarity,
+        )
+        written.append(path)
+        logger.info(f"Exported {path}")
 
     return written

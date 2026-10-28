@@ -13,10 +13,11 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
-from core.cli.cluster_analytes import ClusterParams
-from core.cli.export_network import (
-    build_imported_network_graphml, build_network_graphml,
+from core.cli.cluster_analytes import (
+    MODIFIED_COSINE, ClusterParams, compute_similarity_matrix,
 )
+from core.cli.cluster_samples import SampleClusterParams
+from core.cli.export_network import build_matrix_network_graphml
 from core.cli.import_similarity import ImportParams, read_similarity_csv
 from core.cli.export_table import (
     export_abundance_table,
@@ -136,9 +137,7 @@ def test_abundance_table_group_column(stubbed):
     )
     assert (r0[3], r1[3], r2[3]) == ('Sugars;Glucose', 'Sugars', '')
 
-    text = build_network_graphml(
-        alignment, list(samples.values()), ClusterParams(), groups=titles,
-    )
+    text = _cosine_network(alignment, list(samples.values()), groups=titles)
     ns = {'g': 'http://graphml.graphdrawing.org/xmlns'}
     nodes = ET.fromstring(text).find('g:graph', ns).findall('g:node', ns)
     node_groups = [
@@ -170,6 +169,13 @@ def test_consensus_formula_tie_goes_to_representative():
     assert (result.count, result.total) == (1, 2)
 
 
+def _cosine_network(alignment, samples, **kwargs) -> str:
+    matrix = compute_similarity_matrix(
+        alignment, samples, ClusterParams(scoring=MODIFIED_COSINE),
+    )
+    return build_matrix_network_graphml(alignment, samples, matrix, **kwargs)
+
+
 def test_graphml_network():
     frags_a = [(80.0, 30.0), (95.0, 50.0), (120.0, 100.0), (150.0, 40.0)]
     frags_b = [(80.0, 30.0), (95.0, 50.0), (134.0, 100.0), (150.0, 40.0)]
@@ -187,9 +193,7 @@ def test_graphml_network():
     ]
     alignment = EnsembleAlignment(sample_uuids=(1,), analytes=analytes)
 
-    text = build_network_graphml(
-        alignment, [sample], ClusterParams(), formulas={10: 'C6H6'},
-    )
+    text = _cosine_network(alignment, [sample], formulas={10: 'C6H6'})
     ns = {'g': 'http://graphml.graphdrawing.org/xmlns'}
     graph = ET.fromstring(text).find('g:graph', ns)
 
@@ -202,7 +206,7 @@ def test_graphml_network():
     edges = graph.findall('g:edge', ns)
     assert [(e.get('source'), e.get('target')) for e in edges] == [('0', '3')]
     edge = {d.get('key'): d.text for d in edges[0].findall('g:data', ns)}
-    assert float(edge['cosine']) > 0.9
+    assert float(edge['similarity']) > 0.9
     assert float(edge['mz_delta']) == pytest.approx(14.0)
 
 
@@ -213,9 +217,9 @@ def test_graphml_imported_network(stubbed, tmp_path):
     path = tmp_path / 'simba.csv'
     path.write_text(f",{a0},{a1}\n{a0},0,0.1\n{a1},0.1,0\n")
     raw = read_similarity_csv(path)
-    text = build_imported_network_graphml(
-        alignment, list(samples.values()), raw,
-        ImportParams(is_distance=True), formulas,
+    raw.default_transform = ImportParams(is_distance=True)
+    text = build_matrix_network_graphml(
+        alignment, list(samples.values()), raw, formulas,
     )
     ns = {'g': 'http://graphml.graphdrawing.org/xmlns'}
     graph = ET.fromstring(text).find('g:graph', ns)
@@ -333,6 +337,7 @@ def test_export_to_file_writes_siblings(aligned, tmp_path):
         samples=by_uuid,
         sample_names=names,
         output=tmp_path / 'features.tsv',
+        network_params=ClusterParams(scoring=MODIFIED_COSINE),
     )
 
     assert written == [
@@ -340,10 +345,15 @@ def test_export_to_file_writes_siblings(aligned, tmp_path):
         tmp_path / 'features_formulas.tsv',
         tmp_path / 'features.mgf',
         tmp_path / 'features.graphml',
+        tmp_path / 'features_sample_similarity.tsv',
     ]
     assert all(p.exists() for p in written)
     assert 'BEGIN IONS' in (tmp_path / 'features.mgf').read_text()
     ET.parse(tmp_path / 'features.graphml')
+    # MS2-grouped (the default) sample Jaccard: square, unit diagonal, all samples
+    matrix = read_similarity_csv(tmp_path / 'features_sample_similarity.tsv')
+    assert sorted(matrix.ids) == sorted(names[u] for u in alignment.sample_uuids)
+    assert np.allclose(np.diag(matrix.values), 1.0)
 
 
 def test_export_to_file_respects_no_mgf_no_graphml(aligned, tmp_path):
@@ -359,10 +369,12 @@ def test_export_to_file_respects_no_mgf_no_graphml(aligned, tmp_path):
         separator=',',
         write_mgf=False,
         write_graphml=False,
+        sample_params=SampleClusterParams(ms2_grouping=False),   # no matrix needed
     )
 
     assert written == [
         tmp_path / 'features_abundance.csv',
         tmp_path / 'features_formulas.csv',
+        tmp_path / 'features_sample_similarity.csv',
     ]
     assert not (tmp_path / 'features.mgf').exists()

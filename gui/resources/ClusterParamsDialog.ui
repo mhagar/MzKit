@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>544</width>
-    <height>546</height>
+    <width>460</width>
+    <height>617</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -17,117 +17,35 @@
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
      <item>
-      <widget class="QLabel" name="label">
+      <widget class="QLabel" name="labelMethod">
        <property name="text">
-        <string>Similarity:</string>
+        <string>Method:</string>
        </property>
       </widget>
      </item>
      <item>
-      <widget class="QComboBox" name="comboSource"/>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btnImport">
-       <property name="text">
-        <string>Import matrix...</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btnDelete">
-       <property name="text">
-        <string>Delete matrix</string>
+      <widget class="QComboBox" name="comboMethod">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
        </property>
       </widget>
      </item>
     </layout>
    </item>
    <item>
-    <widget class="QStackedWidget" name="stackSource">
+    <widget class="QStackedWidget" name="stackMethod">
      <property name="currentIndex">
       <number>0</number>
      </property>
-     <widget class="QWidget" name="pageCosine">
-      <layout class="QFormLayout" name="formLayout">
-       <item row="0" column="0">
-        <widget class="QLabel" name="label_2">
-         <property name="text">
-          <string>m/z tolerance</string>
-         </property>
-        </widget>
-       </item>
-       <item row="0" column="1">
-        <widget class="QDoubleSpinBox" name="spinTolerance">
-         <property name="decimals">
-          <number>4</number>
-         </property>
-         <property name="maximum">
-          <double>1.000000000000000</double>
-         </property>
-         <property name="singleStep">
-          <double>0.005000000000000</double>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="0">
-        <widget class="QLabel" name="label_3">
-         <property name="text">
-          <string>m/z power</string>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="0">
-        <widget class="QLabel" name="label_4">
-         <property name="text">
-          <string>Intensity power</string>
-         </property>
-        </widget>
-       </item>
-       <item row="3" column="0">
-        <widget class="QLabel" name="label_5">
-         <property name="text">
-          <string>Min. matched peaks</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="1">
-        <widget class="QDoubleSpinBox" name="spinMzPower">
-         <property name="maximum">
-          <double>5.000000000000000</double>
-         </property>
-         <property name="singleStep">
-          <double>0.500000000000000</double>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="1">
-        <widget class="QDoubleSpinBox" name="spinIntsyPower">
-         <property name="maximum">
-          <double>5.000000000000000</double>
-         </property>
-         <property name="singleStep">
-          <double>0.500000000000000</double>
-         </property>
-        </widget>
-       </item>
-       <item row="3" column="1">
-        <widget class="QSpinBox" name="spinMinMatches">
-         <property name="maximum">
-          <number>100</number>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="pageImported">
+     <widget class="QWidget" name="pageMs2ds">
       <layout class="QVBoxLayout" name="verticalLayout_2">
        <item>
-        <widget class="QLabel" name="labelMatrixInfo">
+        <widget class="QLabel" name="labelMs2ds">
          <property name="text">
-          <string>TextLabel</string>
-         </property>
-         <property name="textFormat">
-          <enum>Qt::RichText</enum>
+          <string>Scores each pair of analytes' representative MS2 spectra using MS2DeepScore 2.0</string>
          </property>
          <property name="wordWrap">
           <bool>true</bool>
@@ -135,11 +53,154 @@
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="groupBox">
+        <spacer name="verticalSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="pageCosine">
+      <layout class="QVBoxLayout" name="verticalLayout_3">
+       <item>
+        <layout class="QFormLayout" name="formCosine">
+         <property name="fieldGrowthPolicy">
+          <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+         </property>
+         <item row="0" column="0">
+          <widget class="QLabel" name="labelTolerance">
+           <property name="text">
+            <string>m/z tolerance</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QDoubleSpinBox" name="spinTolerance">
+           <property name="decimals">
+            <number>4</number>
+           </property>
+           <property name="minimum">
+            <double>0.000100000000000</double>
+           </property>
+           <property name="maximum">
+            <double>1.000000000000000</double>
+           </property>
+           <property name="singleStep">
+            <double>0.005000000000000</double>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="labelMzPower">
+           <property name="text">
+            <string>m/z power</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QDoubleSpinBox" name="spinMzPower">
+           <property name="maximum">
+            <double>5.000000000000000</double>
+           </property>
+           <property name="singleStep">
+            <double>0.500000000000000</double>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="labelIntsyPower">
+           <property name="text">
+            <string>Intensity power</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="QDoubleSpinBox" name="spinIntsyPower">
+           <property name="maximum">
+            <double>5.000000000000000</double>
+           </property>
+           <property name="singleStep">
+            <double>0.500000000000000</double>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="0">
+          <widget class="QLabel" name="labelMinMatches">
+           <property name="text">
+            <string>Min. matched peaks</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="1">
+          <widget class="QSpinBox" name="spinMinMatches">
+           <property name="maximum">
+            <number>100</number>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <spacer name="verticalSpacer_2">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="pageImported">
+      <layout class="QVBoxLayout" name="verticalLayout_4">
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_2">
+         <item>
+          <widget class="QComboBox" name="comboMatrix">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnImport">
+           <property name="text">
+            <string>Import…</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnDelete">
+           <property name="text">
+            <string>Delete</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupValues">
          <property name="title">
           <string>Values</string>
          </property>
-         <layout class="QFormLayout" name="formLayout_2">
+         <layout class="QFormLayout" name="formValues">
+          <property name="fieldGrowthPolicy">
+           <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+          </property>
           <item row="0" column="1">
            <widget class="QCheckBox" name="checkDistance">
             <property name="text">
@@ -148,7 +209,7 @@
            </widget>
           </item>
           <item row="1" column="0">
-           <widget class="QLabel" name="label_6">
+           <widget class="QLabel" name="labelClipMin">
             <property name="text">
              <string>Clip min</string>
             </property>
@@ -165,13 +226,10 @@
             <property name="maximum">
              <double>1000000.000000000000000</double>
             </property>
-            <property name="value">
-             <double>0.000000000000000</double>
-            </property>
            </widget>
           </item>
           <item row="2" column="0">
-           <widget class="QLabel" name="label_7">
+           <widget class="QLabel" name="labelClipMax">
             <property name="text">
              <string>Clip max</string>
             </property>
@@ -193,23 +251,14 @@
             </property>
            </widget>
           </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="groupBox_2">
-         <property name="title">
-          <string>Pairs</string>
-         </property>
-         <layout class="QFormLayout" name="formLayout_3">
-          <item row="0" column="0">
+          <item row="3" column="0">
            <widget class="QCheckBox" name="checkBidirectional">
             <property name="text">
-             <string>Enforce bidirectional match - threshold:</string>
+             <string>Bidirectional ≥</string>
             </property>
            </widget>
           </item>
-          <item row="0" column="1">
+          <item row="3" column="1">
            <widget class="QDoubleSpinBox" name="spinBidirThreshold">
             <property name="decimals">
              <number>3</number>
@@ -221,27 +270,7 @@
              <double>0.050000000000000</double>
             </property>
             <property name="value">
-             <double>0.600000000000000</double>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="1">
-           <widget class="QDoubleSpinBox" name="spinFloor">
-            <property name="decimals">
-             <number>3</number>
-            </property>
-            <property name="singleStep">
-             <double>0.050000000000000</double>
-            </property>
-            <property name="value">
-             <double>0.600000000000000</double>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="0">
-           <widget class="QLabel" name="label_8">
-            <property name="text">
-             <string>Score floor</string>
+             <double>0.700000000000000</double>
             </property>
            </widget>
           </item>
@@ -249,30 +278,82 @@
         </widget>
        </item>
        <item>
-        <widget class="QWidget" name="histogramPlaceholder" native="true">
-         <property name="minimumSize">
+        <spacer name="verticalSpacer_3">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
           <size>
-           <width>0</width>
-           <height>80</height>
+           <width>20</width>
+           <height>0</height>
           </size>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="labelReport">
-         <property name="text">
-          <string>TextLabel</string>
-         </property>
-         <property name="textFormat">
-          <enum>Qt::RichText</enum>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
+        </spacer>
        </item>
       </layout>
      </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="groupScoreFilter">
+     <property name="title">
+      <string>Score Distribution</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_5">
+      <item>
+       <widget class="QWidget" name="histogramPlaceholder" native="true">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>110</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <layout class="QFormLayout" name="formFloor">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+        </property>
+        <item row="0" column="0">
+         <widget class="QLabel" name="labelFloor">
+          <property name="text">
+           <string>Score floor</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QDoubleSpinBox" name="spinFloor">
+          <property name="decimals">
+           <number>3</number>
+          </property>
+          <property name="maximum">
+           <double>1.000000000000000</double>
+          </property>
+          <property name="singleStep">
+           <double>0.050000000000000</double>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QLabel" name="labelReport">
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+        <property name="textFormat">
+         <enum>Qt::RichText</enum>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+        <property name="textInteractionFlags">
+         <set>Qt::TextSelectableByMouse</set>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
    </item>
    <item>
@@ -280,9 +361,12 @@
      <property name="title">
       <string>Clustering</string>
      </property>
-     <layout class="QFormLayout" name="formLayout_4">
+     <layout class="QFormLayout" name="formClustering">
+      <property name="fieldGrowthPolicy">
+       <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+      </property>
       <item row="0" column="0">
-       <widget class="QLabel" name="label_9">
+       <widget class="QLabel" name="labelLinkage">
         <property name="text">
          <string>Linkage</string>
         </property>
@@ -300,30 +384,18 @@
       <enum>Qt::Horizontal</enum>
      </property>
      <property name="standardButtons">
-      <set>QDialogButtonBox::Apply|QDialogButtonBox::Cancel|QDialogButtonBox::RestoreDefaults</set>
+      <set>QDialogButtonBox::Apply|QDialogButtonBox::Close|QDialogButtonBox::RestoreDefaults</set>
      </property>
     </widget>
    </item>
   </layout>
+  <zorder>stackMethod</zorder>
+  <zorder>groupClustering</zorder>
+  <zorder>buttonBox</zorder>
+  <zorder>groupScoreFilter</zorder>
  </widget>
  <resources/>
  <connections>
-  <connection>
-   <sender>buttonBox</sender>
-   <signal>accepted()</signal>
-   <receiver>Dialog</receiver>
-   <slot>accept()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>248</x>
-     <y>254</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>157</x>
-     <y>274</y>
-    </hint>
-   </hints>
-  </connection>
   <connection>
    <sender>buttonBox</sender>
    <signal>rejected()</signal>
@@ -331,12 +403,12 @@
    <slot>reject()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>316</x>
-     <y>260</y>
+     <x>230</x>
+     <y>580</y>
     </hint>
     <hint type="destinationlabel">
-     <x>286</x>
-     <y>274</y>
+     <x>230</x>
+     <y>300</y>
     </hint>
    </hints>
   </connection>

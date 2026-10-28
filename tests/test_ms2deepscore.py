@@ -64,9 +64,11 @@ def test_missing_weights_message(monkeypatch, tmp_path):
 
 
 @needs_model
-def test_network_export_by_ms2deepscore_has_no_matched_peaks():
-    from core.cli.export_network import build_network_graphml
+def test_network_export_by_ms2deepscore():
+    from core.cli.cluster_analytes import compute_similarity_matrix
+    from core.cli.export_network import build_matrix_network_graphml
     alignment, samples, _ = _build([(300.0, 200.0, FRAGS_A), (500.0, 214.0, FRAGS_B)])
-    graphml = build_network_graphml(alignment, samples, ClusterParams(scoring=MS2DEEPSCORE), min_edge_cosine=0.01)
+    matrix = compute_similarity_matrix(alignment, samples, ClusterParams(scoring=MS2DEEPSCORE))
+    graphml = build_matrix_network_graphml(alignment, samples, matrix, min_edge_score=0.01)
     assert 'attr.name="similarity"' in graphml
-    assert "matched_peaks" not in graphml
+    assert "<edge " in graphml
