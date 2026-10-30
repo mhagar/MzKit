@@ -11,8 +11,9 @@ class IntsyAxisItem(pg.AxisItem):
         super().__init__(*args, **kwargs)
         self.max_ticks_per_plot = 10
         self.min_ticks_per_plot = 5
-        # Mirror mode: axis shows relative intensity (%) mirrored about
-        # zero, so ticks below zero are labelled with their absolute value
+        # Mirror mode: axis shows relative intensity (fraction of each
+        # maximum) mirrored about zero, so ticks below zero are labelled with
+        # their absolute value
         self.mirror = False
 
     def set_mirror(self, mirror: bool):
@@ -21,9 +22,8 @@ class IntsyAxisItem(pg.AxisItem):
         self.update()
 
     def tickStrings(self, values, scale, spacing):
-        if self.mirror:
-            return [f'{abs(value):.0f}%' for value in values]
-        return [f'{value:.1E}' for value in values]
+        # Same format either way, so mirror and normal plots keep one axis width
+        return [f'{abs(value) if self.mirror else value:.1E}' for value in values]
 
     def tickValues(self, minVal, maxVal, size):
         # Get the original tick values

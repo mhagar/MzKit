@@ -3,36 +3,13 @@ Experimental tool: browse the cached structure databases (core/utils/compound_db
 by formula, neutral mass +/- ppm, or text (name, organism, ...).
 """
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtSvg import QSvgRenderer
 
 from core.utils import compound_db
-from core.utils.render_molecule import smiles_to_svg
+from gui.widgets.StructureWidget import NAME_ROLE, StructureDelegate
 
-HEADERS = ['Structure', 'Name', 'ID', 'SMILES', 'Formula', 'Exact mass', 'Δppm',
+HEADERS = ['Structure', 'Name', 'ID', 'Formula', 'Exact mass', 'Δppm',
            'Organism type', 'Genus', 'Species', 'NP class']
 STRUCTURE_ROW_HEIGHT = 160
-
-
-class StructureDelegate(QtWidgets.QStyledItemDelegate):
-    """Draws the SMILES in the cell's UserRole; only painted (visible) rows get rendered."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._cache: dict[str, QSvgRenderer | None] = {}
-
-    def paint(self, painter, option, index):
-        super().paint(painter, option, index)
-        smiles = index.data(QtCore.Qt.UserRole)
-        if smiles not in self._cache:
-            try:
-                svg, _ = smiles_to_svg(smiles)
-                renderer = QSvgRenderer(QtCore.QByteArray(svg.encode()))
-                renderer.setAspectRatioMode(QtCore.Qt.KeepAspectRatio)
-                self._cache[smiles] = renderer
-            except ValueError:
-                self._cache[smiles] = None
-        if renderer := self._cache[smiles]:
-            renderer.render(painter, QtCore.QRectF(option.rect.adjusted(2, 2, -2, -2)))
 
 
 class NumberItem(QtWidgets.QTableWidgetItem):
@@ -162,16 +139,17 @@ class CompoundDbDialog(QtWidgets.QDialog):
             db_id, name, smiles, formula, mass, _inchikey, org_type, genus, organisms, np_class, *dppm = row
             structure = QtWidgets.QTableWidgetItem()
             structure.setData(QtCore.Qt.UserRole, smiles)
+            structure.setData(NAME_ROLE, name)
             self.table.setItem(i, 0, structure)
-            values = [name, db_id, smiles, formula, mass, dppm[0] if dppm else None,
+            values = [name, db_id, formula, mass, dppm[0] if dppm else None,
                       org_type, genus.replace('|', '; '), organisms.replace('|', '; '), np_class]
             for col, value in enumerate(values, 1):
                 if isinstance(value, float):
-                    item = NumberItem(f"{value:.{4 if col == 5 else 2}f}")
+                    item = NumberItem(f"{value:.{4 if col == 4 else 2}f}")
                     item.setData(QtCore.Qt.UserRole, value)
                 else:
                     item = QtWidgets.QTableWidgetItem(value or '')
-                    if col in (8, 9):  # genus / species lists can be long
+                    if col in (7, 8):  # genus / species lists can be long
                         item.setToolTip(value)
                 self.table.setItem(i, col, item)
         self.table.setSortingEnabled(True)

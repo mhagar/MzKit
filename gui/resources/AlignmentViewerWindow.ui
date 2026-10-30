@@ -84,47 +84,177 @@
         </item>
        </layout>
       </widget>
-      <widget class="QWidget" name="layoutWidget">
-       <layout class="QVBoxLayout" name="verticalLayout_3">
-        <item>
-         <widget class="QSvgWidget" name="svgAnalyteStructure" native="true"/>
-        </item>
-        <item>
-         <widget class="QLineEdit" name="editAnalyteName">
-          <property name="placeholderText">
-           <string>Analyte name...</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLineEdit" name="editAnalyteSmiles">
-          <property name="placeholderText">
-           <string>SMILES...</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <spacer name="verticalSpacer">
-          <property name="orientation">
-           <enum>Qt::Vertical</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>20</width>
-            <height>40</height>
-           </size>
-          </property>
-         </spacer>
-        </item>
-       </layout>
+      <widget class="QTabWidget" name="tabsAnnotation">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <property name="documentMode">
+        <bool>true</bool>
+       </property>
+       <widget class="QWidget" name="tabAnnotation">
+        <attribute name="title">
+         <string>Annotation</string>
+        </attribute>
+        <layout class="QVBoxLayout" name="verticalLayout_3" stretch="0,0,1">
+         <property name="spacing">
+          <number>2</number>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>2</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_3">
+           <item>
+            <widget class="QLineEdit" name="editAnalyteName">
+             <property name="placeholderText">
+              <string>Name...</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QComboBox" name="comboMsiLevel">
+             <item>
+              <property name="text">
+               <string>MSI –</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>MSI 1</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>MSI 2</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>MSI 3</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>MSI 4</string>
+              </property>
+             </item>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="editAnalyteNotes">
+           <property name="placeholderText">
+            <string>Notes...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSplitter" name="splitterHypotheses">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="childrenCollapsible">
+            <bool>false</bool>
+           </property>
+           <widget class="QTreeWidget" name="treeHypotheses">
+            <property name="editTriggers">
+             <set>QAbstractItemView::DoubleClicked|QAbstractItemView::EditKeyPressed</set>
+            </property>
+            <property name="textElideMode">
+             <enum>Qt::ElideRight</enum>
+            </property>
+            <property name="rootIsDecorated">
+             <bool>false</bool>
+            </property>
+            <property name="uniformRowHeights">
+             <bool>true</bool>
+            </property>
+            <property name="wordWrap">
+             <bool>false</bool>
+            </property>
+            <column>
+             <property name="text">
+              <string>Structure</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Name</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Origin</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Sample</string>
+             </property>
+            </column>
+           </widget>
+           <widget class="StructureView" name="svgAnalyteStructure" native="true"/>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+       <widget class="AnnotationPanel" name="annotationPanel">
+        <attribute name="title">
+         <string>Search</string>
+        </attribute>
+       </widget>
       </widget>
-      <widget class="QWidget" name="layoutWidget">
+      <widget class="QWidget" name="widget" native="true">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Preferred" vsizetype="Minimum">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>16777215</width>
+         <height>60</height>
+        </size>
+       </property>
        <layout class="QVBoxLayout" name="verticalLayout_4">
+        <property name="spacing">
+         <number>0</number>
+        </property>
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
         <item>
-         <widget class="QComboBox" name="comboGroups"/>
+         <widget class="QComboBox" name="comboGroups">
+          <property name="frame">
+           <bool>true</bool>
+          </property>
+         </widget>
         </item>
         <item>
          <layout class="QHBoxLayout" name="horizontalLayout_2">
+          <property name="spacing">
+           <number>0</number>
+          </property>
           <property name="bottomMargin">
            <number>0</number>
           </property>
@@ -177,29 +307,6 @@
            </spacer>
           </item>
          </layout>
-        </item>
-        <item>
-         <widget class="QSvgWidget" name="svgGroupStructure" native="true">
-          <property name="minimumSize">
-           <size>
-            <width>400</width>
-            <height>0</height>
-           </size>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <spacer name="verticalSpacer_2">
-          <property name="orientation">
-           <enum>Qt::Vertical</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>20</width>
-            <height>40</height>
-           </size>
-          </property>
-         </spacer>
         </item>
        </layout>
       </widget>
@@ -415,9 +522,15 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>QSvgWidget</class>
+   <class>StructureView</class>
    <extends>QWidget</extends>
-   <header>PyQt5.QtSvg</header>
+   <header>gui.widgets.StructureWidget</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>AnnotationPanel</class>
+   <extends>QWidget</extends>
+   <header>gui.views.alignment_viewer.annotation_panel</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

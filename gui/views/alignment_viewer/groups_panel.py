@@ -1,13 +1,13 @@
 """
 The Inspector's groups area: a combo of every `AnalyteGroup` the selected
-analytes belong to, the chosen group's structure, and edit / delete / membership
+analytes belong to, and edit / delete / membership
 buttons. Every edit goes through the registry (`notify_group_updated`).
 """
 from typing import Iterable, Optional, TYPE_CHECKING
 
 from PyQt5 import QtCore, QtWidgets
 
-from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog, show_smiles
+from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog
 
 if TYPE_CHECKING:
     from core.data_structs.analyte_group import AnalyteGroup
@@ -37,7 +37,6 @@ class GroupsPanel(QtCore.QObject):
         self,
         data_source: 'AlignmentViewerDataSource',
         combo: QtWidgets.QComboBox,
-        svg,
         btn_edit: QtWidgets.QToolButton,
         btn_delete: QtWidgets.QToolButton,
         btn_add: QtWidgets.QToolButton,
@@ -45,7 +44,7 @@ class GroupsPanel(QtCore.QObject):
     ):
         super().__init__()
         self.data_source = data_source
-        self.combo, self.svg = combo, svg
+        self.combo = combo
         self.btn_edit, self.btn_delete = btn_edit, btn_delete
         self.btn_add, self.btn_remove = btn_add, btn_remove
         self._selection: list['AnalyteUUID'] = []
@@ -100,9 +99,6 @@ class GroupsPanel(QtCore.QObject):
 
     def _update_current(self, *_):
         group = self.current_group()
-        smiles = group.smiles if group else ""
-        show_smiles(self.svg, smiles)
-        self.svg.setVisible(bool(smiles.strip()))
         self.btn_edit.setEnabled(group is not None)
         self.btn_delete.setEnabled(group is not None)
         members = set(group.analyte_uuids) if group else set()

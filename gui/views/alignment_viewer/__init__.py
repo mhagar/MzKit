@@ -39,7 +39,6 @@ The status bar shows a hover readout.
 Actions into the Ensemble / Sample viewers go out via signals the
 MainController wires up.
 """
-import dataclasses
 from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtWidgets, QtCore, QtGui
@@ -53,11 +52,12 @@ from core.cli.cluster_samples import (
     LINEAGE, SampleClusterParams, SampleClustering, cluster_samples_by,
     sample_cluster_params_from_config,
 )
-from core.data_structs.analyte_annotation import AnalyteAnnotation
+from core.data_structs.analyte_annotation import Hypothesis
 from core.data_structs.similarity_matrix import SimilarityMatrix
 from core.utils.config import load_config
-from core.utils.render_molecule import smiles_to_svg
 from gui.resources.AlignmentViewerWindow import Ui_Form
+from gui.views.alignment_viewer.annotation_editor import AnnotationEditor
+from gui.views.alignment_viewer.annotation_panel import AnnotationPanel, scores_of
 from gui.views.alignment_viewer.cluster_params_dialog import ClusterParamsDialog
 from gui.views.alignment_viewer.context import AlignmentContext
 from gui.views.alignment_viewer.detail_panel import DetailPanel, XIC_COLOR
@@ -97,6 +97,8 @@ class AlignmentViewer(
     sigAutoFindMfsRequested = QtCore.pyqtSignal(object)    # list[Ensemble]
     # EnsembleAlignment, ClusterParams (compute) | SimilarityMatrix, linkage
     sigClusterRequested = QtCore.pyqtSignal(object, object, str)
+    # Annotation panel focus key, rank_candidates kwargs; the result comes back via set_ranking
+    sigRankCandidatesRequested = QtCore.pyqtSignal(object, dict)
 
     def __init__(
         self,
@@ -149,20 +151,29 @@ class AlignmentViewer(
             title_label=self.labelInspectorTitle,
             stack=self.stackedWidget,
             summary_label=self.labelAlignmentSummary,
-            edit_name=self.editAnalyteName,
-            edit_smiles=self.editAnalyteSmiles,
             tree_compare=self.treeCompare,
-            svg_structure=self.svgAnalyteStructure,
+        )
+        self.annotation_editor = AnnotationEditor(
+            edit_name=self.editAnalyteName,
+            combo_msi=self.comboMsiLevel,
+            edit_notes=self.editAnalyteNotes,
+            tree=self.treeHypotheses,
+            structure=self.svgAnalyteStructure,
         )
         self.groups_panel = GroupsPanel(
             self.data_source,
             combo=self.comboGroups,
-            svg=self.svgGroupStructure,
             btn_edit=self.btnGroupEdit,
             btn_delete=self.btnGroupDelete,
             btn_add=self.btnGroupAddSelected,
             btn_remove=self.btnGroupRemoveSelected,
         )
+        self.annotation_panel: AnnotationPanel = self.annotationPanel
+        # The bottom MS2 plot mirrors the front annotation tab's selected
+        # structure: this ScoredCandidate (None: not mirroring)
+        self._mirrored = None
+        # (focus key, SMILES) -> a hypothesis's ScoredCandidate, for the session
+        self._hypothesis_scores: dict = {}
         # Analyte -> x of the current layout, shared with the group track
         self._x_of_analyte: dict = {}
 
@@ -183,7 +194,6 @@ class AlignmentViewer(
         self.splitter_2.setSizePolicy(
             QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding,
         )
-        self.svgGroupStructure.setMinimumWidth(0)
         # [Group] | [Edit] [Del] | [Add] [Remove]
         for btn in (self.btnGroupDelete, self.btnGroupSelected):
             line = QtWidgets.QFrame()
@@ -194,8 +204,8 @@ class AlignmentViewer(
             )
         self.splitter_3.setStretchFactor(1, 1)
         self.splitter_3.setSizes([260, 575])
-        # Inspector column: selection page / analyte panel / groups
-        self.splitter_2.setSizes([200, 420, 160])
+        # Inspector column: selection page / analyte editor + annotation / groups
+        self.splitter_2.setSizes([140, 700, 40])
         self.splitter.setSizes([550, 450])
         self.plotDendrogram.link_to(self.plot_item)
         self.plotDendrogram.hide()
@@ -279,7 +289,21 @@ class AlignmentViewer(
         self.inspector.sigEnsembleActivated.connect(
             self.sigViewEnsembleRequested
         )
-        self.inspector.sigAnnotationEdited.connect(self._on_annotation_edited)
+        self.annotation_editor.sigAnnotationChanged.connect(self._on_annotation_changed)
+        self.annotation_editor.sigHypothesisSelected.connect(
+            lambda h: self.tabsAnnotation.currentWidget() is self.tabAnnotation and self._on_hypothesis_selected(h)
+        )
+        self.annotation_panel.sigRankRequested.connect(self.sigRankCandidatesRequested)
+        self.annotation_panel.sigCandidateSelected.connect(
+            lambda s: self.tabsAnnotation.currentWidget() is self.annotation_panel and self._show_candidate(s)
+        )
+        self.annotation_panel.sigAccepted.connect(self._on_accepted)
+        self.tabsAnnotation.currentChanged.connect(
+            lambda: (self.annotation_panel if self.tabsAnnotation.currentWidget() is self.annotation_panel
+                     else self.annotation_editor).reselect()
+        )
+        self.plotMS2.sigMirrorSignalHovered.connect(self._on_ms2_mirror_hovered)
+        self.plotMS2.sigMSpectrumLeaved.connect(self._on_ms2_mirror_left)
 
         self.btnLinkRT.toggled.connect(self._update_rt_link)
         self.btnFrameSelection.toggled.connect(self.detail_panel.set_frame_selection)
@@ -764,9 +788,14 @@ class AlignmentViewer(
         """The analyte panel follows the focus's analyte (an ensemble's parent)."""
         focus = self.selection_model.focus
         if focus is None or self._ctx is None:
-            self.inspector.show_focus(None, None)
+            self.annotation_panel.show_analyte(None, None)
+            self.annotation_editor.show_analyte(None, None)
             return
-        self.inspector.show_focus(self._ctx, focus.analyte)
+        ensemble = focus.ensemble if focus.kind == 'ensemble' else None
+        self.annotation_panel.show_analyte(self._ctx, focus.analyte, ensemble)
+        self.annotation_editor.show_analyte(
+            self._ctx, focus.analyte, ensemble, self.annotation_panel.sample_uuid,
+        )
 
     def _refresh_inspector(self, *_):
         """Re-show the tree and analyte panel (e.g. a formula or annotation changed)."""
@@ -789,6 +818,7 @@ class AlignmentViewer(
         if state == self._details_state:
             return
         self._details_state = state
+        self._mirrored = None
         if ctx is None or focus is None:
             self.detail_panel.clear()
             return
@@ -827,26 +857,78 @@ class AlignmentViewer(
         """Re-show the tree (e.g. so Similarity picks up a new clustering)."""
         self._show_tree()
 
-    def _on_annotation_edited(self, analyte_uuid, field: str, value: str):
-        """A Name / SMILES edit: validate, then update the registry."""
-        old = (
-            self.data_source.get_annotation(analyte_uuid)
-            or AnalyteAnnotation(analyte_uuid)
-        )
-        if getattr(old, field) == value:
-            return
-        if field == 'smiles' and value:
-            try:
-                smiles_to_svg(value)
-            except ValueError as e:
-                QtWidgets.QMessageBox.warning(self, "Invalid SMILES", str(e))
-                self._show_focus()   # revert the field
-                return
-        new = dataclasses.replace(old, **{field: value})
-        if new.is_empty:
+    def _on_annotation_changed(self, analyte_uuid, annotation):
+        if annotation is None:
             self.data_source.remove_annotation(analyte_uuid)
         else:
-            self.data_source.register_annotation(new)
+            self.data_source.register_annotation(annotation)
+
+    def _on_accepted(self, analyte_uuid, hypothesis: Hypothesis):
+        """A Search candidate becomes the analyte's chosen hypothesis, shown in its tab."""
+        if (shown := self.annotation_panel.shown) is not None:
+            self._hypothesis_scores[(self.annotation_panel.focus_key, hypothesis.smiles)] = shown
+        self.annotation_editor.add_hypothesis(hypothesis)
+        self.tabsAnnotation.setCurrentWidget(self.tabAnnotation)
+
+    def set_ranking(self, key, result):
+        """A finished candidate ranking (None: failed / cancelled), from MainController."""
+        if key[0] != 'hypothesis':
+            self.annotation_panel.set_ranking(key, result)
+            return
+        _, focus_key, smiles, sample_uuid = key
+        if result is None or not result.scored:
+            return
+        scored = result.scored[0]
+        self._hypothesis_scores[(focus_key, smiles)] = scored
+        self.annotation_editor.set_scores(focus_key[0], smiles, sample_uuid, scores_of(scored, result))
+        selected = self.annotation_editor.selected()
+        if (self.tabsAnnotation.currentWidget() is self.tabAnnotation and selected is not None
+                and selected.smiles == smiles and self.annotation_panel.focus_key == focus_key):
+            self._show_candidate(scored)
+
+    def _on_hypothesis_selected(self, hypothesis: Optional[Hypothesis]):
+        """Mirror a hypothesis: its GLACIER prediction for the focus's MS2, scored once per session."""
+        if hypothesis is None:
+            self._show_candidate(None)
+            return
+        focus_key = self.annotation_panel.focus_key
+        if (scored := self._hypothesis_scores.get((focus_key, hypothesis.smiles))) is not None:
+            self._show_candidate(scored)
+            return
+        self._show_candidate(None)
+        kwargs = self.annotation_panel.score_kwargs(hypothesis.smiles, hypothesis.name)
+        if kwargs is not None:
+            self.sigRankCandidatesRequested.emit(
+                ('hypothesis', focus_key, hypothesis.smiles, self.annotation_panel.sample_uuid), kwargs,
+            )
+
+    def _show_candidate(self, scored):
+        """Mirror the focus's MS2 against `scored`'s prediction (None: back to normal)."""
+        if scored is None:
+            if self._mirrored is not None:
+                self._details_state = None   # force a redraw
+                self._refresh_details()
+            return
+        self.detail_panel.show_ms2_mirror(
+            self.annotation_panel.ms2, scored.prediction, "Observed",
+            "Predicted (GLACIER)", scored.matches,
+        )
+        self._mirrored = scored
+
+    def _highlight_fragment(self, peak_idx: Optional[int]):
+        if self.tabsAnnotation.currentWidget() is self.annotation_panel:
+            self.annotation_panel.highlight_fragment(peak_idx)
+        else:
+            self.annotation_editor.highlight_fragment(self._mirrored, peak_idx)
+
+    def _on_ms2_mirror_hovered(self, signal: tuple):
+        """(half, spec_idx, mz, intsy): a predicted peak lights up its fragment."""
+        if self._mirrored is not None and signal[0] == 'bottom':
+            self._highlight_fragment(signal[1])
+
+    def _on_ms2_mirror_left(self):
+        if self._mirrored is not None:
+            self._highlight_fragment(None)
 
     def _anchor_similarities(self) -> dict:
         """

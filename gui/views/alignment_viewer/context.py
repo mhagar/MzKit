@@ -96,11 +96,22 @@ class AlignmentContext:
         formula, count = Counter(formulas).most_common(1)[0]
         return formula, count, len(members)
 
+    def focus_formula(
+        self,
+        analyte: 'AlignedAnalyte',
+        ensemble: Optional['Ensemble'] = None,
+    ) -> Optional[str]:
+        """The focused member `ensemble`'s formula, else the analyte's most common one."""
+        if ensemble is not None:
+            return self.formula(ensemble).rstrip('?') or None
+        agreement = self.formula_agreement(analyte)
+        return agreement[0] if agreement else None
+
     def analyte_label(self, analyte: 'AlignedAnalyte') -> str:
         """"m/z @ RT", followed by the analyte's annotated name, if any."""
         label = f"{analyte.consensus_mz:.4f} @ {analyte.consensus_rt:.1f}s"
         annotation = self.data_source.get_annotation(analyte.uuid)
-        return f"{label} ({annotation.name})" if annotation and annotation.name else label
+        return f"{label} ({annotation.label})" if annotation and annotation.label else label
 
     def formula_label(self, analyte: 'AlignedAnalyte') -> str:
         """`formula_agreement` as "C10H12O (3/4)"; empty if no formula."""

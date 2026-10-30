@@ -205,7 +205,7 @@ the round-trip.
 - `load_project()` returns a `ProjectData(samples, alignments, assignments, groups, matrices, annotations)`.
 - Layout inside the zip: `project_metadata.json`, `samples/<name>/…`,
   `alignments/<uuid>.json`, `groups/<uuid>.json`,
-  `annotations/<analyte_uuid>.json` (per-analyte name + SMILES), and
+  `annotations/<analyte_uuid>.json` (per-analyte name, MSI level, notes, structure hypotheses + the chosen one), and
   `similarity/<uuid>.npz` (raw values, no pickle) + `similarity/<uuid>.json`.
 - **Back-compat is intentional:** every deserializer uses `.get(..., default)`
   for fields added over time, so old `.mzk` files keep loading as the model

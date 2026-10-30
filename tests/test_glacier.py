@@ -3,6 +3,7 @@ Tests for the onnxruntime GLACIER port (core/utils/glacier.py) against ms-pred's
 torch predict_mol outputs in glacier_parity.npz (written by
 tools/glacier/export_onnx.py). Skipped when models/glacier/ is missing.
 """
+import re
 from pathlib import Path
 
 import numpy as np
@@ -56,3 +57,31 @@ def test_missing_model_message(monkeypatch, tmp_path):
     with pytest.raises(FileNotFoundError, match="export_onnx.py"):
         glacier.load_model()
     glacier.load_model.cache_clear()
+
+
+def test_ion_formula_hill_order_and_adducts():
+    el = ['C', 'N', 'O', 'H', 'Na']
+    form = np.array([7, 0, 1, 7, 0])   # a C7H7O fragment, with its own Hs
+    assert glacier.ion_formula(form, 0, '[M+H]+', False, el) == 'C7H8O+'
+    assert glacier.ion_formula(form, -2, '[M+H]+', True, el) == 'C7H5O•+'
+    assert glacier.ion_formula(form, 1, '[M+Na]+', False, el) == 'C7H8NaO+'
+    assert glacier.ion_formula(form, 0, '[M+H-H2O]+', False, el) == 'C7H6+'
+    assert glacier.ion_formula(np.array([0, 1, 0, 3, 0]), 0, '[M+H]+', False, el) == 'H4N+'
+
+
+@needs_model
+@pytest.mark.parametrize('adduct', ['[M+H]+', '[M+Na]+', '[M-H]-'])
+def test_ion_formula_mass_matches_predicted_mz(adduct):
+    """
+    Every predicted row's ion formula weighs what GLACIER put at its m/z. (GLACIER
+    can push H below zero, e.g. C2H-1- for [M-H]-: the formula reports it as is.)
+    """
+    model = glacier.load_model()
+    [pred] = model.predict(['CCOC(=O)c1ccc(N)cc1'], np.array([30.0]), [adduct], ['Orbitrap'])
+    mass, e = model.meta['element_to_mass'], model.meta['electron_mass']
+    rows = np.flatnonzero(pred['spec'][:, 1] > 0)
+    for r in rows:
+        ion = glacier.ion_formula(pred['form'][r], pred['h_shift'][r], adduct, pred['radical'][r], model.elements)
+        formula, charge = ion.rstrip('•+-'), ion[-1]
+        neutral = sum(mass[s] * int(n or 1) for s, n in re.findall(r"([A-Z][a-z]*)(-?[0-9]*)", formula))
+        assert neutral - e * (1 if charge == '+' else -1) == pytest.approx(pred['spec'][r, 0], abs=1e-4), ion

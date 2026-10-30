@@ -7,22 +7,10 @@ from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtSvg import QSvgWidget
 
 from core.utils import glacier
+from core.utils.glacier import merge_peaks
 from core.utils.array_types import to_spec_arr
 from core.utils.render_molecule import smiles_to_svg
 from gui.widgets.MSPlotWidget import MSPlotWidget
-
-
-def merge_peaks(spec: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Collapse GLACIER's raw rows to unique m/z (4 dp, max intensity), base peak = 1.
-    Also returns, per peak, the index of the raw row that gave it that intensity.
-    """
-    rows = np.flatnonzero(spec[:, 1] > 0)
-    mz, inv = np.unique(np.round(spec[rows, 0], 4), return_inverse=True)
-    order = np.lexsort((-spec[rows, 1], inv))  # by peak, most intense row first
-    src = rows[order[np.r_[True, inv[order][1:] != inv[order][:-1]]]]
-    intsy = spec[src, 1]
-    return mz, intsy / intsy.max() if len(intsy) else intsy, src
 
 
 class GlacierDialog(QtWidgets.QDialog):
@@ -95,11 +83,27 @@ class GlacierDialog(QtWidgets.QDialog):
             self.plot.pi.vb.setRange(xRange=(0, mz.max() * 1.1), yRange=(0, 1.05))
         self.status_label.setText(f"{len(mz)} peaks")
 
-    def show_fragment(self, signal: tuple[int, float]):
-        """Clicked peak (spec_idx, mz): highlight its (most intense) fragment in the parent."""
-        self.show_structure(np.flatnonzero(self.peak_frags[signal[0]]).tolist())
+    def show_fragment(
+            self,
+            signal: tuple[int, float],
+    ):
+        """
+        Clicked peak (spec_idx, mz): highlight its (most intense) fragment in the parent.
+        """
+        self.show_structure(
+            np.flatnonzero(self.peak_frags[signal[0]]).tolist()
+        )
 
-    def show_structure(self, highlight_atoms: list[int] | None = None):
-        svg, _ = smiles_to_svg(self.smiles, highlight_atoms)
-        self.structure.load(QtCore.QByteArray(svg.encode()))
-        self.structure.renderer().setAspectRatioMode(QtCore.Qt.KeepAspectRatio)
+    def show_structure(
+            self,
+            highlight_atoms: list[int] | None = None
+    ):
+        svg, _ = smiles_to_svg(
+            self.smiles, highlight_atoms
+        )
+        self.structure.load(
+            QtCore.QByteArray(svg.encode())
+        )
+        self.structure.renderer().setAspectRatioMode(
+            QtCore.Qt.KeepAspectRatio
+        )

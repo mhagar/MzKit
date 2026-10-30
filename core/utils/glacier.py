@@ -24,12 +24,16 @@ from core.utils.config import get_project_root
 
 MODEL_DIR = get_project_root() / "models" / "glacier"
 BLOCKS = ("encoder", "breakpoints", "intensity")
-WEIGHTS_URL = ("https://www.dropbox.com/scl/fo/ta99j0mp1w7qzek5zvy3w/"
-               "AFCLQNO8W2EP7ZDMOj9nxWI?rlkey=563zxtyvvhwfu1uyz6n10n2ui")  # MassSpecGym-trained
+WEIGHTS_URL = (
+    "https://www.dropbox.com/scl/fo/ta99j0mp1w7qzek5zvy3w/"
+    "AFCLQNO8W2EP7ZDMOj9nxWI?rlkey=563zxtyvvhwfu1uyz6n10n2ui"
+)  # MassSpecGym-trained
 
 
 def model_available() -> bool:
-    return all((MODEL_DIR / f"{b}.onnx").exists() for b in BLOCKS) and (MODEL_DIR / "meta.json").exists()
+    return all(
+        (MODEL_DIR / f"{b}.onnx").exists() for b in BLOCKS
+    ) and (MODEL_DIR / "meta.json").exists()
 
 
 def missing_model_message() -> str:
@@ -71,7 +75,11 @@ class GlacierONNX:
         Returns one dict per molecule with
           "spec": (rows, 2) [m/z, intensity], one row per fragment x adduct-electron term x H shift
                   (intensity 0 for impossible H shifts), unmerged and unnormalized, like ms-pred;
-          "frag": (rows, n_atoms) bool, the heavy atoms of each row's fragment.
+          "frag": (rows, n_atoms) bool, the heavy atoms of each row's fragment;
+          "form": (rows, len(self.elements)) the fragment's formula (heavy atoms + their Hs), dense;
+          "h_shift": (rows,) int, the Hs GLACIER adds (+) to / removes (-) from the fragment;
+          "radical": (rows,) bool, True for the electron-loss/gain ion term, False for the adduct's.
+        Rows run fragment-major, then ion term, then H shift. See `ion_formula`.
         """
         meta = self.meta
         mols = [Chem.MolFromSmiles(s) for s in smiles]
@@ -148,17 +156,64 @@ class GlacierONNX:
         valid = (h <= max_add[..., None] + centre) & (h >= centre - max_remove[..., None]) & ~pad[..., None]
         inten = np.where(np.repeat(valid[:, :, None, :], 2, axis=2).reshape(B, F, -1), inten, 0)
 
+        shifts = np.arange(-self.max_broken_bonds, self.max_broken_bonds + 1)
         out = []
         for i in range(B):
             rows = counts[i] * self.rows_per_frag
             out.append({
                 "spec": np.stack([mz[i].reshape(-1)[:rows], inten[i].reshape(-1)[:rows]], -1),
                 "frag": np.repeat(frags[i][:, :n_atoms[i]], self.rows_per_frag, axis=0),
+                "form": np.repeat(frag_form[i, :counts[i]], self.rows_per_frag, axis=0),
+                "h_shift": np.tile(shifts, 2 * counts[i]),
+                "radical": np.tile(np.repeat([False, True], self.n_shifts), counts[i]),
             })
         return out
 
 
-def max_diff_up_to_symmetry(mol, pred: dict, ref: dict, rows_per_frag: int) -> float:
+def merge_peaks(spec: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Collapse GLACIER's raw rows to unique m/z (4 dp, max intensity), base peak = 1.
+    Also returns, per peak, the index of the raw row that gave it that intensity.
+    """
+    rows = np.flatnonzero(spec[:, 1] > 0)
+    mz, inv = np.unique(np.round(spec[rows, 0], 4), return_inverse=True)
+    order = np.lexsort((-spec[rows, 1], inv))  # by peak, most intense row first
+    src = rows[order[np.r_[True, inv[order][1:] != inv[order][:-1]]]]
+    intsy = spec[src, 1]
+    return mz, intsy / intsy.max() if len(intsy) else intsy, src
+
+
+def ion_formula(
+        form: np.ndarray,
+        h_shift: int,
+        adduct: str,
+        radical: bool,
+        elements,
+) -> str:
+    """
+    A predict() row's ion as a Hill formula and charge: the fragment `form`
+    shifted by `h_shift` Hs, then either `adduct`'s change applied (e.g.
+    "[M+H]+" -> "C7H7O+") or, for the `radical` term, an electron lost or
+    gained ("C7H6O•+").
+    """
+    counts = dict(zip(elements, np.rint(form).astype(int)))
+    counts['H'] += int(h_shift)
+    if not radical:
+        change = adduct[adduct.index('M') + 1:adduct.index(']')]   # e.g. "+H-H2O"
+        for sign, mult, group in re.findall(r"([+-])(\d*)([A-Z][A-Za-z0-9]*)", change):
+            for sym, num in re.findall(r"([A-Z][a-z]*)([0-9]*)", group):
+                counts[sym] = counts.get(sym, 0) + (1 if sign == '+' else -1) * int(mult or 1) * int(num or 1)
+    order = (['C', 'H'] if counts.get('C') else []) + sorted(e for e in counts if not (counts.get('C') and e in 'CH'))
+    formula = ''.join(f"{e}{n if n != 1 else ''}" for e in order if (n := counts.get(e, 0)))
+    return formula + ('•' if radical else '') + adduct[-1]
+
+
+def max_diff_up_to_symmetry(
+        mol,
+        pred: dict,
+        ref: dict,
+        rows_per_frag: int
+) -> float:
     """
     Largest |spec difference| between two predict() outputs for `mol`, pairing fragments
     by their atoms' symmetry classes (inf if the fragment sets differ). Symmetric atoms
@@ -178,7 +233,11 @@ def max_diff_up_to_symmetry(mol, pred: dict, ref: dict, rows_per_frag: int) -> f
     return float(np.abs(spec_a - spec_b).max()) if keys_a == keys_b else float("inf")
 
 
-def breakpoints_to_fragments(breaks, adj, n_atoms):
+def breakpoints_to_fragments(
+        breaks,
+        adj,
+        n_atoms,
+):
     """
     Connected components left after deleting each slot's breakpoint atoms.
     breaks: (B, S, N) bool. Returns per-molecule (n_frags, N) bool arrays (unique,

@@ -110,11 +110,17 @@ def test_analyte_group_roundtrip(tmp_path):
 
 def test_analyte_annotation_roundtrip(tmp_path):
     from core.data_structs import AnalyteAnnotation
+    from core.data_structs.analyte_annotation import Hypothesis
 
     reg = DataRegistry()
     named = AnalyteAnnotation(
-        analyte_uuid=7, name="Psammaplin A", smiles="CCO",
-        source="NPAtlas", db_id="NPA1", scores={"explained": "7/10", "cosine": 0.61},
+        analyte_uuid=7, name="Psammaplin A", msi_level=2, notes="from the sponge",
+        hypotheses=(
+            Hypothesis("CCO", "ethanol", origin="NPAtlas", db_id="NPA1", sample_uuid=2**100,
+                       scores={"explained": "7/10", "cosine": 0.61}),
+            Hypothesis("CCCO"),
+        ),
+        chosen_idx=1,
     )
     reg.register_annotation(named)
     reg.register_annotation(AnalyteAnnotation(analyte_uuid=8, name="unknown 1"))

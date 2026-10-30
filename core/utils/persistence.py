@@ -671,7 +671,7 @@ def load_project(
 
         # Load analyte annotations (absent before 1.5.0)
         annotations = [
-            AnalyteAnnotation(**json.loads(zf.read(name)))
+            AnalyteAnnotation.from_dict(json.loads(zf.read(name)))
             for name in zf.namelist()
             if name.startswith('annotations/') and name.endswith('.json')
         ]

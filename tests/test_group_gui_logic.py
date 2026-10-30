@@ -114,32 +114,35 @@ def test_viewer_shows_group_track_and_panel(data_registry, sample, ensemble, mon
     assert tree.item(0).child(0).isEnabled()
     assert viewer.treeCompare.isExpanded(tree.item(0).index())
 
-    # Inline Name / SMILES edits land in the registry and the panel
-    warnings = []
-    monkeypatch.setattr(
-        QtWidgets.QMessageBox, "warning", lambda *args: warnings.append(args[1]),
-    )
-
+    # Name / MSI level / notes edits land in the registry and the editor
     def edit(line_edit, text):
         line_edit.setText(text)
         line_edit.editingFinished.emit()
         _app.processEvents()
 
     edit(viewer.editAnalyteName, " Psammaplin A ")
-    edit(viewer.editAnalyteSmiles, "not a smiles")
-    assert data_registry.get_annotation(analyte.uuid).name == "Psammaplin A"
-    assert data_registry.get_annotation(analyte.uuid).smiles == ""
-    assert warnings == ["Invalid SMILES"]
+    viewer.comboMsiLevel.setCurrentIndex(3)
+    viewer.comboMsiLevel.activated.emit(3)
+    edit(viewer.editAnalyteNotes, "sponge")
+    annotation = data_registry.get_annotation(analyte.uuid)
+    assert (annotation.name, annotation.msi_level, annotation.notes) == ("Psammaplin A", 3, "sponge")
     assert viewer.editAnalyteName.text() == "Psammaplin A"
-    assert viewer.editAnalyteSmiles.text() == ""          # reverted
+    assert viewer.svgAnalyteStructure.isHidden()   # no structure yet
 
-    edit(viewer.editAnalyteSmiles, "CCO")
-    assert data_registry.get_annotation(analyte.uuid).smiles == "CCO"
+    # An invalid typed SMILES is refused
+    warnings = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *args: warnings.append(args[1]))
+    viewer.treeHypotheses.topLevelItem(0).setText(1, "not a smiles")
+    assert warnings == ["Invalid SMILES"] and not data_registry.get_annotation(analyte.uuid).hypotheses
+    viewer.treeHypotheses.topLevelItem(0).setText(1, "CCO")
+    assert data_registry.get_annotation(analyte.uuid).smiles == "CCO"   # the first is chosen
     assert not viewer.svgAnalyteStructure.isHidden()
 
-    # Clearing both fields drops the annotation
+    # Clearing everything drops the annotation
+    viewer.annotation_editor._delete(0)
     edit(viewer.editAnalyteName, "")
-    edit(viewer.editAnalyteSmiles, "")
+    viewer.comboMsiLevel.activated.emit(0)
+    edit(viewer.editAnalyteNotes, "")
     assert data_registry.get_annotation(analyte.uuid) is None
     assert viewer.svgAnalyteStructure.isHidden()
 
@@ -273,7 +276,6 @@ def test_selection_tree_groups_items_under_analytes():
     unselected rows disabled; analytes with a selected ensemble expanded.
     An anchor not in the tree is pinned on top."""
     import numpy as np
-    from PyQt5 import QtSvg
     from core.utils.array_types import to_spec_arr
     from gui.views.alignment_viewer.context import ItemSpectra
     from gui.views.alignment_viewer.inspector import Inspector
@@ -314,10 +316,7 @@ def test_selection_tree_groups_items_under_analytes():
     stack.addWidget(compare_page)
     summary = QtWidgets.QLabel(summary_page)
     tree = QtWidgets.QTreeView(compare_page)
-    inspector = Inspector(
-        QtWidgets.QLabel(), stack, summary, QtWidgets.QLineEdit(), QtWidgets.QLineEdit(), tree,
-        QtSvg.QSvgWidget(),
-    )
+    inspector = Inspector(QtWidgets.QLabel(), stack, summary, tree)
     inspector.show_selection(ctx, [ta, tb, tc], focus=e1, anchor=e0, similarities={})
 
     model = inspector.compare_model

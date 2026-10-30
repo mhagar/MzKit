@@ -177,6 +177,23 @@ class DetailPanel:
             self.ms2_plot.update_bpc_label("")
         self._frame_ms([top.ms1, bottom.ms1, top.ms2, bottom.ms2], ms_x)
 
+    def show_ms2_mirror(
+        self,
+        top: 'SpectrumArray',
+        bottom: 'SpectrumArray',
+        top_label: str,
+        bottom_label: str,
+        matches: list[tuple[int, int]],
+    ):
+        """MS2 only (e.g. observed vs predicted), labelled on the right; MS1 is left as is."""
+        ms_x = self._ms_x_range
+        self.ms2_plot.set_mirror_spectra(
+            top, bottom, top_label, bottom_label, matched=matches, labels_right=True,
+        )
+        _set_label(self.ms2_plot, "")
+        self.ms2_plot.update_bpc_label("")
+        self._frame_ms([top, bottom], ms_x)
+
     def show_xics(
         self,
         ctx: 'AlignmentContext',

@@ -306,6 +306,9 @@ class MainController:
         alignment_viewer.sigClusterRequested.connect(
             self._handle_cluster_analytes_request
         )
+        alignment_viewer.sigRankCandidatesRequested.connect(
+            self._handle_rank_candidates_request
+        )
 
     def _connect_ensemble_viewer_signals(self) -> None:
         """
@@ -1043,6 +1046,20 @@ class MainController:
             # Asked for on this one ensemble: replaces even a user's pick
             on_completion_func=partial(
                 self._on_auto_find_mf_complete, protect_user_choices=False,
+            ),
+        )
+
+    def _handle_rank_candidates_request(self, key, kwargs: dict):
+        """Rank the focused analyte's / ensemble's database candidates by GLACIER
+        in the background (Alignment Viewer annotation panel); the result goes
+        back to the viewer under the panel's focus `key`."""
+        alignment_viewer = self.subwindow_manager.get_window('alignment_viewer')
+        self.process_controller.start_process(
+            module_path="core.cli.rank_candidates",
+            function_name="rank_candidates",
+            parameters=kwargs,
+            on_completion_func=lambda result: alignment_viewer.set_ranking(
+                key, result,
             ),
         )
 

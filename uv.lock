@@ -172,51 +172,13 @@ wheels = [
 [[package]]
 name = "find-mfs"
 version = "0.6.0"
-source = { editable = "../../PycharmProjects/find-mfs" }
+source = { git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring#42170376198b18080dd910f3505f4efb17b83351" }
 dependencies = [
     { name = "isospecpy" },
     { name = "molmass" },
     { name = "numpy" },
     { name = "scikit-learn" },
     { name = "scipy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "isospecpy", specifier = ">=2.3" },
-    { name = "jupyter", marker = "extra == 'dev'" },
-    { name = "matplotlib", marker = "extra == 'dev'" },
-    { name = "molmass" },
-    { name = "numpy", specifier = ">=2.0,!=2.3.*" },
-    { name = "pandas", marker = "extra == 'dev'" },
-    { name = "pandas", marker = "extra == 'test'" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.5" },
-    { name = "scikit-learn", specifier = ">=1.7.2" },
-    { name = "scipy" },
-]
-provides-extras = ["dev", "test"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "build", specifier = ">=1.2.2.post1" },
-    { name = "jupyter" },
-    { name = "matplotlib" },
-    { name = "pandas" },
-    { name = "pytest", specifier = ">=8.3.5" },
-    { name = "sphinx", specifier = ">=8.1.3" },
-    { name = "sphinx-autodoc-typehints", specifier = ">=3.0.1" },
-    { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
-    { name = "twine", specifier = ">=6.1.0" },
-]
-docs = [
-    { name = "sphinx", specifier = ">=8.1.3" },
-    { name = "sphinx-autodoc-typehints", specifier = ">=3.0.1" },
-    { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
-]
-test = [
-    { name = "pandas" },
-    { name = "pytest", specifier = ">=8.3.5" },
 ]
 
 [[package]]
@@ -528,7 +490,7 @@ wheels = [
 
 [[package]]
 name = "mzkit"
-version = "1.1.3"
+version = "1.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "find-mfs" },
@@ -558,7 +520,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "find-mfs", editable = "../../PycharmProjects/find-mfs" },
+    { name = "find-mfs", git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring" },
     { name = "ipython", specifier = ">=9.9.0" },
     { name = "isospecpy", specifier = ">=2.2.3" },
     { name = "matchms", specifier = ">=0.21.1" },

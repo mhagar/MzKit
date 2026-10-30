@@ -97,7 +97,7 @@ def test_annotations_replace_and_collect_orphans():
     reg.sigAnnotationRemoved.connect(removed.append)
 
     first = AnalyteAnnotation(a[0].uuid, name="Psammaplin A")
-    second = AnalyteAnnotation(a[0].uuid, name="Psammaplin A", smiles="CCO")
+    second = AnalyteAnnotation(a[0].uuid, name="Psammaplin A", notes="sponge")
     reg.register_annotation(first)
     reg.register_annotation(second)   # same analyte: replaces
     assert (added, updated) == ([first], [second])

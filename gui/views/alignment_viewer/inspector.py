@@ -1,8 +1,8 @@
 """
 The AlignmentViewer's Inspector side panel: a stack of pages (the alignment
 summary while nothing is selected, else a tree of the analytes the selection
-touches, each with its member ensembles), plus an always-visible analyte
-editor (name / SMILES) for the focused item's analyte.
+touches, each with its member ensembles). The focused analyte's annotation
+is edited in annotation_editor.py.
 
 The tree mirrors the viewer's SelectionModel: picking a row asks to focus
 it; its context menu copies rows, expands / collapses them and sets / clears
@@ -15,14 +15,13 @@ from PyQt5.QtCore import QModelIndex, Qt
 
 from core.formula import delta_formula
 from core.utils.natural_sort import natural_sort_key
-from gui.views.alignment_viewer.group_dialog import show_smiles
 from gui.widgets.alignment_plot.layout import (
     ANCHOR_COLOR, CURRENT_COLOR, HoverTarget,
 )
 from gui.widgets.alignment_plot.selection import target_key
 
 if TYPE_CHECKING:
-    from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
+    from core.data_structs.alignment import EnsembleAlignment
     from gui.views.alignment_viewer.context import AlignmentContext
 
 
@@ -69,6 +68,7 @@ def _add_copy_action(view: QtWidgets.QAbstractItemView):
 # analyte header rows)
 ITEM_ROLE = Qt.UserRole
 FORMULA_COLUMN = 2
+ITEM_MAX_WIDTH = 250   # px
 
 
 def _fmt_intsy(value: float) -> str:
@@ -98,19 +98,13 @@ class Inspector(QtCore.QObject):
     # Emitted when an ensemble's tree row is double-clicked (or opened from
     # the tree's context menu).
     sigEnsembleActivated = QtCore.pyqtSignal(object)  # Ensemble
-    # Emitted when the focused analyte's name / SMILES is edited:
-    # (AnalyteUUID, field, new value)
-    sigAnnotationEdited = QtCore.pyqtSignal(object, str, str)
 
     def __init__(
         self,
         title_label: QtWidgets.QLabel,
         stack: QtWidgets.QStackedWidget,
         summary_label: QtWidgets.QLabel,
-        edit_name: QtWidgets.QLineEdit,
-        edit_smiles: QtWidgets.QLineEdit,
         tree_compare: QtWidgets.QTreeView,
-        svg_structure,
     ):
         super().__init__()
         self.title_label = title_label
@@ -121,19 +115,6 @@ class Inspector(QtCore.QObject):
 
         self.compare_model = QtGui.QStandardItemModel()
 
-        self._focus_uuid = None
-        self.edit_name, self.edit_smiles = edit_name, edit_smiles
-        for edit, field in ((edit_name, 'name'), (edit_smiles, 'smiles')):
-            edit.setEnabled(False)
-            edit.editingFinished.connect(
-                lambda edit=edit, field=field: self._focus_uuid is not None
-                and self.sigAnnotationEdited.emit(
-                    self._focus_uuid, field, edit.text().strip()
-                )
-            )
-        self.svg_structure = svg_structure
-        svg_structure.hide()
-
         self.tree_compare = tree_compare
         tree_compare.setModel(self.compare_model)
         tree_compare.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -141,6 +122,8 @@ class Inspector(QtCore.QObject):
         tree_compare.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         tree_compare.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         tree_compare.header().setStretchLastSection(True)
+        # Columns fit their contents, but a long analyte name elides instead
+        tree_compare.header().setMaximumSectionSize(ITEM_MAX_WIDTH)
         _add_copy_action(tree_compare)
         # Target key -> its row's first cell and label (for marks / current)
         self._item_cells: dict[tuple, tuple[QtGui.QStandardItem, str]] = {}
@@ -181,25 +164,6 @@ class Inspector(QtCore.QObject):
             f"Click a strip or line to inspect it; "
             f"Ctrl+click to select several."
         )
-
-    def show_focus(
-        self,
-        ctx: Optional['AlignmentContext'],
-        analyte: Optional['AlignedAnalyte'],
-    ):
-        """Fill the annotation editor for `analyte` (None clears it)."""
-        self._focus_uuid = None if analyte is None else analyte.uuid
-        annotation = (
-            None if ctx is None or analyte is None
-            else ctx.data_source.get_annotation(analyte.uuid)
-        )
-        smiles = annotation.smiles if annotation else ""
-        self.edit_name.setText(annotation.name if annotation else "")
-        self.edit_smiles.setText(smiles)
-        for edit in (self.edit_name, self.edit_smiles):
-            edit.setEnabled(self._focus_uuid is not None)
-        show_smiles(self.svg_structure, smiles)
-        self.svg_structure.setVisible(bool(smiles))
 
     def show_selection(
         self,
