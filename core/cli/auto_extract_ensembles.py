@@ -716,6 +716,20 @@ class SeedProvider:
         raise NotImplementedError
 
 
+def _csr_row(arr, row: int) -> np.ndarray:
+    """
+    Dense copy of one row of a CSR array, read straight from its index
+    arrays. Same result as ``arr[row].toarray().flatten()`` without scipy's
+    per-call indexing overhead (this runs once per seed and lane update).
+    """
+    if not arr.has_canonical_format:
+        return arr[row].toarray().flatten()
+    out = np.zeros(arr.shape[1], dtype=arr.dtype)
+    start, end = arr.indptr[row], arr.indptr[row + 1]
+    out[arr.indices[start:end]] = arr.data[start:end]
+    return out
+
+
 class LaneMaxSeedProvider(SeedProvider):
     """
     DIA / auto seeding: greedily pick the tallest signal across all MS1 lanes,
@@ -796,7 +810,7 @@ class LaneMaxSeedProvider(SeedProvider):
         )
 
     def _lane_chrom(self, lane: int) -> np.ndarray:
-        chrom = self.scan_array.intsy_arr[lane].toarray().flatten()
+        chrom = _csr_row(self.scan_array.intsy_arr, lane)
         if self.rt_mask is not None:
             chrom[self.rt_mask] = 0
         for start, end in self.assigned_ranges.get(lane, []):
@@ -834,7 +848,7 @@ class LaneMaxSeedProvider(SeedProvider):
         # Raw lane signal (no consumption zeroing) for a truthful prominence
         # baseline. RT masking is deliberately NOT applied — the chemical
         # background outside the RT window is still real baseline.
-        return self.scan_array.intsy_arr[seed.lane].toarray().flatten()
+        return _csr_row(self.scan_array.intsy_arr, seed.lane)
 
     def window_intensity(
         self,
