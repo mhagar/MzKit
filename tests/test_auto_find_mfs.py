@@ -82,6 +82,7 @@ def _install_fake_annotate(monkeypatch, *, formulas=('C6H12O6', 'C5H10O5'),
     res = SimpleNamespace(
         candidates=_fake_results(formulas),
         precursor_mz=180.0634, charge=1, grouped=grouped,
+        base_group_id=0, M=179.0561,
     )
     monkeypatch.setattr('core.cli.auto_find_mfs._get_scorer', lambda mp: object())
     monkeypatch.setattr('find_mfs.annotate_analyte_dia',
@@ -102,6 +103,8 @@ def test_annotate_builds_assignment_and_labels(dia_ensemble, monkeypatch):
     assert a.chosen_idx == 0                       # top hit auto-selected
     assert a.precursor_mz == pytest.approx(180.0634)
     assert a.charge == 1
+    assert a.ion == '[M+H]+'                       # find-mfs's resolved base ion
+    assert a.neutral_mass == pytest.approx(179.0561)
     assert [c.formula_str for c in a.candidates] == ['C6H12O6', 'C5H10O5']
     assert a.candidates[0].adduct == 'H'
     assert a.chosen_by == 'auto'

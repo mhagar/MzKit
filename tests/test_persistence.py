@@ -61,7 +61,8 @@ def test_formula_assignment_roundtrip(tmp_path):
         ],
         chosen_idx=0,
         chosen_by="user",
-        precursor_mz=356.0126, charge=1, adducts=["H"], ms2_mode="tallest",
+        precursor_mz=356.0126, charge=1, ion="[M+H]+", neutral_mass=355.0048,
+        adducts=["H"], ms2_mode="tallest",
         elements="CHNOSClBr", max_counts="C*H*N*O*S2Cl4Br4", min_counts=None,
         halogen_detected=True,
         params={"max_counts": "C*H*N*O*P0S2", "halogen_cap": "Cl4Br4"},
@@ -82,6 +83,7 @@ def test_formula_assignment_roundtrip(tmp_path):
     assert loaded.max_counts == "C*H*N*O*S2Cl4Br4"
     assert loaded.params == assignment.params
     assert loaded.precursor_mz == 356.0126
+    assert loaded.ion == "[M+H]+" and loaded.neutral_mass == 355.0048
     assert loaded.adducts == ["H"]
 
     assert len(loaded.candidates) == 2

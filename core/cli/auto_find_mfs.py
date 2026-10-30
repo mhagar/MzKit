@@ -280,6 +280,8 @@ def _annotate_one(
         chosen_by='auto' if candidates else None,
         precursor_mz=res.precursor_mz,          # precursor find-mfs actually used
         charge=res.charge,                       # resolved charge
+        ion=res.grouped.adduct_label[res.base_group_id],  # resolved base ion
+        neutral_mass=res.M,
         ms2_mode=ensemble.default_ms2_mode,
         params=asdict(params),
         **search_provenance(res.candidates),

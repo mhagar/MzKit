@@ -59,6 +59,11 @@ class FormulaAssignment:
     # --- Provenance (how this assignment was produced) ---
     precursor_mz: Optional[float] = None
     charge: Optional[int] = None
+    # find-mfs's resolved base ion (e.g. '[M+H]+', '[M+2H]2+', '[2M+Na]+') and
+    # neutral mass. For multimer / multiply-charged bases the candidates are
+    # the monomer's formulas, scored as an [M+H]+ equivalent.
+    ion: Optional[str] = None
+    neutral_mass: Optional[float] = None
     adducts: Optional[list[str]] = None
     ms2_mode: Optional[str] = None
 
