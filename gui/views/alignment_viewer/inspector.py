@@ -2,7 +2,7 @@
 The AlignmentViewer's Inspector side panel: a stack of pages (the alignment
 summary while nothing is selected, else a tree of the analytes the selection
 touches, each with its member ensembles). The focused analyte's annotation
-is edited in annotation_editor.py.
+is edited in gui/widgets/annotation_editor.py.
 
 The tree mirrors the viewer's SelectionModel: picking a row asks to focus
 it; its context menu copies rows, expands / collapses them and sets / clears

@@ -58,8 +58,8 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 - `export_network.py` - Similarity network of an alignment's analytes as GraphML, from a SimilarityMatrix (computed via `cluster_analytes.py`, MS2DeepScore by default, or imported)
 - `cluster_samples.py` - Hierarchical clustering of an alignment's samples: Jaccard of analyte presence (optionally MS2-grouped) or an imported lineage (Alignment Viewer sample cluster mode)
 - `cluster_analytes.py` - Hierarchical clustering of an alignment's analytes by MS2DeepScore (default) or MS2 modified cosine (Alignment Viewer cluster mode)
-- `rank_candidates.py` - Rank compound-DB candidates for an analyte by GLACIER-predicted MS2 (explained top-N peaks, then cosine); `[glacier]` config (Alignment Viewer annotation panel)
-- `search_spectra.py` - Search spectral libraries for an analyte's MS2: identity (cosine within the precursor window) or analogue (embedding cosine: MS2DeepScore or an imported embedder; modified cosine shown, never ranked); `[spectral_search]` config (Alignment Viewer Search (spectra) tab)
+- `rank_candidates.py` - Rank compound-DB candidates for an analyte by GLACIER-predicted MS2 (explained top-N peaks, then cosine); `[glacier]` config (Search (structures) tab, gui/widgets/annotation_tabs.py: Alignment + Ensemble Viewer)
+- `search_spectra.py` - Search spectral libraries for an analyte's MS2: identity (cosine within the precursor window) or analogue (embedding cosine: MS2DeepScore or an imported embedder; modified cosine shown, never ranked); `[spectral_search]` config (Search (spectra) tab, same hosts)
 - `find_cofeatures.py` - Core cofeature detection (Pearson correlation of extracted ion chromatograms)
 - `segment_chromatogram.py` - Peak boundary detection
 - `export_bpcs.py` - Export base peak chromatograms for all samples in an .mzk file (JSON)

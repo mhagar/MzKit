@@ -15,6 +15,7 @@ from typing import Optional, TYPE_CHECKING
 from core.cli.align_ensembles import PairScore, score_spectrum_pair
 from core.data_structs.alignment import RepresentativeSpectrum
 from core.utils.formula_formatting import format_assignment_formula_text
+from gui.widgets.annotation_target import AnnotationTarget, ensemble_adduct
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble, SampleUUID
@@ -122,6 +123,56 @@ class AlignmentContext:
             return ensemble
         rep = self.representative(analyte)
         return None if rep is None else self.members(analyte).get(rep.sample_uuid)
+
+    def annotation_target(
+        self,
+        analyte: 'AlignedAnalyte',
+        ensemble: Optional['Ensemble'] = None,
+    ) -> AnnotationTarget:
+        """
+        The annotation tabs' target for a focus: `ensemble` (a focused member)
+        with its own MS2, precursor and formula, else the analyte, searched
+        with its representative's MS2 at the consensus m/z and its most common
+        formula, edits going to the representative member. The adduct goes
+        with the formula: the focused (else representative) member's, else
+        any member's.
+        """
+        members = self.members(analyte)
+        target = self.target_ensemble(analyte, ensemble)
+        if ensemble is not None:
+            composite = ensemble.composite_spectrum
+            ms2, precursor_mz = composite.ms2, composite.precursor_mz
+        else:
+            rep = self.representative(analyte)
+            ms2, precursor_mz = (None if rep is None else rep.composite.ms2), analyte.consensus_mz
+        firsts = [target] if target is not None else []
+        adduct = next(filter(None, map(ensemble_adduct, firsts + list(members.values()))), None)
+
+        header = tip = ""
+        if target is not None:
+            sample = next((s for s, e in members.items() if e.uuid == target.uuid), None)
+            header = self.sample_name(sample) if sample is not None else "This ensemble"
+            if ensemble is None:
+                header += " (representative member)"
+            if len(members) > 1 and (agreement := self.structure_agreement(analyte)):
+                header += f" · members: {agreement[0]} {agreement[1]}/{agreement[2]}"
+            tip = "\n".join(self.notes(analyte))
+        else:
+            header = "No member ensemble to annotate"
+
+        return AnnotationTarget(
+            key=(analyte.uuid, ensemble and ensemble.uuid),
+            ensemble=target,
+            ms2=ms2,
+            precursor_mz=precursor_mz,
+            formula=self.focus_formula(analyte, ensemble),
+            adduct=adduct,
+            noun="ensemble" if ensemble is not None else "analyte",
+            header=header,
+            header_tip=tip,
+            members=list(members.values()),
+            embedding_id=str(analyte.uuid) if ensemble is None else None,
+        )
 
     def structure_agreement(
         self,

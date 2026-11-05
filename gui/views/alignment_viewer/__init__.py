@@ -39,7 +39,6 @@ The status bar shows a hover readout.
 Actions into the Ensemble / Sample viewers go out via signals the
 MainController wires up.
 """
-import dataclasses
 from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtWidgets, QtCore, QtGui
@@ -53,13 +52,9 @@ from core.cli.cluster_samples import (
     LINEAGE, SampleClusterParams, SampleClustering, cluster_samples_by,
     sample_cluster_params_from_config,
 )
-from core.cli.rank_candidates import ScoredCandidate
-from core.data_structs.ensemble import EnsembleAnnotation, Hypothesis
 from core.data_structs.similarity_matrix import SimilarityMatrix
 from core.utils.config import load_config
 from gui.resources.AlignmentViewerWindow import Ui_Form
-from gui.views.alignment_viewer.annotation_editor import AnnotationEditor
-from gui.views.alignment_viewer.annotation_panel import AnnotationPanel, scores_of
 from gui.views.alignment_viewer.cluster_params_dialog import ClusterParamsDialog
 from gui.views.alignment_viewer.context import AlignmentContext
 from gui.views.alignment_viewer.detail_panel import DetailPanel, XIC_COLOR
@@ -69,7 +64,6 @@ from gui.views.alignment_viewer.groups_panel import (
 )
 from gui.views.alignment_viewer.inspector import Inspector
 from gui.views.alignment_viewer.render_params_dialog import RenderParamsDialog
-from gui.views.alignment_viewer.spectrum_search_panel import SpectrumSearchPanel
 from gui.views.alignment_viewer.sample_cluster_params_dialog import (
     SampleClusterParamsDialog,
 )
@@ -77,6 +71,7 @@ from gui.widgets.alignment_plot.layout import (
     ANCHOR_COLOR, CURRENT_COLOR, HoverTarget,
 )
 from gui.widgets.alignment_plot.params import RenderParams
+from gui.widgets.annotation_tabs import AnnotationTabs
 from gui.widgets.alignment_plot.selection import target_key
 
 if TYPE_CHECKING:
@@ -102,9 +97,9 @@ class AlignmentViewer(
     sigApplyFormulaRequested = QtCore.pyqtSignal(object, object, float)
     # EnsembleAlignment, ClusterParams (compute) | SimilarityMatrix, linkage
     sigClusterRequested = QtCore.pyqtSignal(object, object, str)
-    # Annotation panel focus key, rank_candidates kwargs; the result comes back via set_ranking
+    # AnnotationTabs target key, rank_candidates kwargs; the result goes back to annotation_tabs.set_ranking
     sigRankCandidatesRequested = QtCore.pyqtSignal(object, dict)
-    # Spectral search slot, search_spectra kwargs; the result comes back via set_spectral_result
+    # Spectral search slot, search_spectra kwargs; the result goes back to annotation_tabs.set_spectral_result
     sigSpectralSearchRequested = QtCore.pyqtSignal(object, dict)
     sigSpectralRebuildRequested = QtCore.pyqtSignal()
 
@@ -161,13 +156,6 @@ class AlignmentViewer(
             summary_label=self.labelAlignmentSummary,
             tree_compare=self.treeCompare,
         )
-        self.annotation_editor = AnnotationEditor(
-            edit_name=self.editAnalyteName,
-            label_target=self.labelAnnotationTarget,
-            edit_notes=self.editAnalyteNotes,
-            tree=self.treeHypotheses,
-            structure=self.svgAnalyteStructure,
-        )
         self.groups_panel = GroupsPanel(
             self.data_source,
             combo=self.comboGroups,
@@ -176,13 +164,8 @@ class AlignmentViewer(
             btn_add=self.btnGroupAddSelected,
             btn_remove=self.btnGroupRemoveSelected,
         )
-        self.annotation_panel: AnnotationPanel = self.annotationPanel
-        self.spectrum_panel: SpectrumSearchPanel = self.spectrumSearchPanel
-        # The bottom MS2 plot mirrors the front annotation tab's selection: a
-        # structure's ScoredCandidate, or a library LibraryHit (None: not mirroring)
-        self._mirrored = None
-        # (focus key, SMILES) -> a hypothesis's ScoredCandidate, for the session
-        self._hypothesis_scores: dict = {}
+        # Annotation / Search tabs: the bottom MS2 plot mirrors their selection
+        self.annotation_tabs = AnnotationTabs(self.tabsAnnotation, self.data_source)
         # Analyte -> x of the current layout, shared with the group track
         self._x_of_analyte: dict = {}
 
@@ -298,26 +281,12 @@ class AlignmentViewer(
         self.inspector.sigEnsembleActivated.connect(
             self.sigViewEnsembleRequested
         )
-        self.annotation_editor.sigAnnotationChanged.connect(self._on_annotation_changed)
-        self.annotation_editor.sigApplyToAllRequested.connect(self._on_apply_hypothesis_to_all)
-        self.annotation_editor.sigHypothesisSelected.connect(
-            lambda h: self.tabsAnnotation.currentWidget() is self.tabAnnotation and self._on_hypothesis_selected(h)
-        )
-        self.annotation_panel.sigRankRequested.connect(self.sigRankCandidatesRequested)
-        self.annotation_panel.sigCandidateSelected.connect(
-            lambda s: self.tabsAnnotation.currentWidget() is self.annotation_panel and self._show_candidate(s)
-        )
-        self.annotation_panel.sigAccepted.connect(self._on_accepted)
-        self.spectrum_panel.sigSearchRequested.connect(self.sigSpectralSearchRequested)
-        self.spectrum_panel.sigRebuildRequested.connect(self.sigSpectralRebuildRequested)
-        self.spectrum_panel.sigHitSelected.connect(
-            lambda h: self.tabsAnnotation.currentWidget() is self.spectrum_panel and self._show_hit(h)
-        )
-        self.spectrum_panel.sigAccepted.connect(self._on_accepted)
-        self.tabsAnnotation.currentChanged.connect(
-            lambda: (self.annotation_editor if self.tabsAnnotation.currentWidget() is self.tabAnnotation
-                     else self.tabsAnnotation.currentWidget()).reselect()
-        )
+        tabs = self.annotation_tabs
+        tabs.sigRankRequested.connect(self.sigRankCandidatesRequested)
+        tabs.sigSpectralSearchRequested.connect(self.sigSpectralSearchRequested)
+        tabs.sigSpectralRebuildRequested.connect(self.sigSpectralRebuildRequested)
+        tabs.sigMirror.connect(self._on_mirror)
+        tabs.sigStatus.connect(self.status_bar.showMessage)
         self.plotMS2.sigMirrorSignalHovered.connect(self._on_ms2_mirror_hovered)
         self.plotMS2.sigMSpectrumLeaved.connect(self._on_ms2_mirror_left)
 
@@ -793,14 +762,10 @@ class AlignmentViewer(
         """The analyte panel follows the focus's analyte (an ensemble's parent)."""
         focus = self.selection_model.focus
         if focus is None or self._ctx is None:
-            self.annotation_panel.show_analyte(None, None)
-            self.spectrum_panel.show_analyte(None, None)
-            self.annotation_editor.show_analyte(None, None)
+            self.annotation_tabs.set_target(None)
             return
         ensemble = focus.ensemble if focus.kind == 'ensemble' else None
-        self.annotation_panel.show_analyte(self._ctx, focus.analyte, ensemble)
-        self.spectrum_panel.show_analyte(self._ctx, focus.analyte, ensemble)
-        self.annotation_editor.show_analyte(self._ctx, focus.analyte, ensemble)
+        self.annotation_tabs.set_target(self._ctx.annotation_target(focus.analyte, ensemble))
 
     def _refresh_inspector(self, *_):
         """Re-show the tree and analyte panel (e.g. a formula or annotation changed)."""
@@ -823,7 +788,7 @@ class AlignmentViewer(
         if state == self._details_state:
             return
         self._details_state = state
-        self._mirrored = None
+        self.annotation_tabs.forget_mirror()
         if ctx is None or focus is None:
             self.detail_panel.clear()
             return
@@ -862,143 +827,21 @@ class AlignmentViewer(
         """Re-show the tree (e.g. so Similarity picks up a new clustering)."""
         self._show_tree()
 
-    def _on_annotation_changed(self, ensemble_uuid, annotation):
-        self.data_source.update_ensemble(ensemble_uuid, annotation=annotation)
-
-    def _on_accepted(self, analyte_uuid, hypothesis: Hypothesis):
-        """
-        A search candidate / library hit becomes the chosen hypothesis of the
-        focused ensemble (the representative member's, for an analyte),
-        shown in its tab.
-        """
-        if self.tabsAnnotation.currentWidget() is self.annotation_panel and (shown := self.annotation_panel.shown) is not None:
-            self._hypothesis_scores[(self.annotation_panel.focus_key, hypothesis.smiles)] = shown
-        self.annotation_editor.add_hypothesis(hypothesis)
-        self.tabsAnnotation.setCurrentWidget(self.tabAnnotation)
-
-    def set_ranking(self, key, result):
-        """A finished candidate ranking (None: failed / cancelled), from MainController."""
-        if key[0] != 'hypothesis':
-            self.annotation_panel.set_ranking(key, result)
-            return
-        _, focus_key, smiles, ensemble_uuid = key
-        if result is None or not result.scored:
-            return
-        scored = result.scored[0]
-        if focus_key is not None:
-            self._hypothesis_scores[(focus_key, smiles)] = scored
-        # Straight onto the ensemble scored, wherever the focus has moved since
-        ensemble = self.data_source.get_ensemble(ensemble_uuid)
-        if ensemble is not None and ensemble.annotation is not None:
-            self.data_source.update_ensemble(ensemble_uuid, annotation=ensemble.annotation.with_scores(
-                smiles, scores_of(scored, result),
-            ))
-        selected = self.annotation_editor.selected()
-        if (self.tabsAnnotation.currentWidget() is self.tabAnnotation and selected is not None
-                and selected.smiles == smiles and self.annotation_panel.focus_key == focus_key):
-            self._show_candidate(scored)
-
-    def _on_apply_hypothesis_to_all(self, hypothesis: Hypothesis):
-        """
-        The focused analyte's every member gets `hypothesis` as its chosen
-        structure, scored against its own MS2 (never another member's scores).
-        """
-        focus, ctx = self.selection_model.focus, self._ctx
-        if ctx is None or focus is None or focus.analyte is None:
-            return
-        members = list(ctx.members(focus.analyte).values())
-        n_other = sum(
-            1 for e in members
-            if e.annotation is not None and e.annotation.chosen is not None
-            and e.annotation.smiles != hypothesis.smiles
-        )
-        if QtWidgets.QMessageBox.question(
-            self, "Apply structure to all aligned ensembles",
-            f"Choose {hypothesis.name or hypothesis.smiles} as the structure of "
-            f"{len(members)} member{'' if len(members) == 1 else 's'}; "
-            f"{n_other} of them have a different structure chosen.",
-        ) != QtWidgets.QMessageBox.Yes:
-            return
-
-        copy = dataclasses.replace(hypothesis, scores={})
-        n_unscored = 0
-        for ensemble in members:
-            ann = (ensemble.annotation or EnsembleAnnotation()).with_hypothesis(copy)
-            self.data_source.update_ensemble(ensemble.uuid, annotation=ann)
-            if ann.chosen.scores:   # already scored there
-                continue
-            kwargs = self.annotation_panel.score_kwargs(hypothesis.smiles, hypothesis.name, ensemble)
-            if kwargs is None:
-                n_unscored += 1
-                continue
-            self.sigRankCandidatesRequested.emit(
-                ('hypothesis', None, hypothesis.smiles, ensemble.uuid), kwargs,
-            )
-        self.status_bar.showMessage(
-            f"Structure applied to {len(members)} member(s)"
-            + (f"; {n_unscored} can't be scored (no MS2 or GLACIER model)" if n_unscored else "")
-        )
-
-    def set_spectral_result(self, slot, result):
-        """A finished spectral-library search (None: failed / cancelled), from MainController."""
-        self.spectrum_panel.set_result(slot, result)
-
-    def _on_hypothesis_selected(self, hypothesis: Optional[Hypothesis]):
-        """Mirror a hypothesis: its GLACIER prediction for the focus's MS2, scored once per session."""
-        if hypothesis is None:
-            self._show_candidate(None)
-            return
-        focus_key = self.annotation_panel.focus_key
-        if (scored := self._hypothesis_scores.get((focus_key, hypothesis.smiles))) is not None:
-            self._show_candidate(scored)
-            return
-        self._show_candidate(None)
-        kwargs = self.annotation_panel.score_kwargs(hypothesis.smiles, hypothesis.name)
-        if kwargs is not None:
-            self.sigRankCandidatesRequested.emit(
-                ('hypothesis', focus_key, hypothesis.smiles, self.annotation_editor.target_uuid), kwargs,
-            )
-
-    def _show_candidate(self, scored):
-        """Mirror the focus's MS2 against `scored`'s prediction (None: back to normal)."""
-        if scored is None:
-            if self._mirrored is not None:
-                self._details_state = None   # force a redraw
-                self._refresh_details()
-            return
-        self.detail_panel.show_ms2_mirror(
-            self.annotation_panel.ms2, scored.prediction, "Observed",
-            "Predicted (GLACIER)", scored.matches,
-            self.annotation_panel.precursor_mz, self.annotation_panel.precursor_mz,
-        )
-        self._mirrored = scored
-
-    def _show_hit(self, hit):
-        """Mirror the focus's MS2 against library hit `hit`'s spectrum (None: back to normal)."""
-        if hit is None:
-            self._show_candidate(None)
-            return
-        self.detail_panel.show_ms2_mirror(
-            self.spectrum_panel.ms2, hit.peaks, "Observed",
-            f"Library ({hit.library}: {hit.name or hit.spectrum_id})", hit.matches,
-            self.spectrum_panel.precursor_mz, hit.precursor_mz,
-        )
-        self._mirrored = hit
-
-    def _highlight_fragment(self, peak_idx: Optional[int]):
-        if self.tabsAnnotation.currentWidget() is self.annotation_panel:
-            self.annotation_panel.highlight_fragment(peak_idx)
+    def _on_mirror(self, spec):
+        """Draw the annotation tabs' MS2 mirror (None: back to the focus's spectra)."""
+        if spec is None:
+            self._details_state = None   # force a redraw
+            self._refresh_details()
         else:
-            self.annotation_editor.highlight_fragment(self._mirrored, peak_idx)
+            self.detail_panel.show_ms2_mirror(*spec)
 
     def _on_ms2_mirror_hovered(self, signal: tuple):
         """(half, spec_idx, mz, intsy): a predicted peak lights up its fragment."""
-        if isinstance(self._mirrored, ScoredCandidate) and signal[0] == 'bottom':
-            self._highlight_fragment(signal[1])
+        if signal[0] == 'bottom':
+            self.annotation_tabs.mirror_hovered(signal[1])
 
     def _on_ms2_mirror_left(self):
-        if isinstance(self._mirrored, ScoredCandidate):
-            self._highlight_fragment(None)
+        self.annotation_tabs.mirror_hovered(None)
 
     def _anchor_similarities(self) -> dict:
         """

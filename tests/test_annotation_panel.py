@@ -47,12 +47,13 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
     viewer.show()
     viewer.set_alignment(alignment)
     viewer.selection_model.set_selection(viewer.plot_item.analyte_targets([analyte.uuid]))
-    panel = viewer.annotation_panel
+    tabs = viewer.annotation_tabs
+    panel = tabs.structure_search
     viewer.tabsAnnotation.setCurrentWidget(panel)
     # Independent of the local model / compound cache (re-focus checks both)
     monkeypatch.setattr('core.utils.glacier.model_available', lambda: True)
     panel.source_checks = [QtWidgets.QCheckBox('NPAtlas')]
-    assert panel._analyte is analyte
+    assert panel._target.key == (analyte.uuid, None)
 
     panel.ms2 = to_spec_arr(np.array([50.0, 100.0]), np.array([1.0, 0.4]))
 
@@ -60,12 +61,12 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
         [_scored('NPA2', 'CCCO', 2, 0.9), _scored('NPA1', 'CC(C)O', 1, 0.5)],
         n_considered=2, adduct='[M+H]+', adduct_fallback=False, params=RankParams(),
     )
-    viewer.set_ranking((analyte.uuid, None), result)   # ranked with the analyte in focus
+    tabs.set_ranking((analyte.uuid, None), result)   # ranked with the analyte in focus
     assert panel.table.rowCount() == 2
     assert panel.table.item(0, 3).text() == "2/2 (0.90)"
 
     panel.table.selectRow(0)
-    assert viewer._mirrored is panel.shown and viewer.plotMS2.is_mirror()
+    assert tabs.mirrored is panel.shown and viewer.plotMS2.is_mirror()
     viewer._on_ms2_mirror_hovered(('bottom', 1, 100.0, 1.0))
     assert not panel.structure.isHidden()
     assert panel.structure._caption == "C3H7O+\n-2H"
@@ -78,16 +79,17 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
     assert (h.smiles, h.origin, h.db_id, annotation.label) == ('CCCO', 'NPAtlas', 'NPA2', 'npa2')
     assert h.scores['explained'] == "2/2"
     # Ranked with the analyte in focus: it lands on the representative member
-    assert "(representative member)" in viewer.labelAnnotationTarget.text()
+    assert "(representative member)" in tabs.editor.label_target.text()
     # ...shown, selected and still mirrored in the Annotation tab
-    editor, tree = viewer.annotation_editor, viewer.treeHypotheses
-    assert viewer.tabsAnnotation.currentWidget() is viewer.tabAnnotation
+    editor = tabs.editor
+    tree = editor.tree
+    assert viewer.tabsAnnotation.currentWidget() is tabs.editor_page
     assert tree.topLevelItemCount() == 2 and tree.topLevelItem(0).text(1) == "★ npa2"
     assert editor.selected() == h and viewer.plotMS2.is_mirror()
 
     # Deselecting gives the bottom plot back to the focus
     tree.clearSelection()
-    assert viewer._mirrored is None and not viewer.plotMS2.is_mirror()
+    assert tabs.mirrored is None and not viewer.plotMS2.is_mirror()
 
     # A typed SMILES: a user hypothesis, scored by GLACIER for the mirror
     requests = []
@@ -98,7 +100,7 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
     assert editor.selected().smiles == "CC(C)O"
     (key, kwargs), = requests
     assert key[0] == 'hypothesis' and [c.smiles for c in kwargs['candidates']] == ["CC(C)O"]
-    viewer.set_ranking(key, RankResult([_scored('', 'CC(C)O', 1, 0.5)], n_considered=2, adduct='[M+H]+',
+    tabs.set_ranking(key, RankResult([_scored('', 'CC(C)O', 1, 0.5)], n_considered=2, adduct='[M+H]+',
                                        adduct_fallback=False, params=RankParams()))
     assert viewer.plotMS2.is_mirror()
     assert ensemble.annotation.hypotheses[1].scores['explained'] == "1/2"
@@ -121,12 +123,14 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
 
 def test_query_and_spectrum_follow_the_focused_member():
     """
-    Members with different formulas and spectra: focusing one prefills its
-    formula and adduct, ranks its own MS2, and keeps its own ranking.
+    Members with different formulas and spectra: focusing one targets its
+    formula, adduct, own MS2 and precursor, and the structure search keeps
+    each target's ranking.
     """
     from types import SimpleNamespace
     from core.data_structs.formula_assignment import AssignedCandidate, FormulaAssignment
-    from gui.views.alignment_viewer.annotation_panel import AnnotationPanel
+    from gui.views.alignment_viewer.context import AlignmentContext
+    from gui.widgets.structure_search_widget import StructureSearchWidget
 
     def assignment(formula, adduct):
         return FormulaAssignment(source_uuid=0, candidates=[AssignedCandidate(
@@ -136,46 +140,51 @@ def test_query_and_spectrum_follow_the_focused_member():
 
     def member(uuid, mz):
         ms2 = to_spec_arr(np.array([mz]), np.array([1.0]))
-        return SimpleNamespace(uuid=uuid, resolved_precursor_mz=181.0 + uuid,
-                               composite_spectrum=SimpleNamespace(ms2=ms2),
-                               formula_assignment=assignments[uuid])
+        return SimpleNamespace(uuid=uuid, annotation=None, formula_assignment=assignments[uuid],
+                               composite_spectrum=SimpleNamespace(ms2=ms2, precursor_mz=181.0 + uuid))
 
     assignments = {1: assignment('C6H12O6', 'H'), 2: assignment('C7H16O5', 'Na')}
     a, b = member(1, 50.0), member(2, 60.0)
     ms2 = to_spec_arr(np.array([70.0]), np.array([1.0]))
+    members = {'s1': a, 's2': b}
     ctx = SimpleNamespace(
         representative=lambda analyte: SimpleNamespace(sample_uuid='s1', composite=SimpleNamespace(ms2=ms2)),
-        members=lambda analyte: {'s1': a, 's2': b},
-        formula=lambda e: assignments[e.uuid].candidates[0].formula_str,
-        formula_agreement=lambda analyte: ('C6H12O6', 1, 2),
+        members=lambda analyte: members,
+        target_ensemble=lambda analyte, e=None: e or a,
         focus_formula=lambda analyte, e=None: assignments[e.uuid].candidates[0].formula_str if e else 'C6H12O6',
+        sample_name=lambda s: s, structure_agreement=lambda analyte: None, notes=lambda analyte: [],
     )
     analyte = SimpleNamespace(uuid=99, consensus_mz=181.07)
-    panel = AnnotationPanel()
 
-    panel.show_analyte(ctx, analyte)
+    t = AlignmentContext.annotation_target(ctx, analyte)
+    assert (t.key, t.ensemble, t.formula, t.adduct, t.noun) == ((99, None), a, 'C6H12O6', '[M+H]+', 'analyte')
+    assert t.ms2['mz'].tolist() == [70.0] and t.precursor_mz == 181.07   # representative / consensus
+    assert t.header == "s1 (representative member)" and t.embedding_id == '99' and len(t.members) == 2
+    tb = AlignmentContext.annotation_target(ctx, analyte, b)
+    assert (tb.key, tb.ensemble, tb.formula, tb.adduct, tb.noun) == ((99, 2), b, 'C7H16O5', '[M+Na]+', 'ensemble')
+    assert tb.ms2['mz'].tolist() == [60.0] and tb.precursor_mz == 183.0 and tb.embedding_id is None
+
+    panel = StructureSearchWidget()
+    panel.set_target(t)
     assert (panel.query_edit.text(), panel._adduct) == ('C6H12O6', '[M+H]+')
-    assert panel.ms2['mz'].tolist() == [70.0] and panel._precursor_mz == 181.07   # representative / consensus
-    panel.show_analyte(ctx, analyte, b)
+    panel.set_target(tb)
     assert (panel.query_edit.text(), panel._adduct) == ('C7H16O5', '[M+Na]+')
-    assert panel.ms2['mz'].tolist() == [60.0] and panel._precursor_mz == 183.0
-
     result = RankResult([_scored('NPA1', 'CCO', 1, 0.5)], n_considered=1, adduct='[M+Na]+',
                         adduct_fallback=False, params=RankParams())
     panel.set_ranking((99, 2), result)
     assert panel.table.rowCount() == 1
-    panel.query_edit.setText('C8H8')   # typed by hand: a refresh of the same focus keeps it
-    panel.show_analyte(ctx, analyte, b)
+    panel.query_edit.setText('C8H8')   # typed by hand: a refresh of the same target keeps it
+    panel.set_target(tb)
     assert panel.query_edit.text() == 'C8H8'
-    panel.show_analyte(ctx, analyte)
+    panel.set_target(t)
     assert panel.query_edit.text() == 'C6H12O6'
     assert panel.table.rowCount() == 0   # b's ranking stays b's
-    panel.show_analyte(ctx, analyte, b)
+    panel.set_target(tb)
     assert panel.table.rowCount() == 1
 
 
 def test_matches_formula():
-    from gui.views.alignment_viewer.annotation_editor import matches_formula
+    from gui.widgets.annotation_editor import matches_formula
     assert matches_formula('CCO', 'C2H6O') and matches_formula('OCC', 'H6C2O')
     assert not matches_formula('CCO', 'C2H4O')
     assert matches_formula('not smiles', 'C2H4O') and matches_formula('CCO', 'nonsense')

@@ -39,13 +39,14 @@ def test_search_select_mirror_accept(data_registry, sample, ensemble):
     viewer = AlignmentViewer(data_registry)
     viewer.show()
     viewer.set_alignment(alignment)
-    panel = viewer.spectrum_panel
+    tabs = viewer.annotation_tabs
+    panel = tabs.spectral
     # Independent of the local index
     panel.library_checks = [QtWidgets.QCheckBox('GNPS')]
     panel.library_checks[0].setChecked(True)
     viewer.selection_model.set_selection(viewer.plot_item.analyte_targets([analyte.uuid]))
     viewer.tabsAnnotation.setCurrentWidget(panel)
-    assert panel._analyte is analyte
+    assert panel._target.key == (analyte.uuid, None)
     assert [viewer.tabsAnnotation.tabText(i) for i in range(3)] == [
         'Annotation', 'Search (spectra)', 'Search (structures)',
     ]
@@ -60,18 +61,18 @@ def test_search_select_mirror_accept(data_registry, sample, ensemble):
 
     result = SearchResult([_hit('CCMS2', 'propanol', 'CCCO', 0.95), _hit('CCMS1', 'no structure', '', 0.5)],
                           IDENTITY, 10, SpectralSearchParams())
-    viewer.set_spectral_result(slot, result)
+    tabs.set_spectral_result(slot, result)
     assert panel.table.rowCount() == 2
     assert panel.table.item(0, 2).text() == "0.950" and panel.table.item(0, 3).text() == "0.80 (2)"
 
     panel.table.selectRow(1)
     assert not panel.btnAccept.isEnabled()   # no SMILES: can't be a hypothesis
     panel.table.selectRow(0)
-    assert viewer._mirrored is panel.shown and viewer.plotMS2.is_mirror()
+    assert tabs.mirrored is panel.shown and viewer.plotMS2.is_mirror()
 
     panel.btnAccept.click()
     annotation = ensemble.annotation
     h = annotation.chosen
     assert (h.smiles, h.origin, h.db_id, h.claim) == ('CCCO', 'GNPS', 'CCMS2', 'structure')
     assert h.scores['cosine'] == 0.95
-    assert viewer.tabsAnnotation.currentWidget() is viewer.tabAnnotation
+    assert viewer.tabsAnnotation.currentWidget() is tabs.editor_page

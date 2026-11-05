@@ -1,13 +1,12 @@
 """
-The Inspector's annotation panel: query the compound databases for the focused
-analyte (by its consensus formula, or neutral mass), rank the hits by GLACIER
+Structure search: query the compound databases for the host's AnnotationTarget
+(by its formula, or neutral mass), rank the hits by GLACIER
 (core/cli/rank_candidates.py; run in the background by MainController) and
-accept one as a Hypothesis of the focused ensemble's EnsembleAnnotation.
+accept one as a Hypothesis (sigAccepted).
 
-The viewer mirrors the selected candidate's prediction against the analyte's
-MS2 in the bottom MS2 plot; hovering a predicted peak highlights the fragment
-GLACIER cut out for it (`highlight_fragment`). Rankings are cached per analyte
-for the session.
+The host mirrors the selected candidate's prediction against the target's MS2;
+hovering a predicted peak highlights the fragment GLACIER cut out for it
+(`highlight_fragment`). Rankings are cached per target key for the session.
 """
 from typing import Optional, TYPE_CHECKING
 
@@ -15,7 +14,7 @@ import numpy as np
 from PyQt5 import QtCore, QtWidgets
 
 from core.cli.rank_candidates import (
-    DbCandidate, fetch_candidates, ion_name, neutral_mass, rank_params_from_config,
+    DbCandidate, fetch_candidates, neutral_mass, rank_params_from_config,
 )
 from core.data_structs.ensemble import USER, Hypothesis
 from core.utils import compound_db, glacier
@@ -26,10 +25,8 @@ from gui.widgets.StructureWidget import NAME_ROLE, StructureDelegate
 
 if TYPE_CHECKING:
     from core.cli.rank_candidates import RankResult, ScoredCandidate
-    from core.data_structs.alignment import AlignedAnalyte
-    from core.data_structs.ensemble import Ensemble
     from core.utils.array_types import SpectrumArray
-    from gui.views.alignment_viewer.context import AlignmentContext
+    from gui.widgets.annotation_target import AnnotationTarget
     from gui.widgets.StructureWidget import StructureView
 
 ROW_HEIGHT = 80
@@ -38,28 +35,27 @@ SCORED_ROLE = QtCore.Qt.UserRole + 1
 FORMULA, MASS = 0, 1
 
 
-class AnnotationPanel(
+class StructureSearchWidget(
     QtWidgets.QWidget,
     Ui_AnnotationPanel,
 ):
-    # (focus key, rank_candidates kwargs): MainController runs it and hands the
-    # RankResult back to `set_ranking`. The key is (AnalyteUUID, EnsembleUUID or None)
+    # (target key, rank_candidates kwargs): MainController runs it and hands the
+    # RankResult back to `set_ranking`
     sigRankRequested = QtCore.pyqtSignal(object, dict)
 
     # The selected candidate to mirror (ScoredCandidate), or None
     sigCandidateSelected = QtCore.pyqtSignal(object)
-    sigAccepted = QtCore.pyqtSignal(object, object)   # AnalyteUUID, Hypothesis
+    sigAccepted = QtCore.pyqtSignal(object)   # Hypothesis
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._ctx: Optional['AlignmentContext'] = None
-        self._analyte: Optional['AlignedAnalyte'] = None
+        self._target: Optional['AnnotationTarget'] = None
         self.ms2: Optional['SpectrumArray'] = None
         self._precursor_mz: Optional[float] = None
         self._adduct: Optional[str] = None
 
-        # Focused AnalyteUUID, the focused member's EnsembleUUID or None
-        self._key: Optional[tuple] = None
+        # The target's key (None: no target)
+        self._key = None
         # focus key -> (RankResult, status text); and those still running
         self._rankings: dict = {}
         self._pending: dict = {}   # focus key -> status text once done
@@ -93,9 +89,9 @@ class AnnotationPanel(
         self.splitterCandidates.setSizes([300, 200])
         self.accept_btn.clicked.connect(self._accept)
 
-        self.show_analyte(None, None)
+        self.set_target(None)
 
-    # -- analyte ------------------------------------------------------------
+    # -- target -------------------------------------------------------------
 
 
     @property
@@ -103,41 +99,37 @@ class AnnotationPanel(
         """The focus's precursor m/z (None when nothing is focused)."""
         return self._precursor_mz
 
-    def show_analyte(
-        self,
-        ctx: Optional['AlignmentContext'],
-        analyte: Optional['AlignedAnalyte'],
-        ensemble: Optional['Ensemble'] = None,
-    ):
+    def set_target(self, target: Optional['AnnotationTarget']):
         """
-        Follow the focus (None clears): the analyte, or `ensemble`, one of its
-        members. Rank uses the focus's own MS2 and precursor (the analyte's
-        representative's / consensus for the analyte), and the query is
-        prefilled with its formula and adduct. Each focus keeps its own
-        ranking; re-focusing the same one keeps its state.
+        Follow the host's focus (None clears). Rank uses the target's MS2 and
+        precursor, and the query is prefilled with its formula and adduct.
+        Each target key keeps its own ranking; re-showing the same key keeps
+        its state (a typed query included).
         """
-        key = None if analyte is None else (analyte.uuid, ensemble and ensemble.uuid)
+        key = None if target is None else target.key
         if key is not None and key == self._key:
-            self._ctx = ctx
+            self._target = target
             return
-        self._ctx, self._analyte, self._key = ctx, analyte, key
-        if analyte is None:
-            self.ms2, self._precursor_mz = None, None
-        elif ensemble is not None:
-            self.ms2, self._precursor_mz = ensemble.composite_spectrum.ms2, ensemble.resolved_precursor_mz
-        else:
-            rep = ctx.representative(analyte)
-            self.ms2, self._precursor_mz = (None if rep is None else rep.composite.ms2), analyte.consensus_mz
-        self._fill_query(ensemble)
+        self._target, self._key = target, key
+        self.ms2, self._precursor_mz = (None, None) if target is None else (target.ms2, target.precursor_mz)
+        self._adduct = None if target is None else target.adduct
+        formula = None if target is None else target.formula
+        with QtCore.QSignalBlocker(self.mode_combo):
+            self.mode_combo.setCurrentIndex(FORMULA if formula or target is None else MASS)
+        self.query_edit.setText(
+            formula if formula
+            else "" if target is None or self._precursor_mz is None
+            else f"{neutral_mass(self._precursor_mz, self._adduct):.4f}"
+        )
 
-        if analyte is None:
-            problem = "Focus an analyte to annotate it"
+        if target is None:
+            problem = "Focus an analyte or open an ensemble to annotate it"
         elif not glacier.model_available():
             problem = glacier.missing_model_message()
         elif not self.source_checks:
             problem = "No compound database cache: build it from Tools > Browse compound databases"
         elif self.ms2 is None or not self.ms2.size:
-            problem = f"This {'ensemble' if ensemble is not None else 'analyte'} has no MS2"
+            problem = f"This {target.noun} has no MS2"
         else:
             problem = ""
         for w in (self.mode_combo, self.query_edit, self.rank_btn):
@@ -154,39 +146,6 @@ class AnnotationPanel(
 
     def _adduct_status(self) -> str:
         return f"Adduct: {self._adduct or 'unknown ([M+H]+ assumed)'}"
-
-    def _fill_query(self, ensemble: Optional['Ensemble']):
-        """Prefill the query (and adduct) from `ensemble`, else the analyte's members."""
-        ctx, analyte = self._ctx, self._analyte
-        if analyte is None:
-            self._adduct, formula = None, None
-        else:
-            rep = ctx.representative(analyte)
-            members = ctx.members(analyte)
-            candidates = (
-                [ensemble] if ensemble is not None
-                else [members[rep.sample_uuid]] if rep and rep.sample_uuid in members else []
-            )
-            formula = ctx.focus_formula(analyte, ensemble)
-            # The adduct goes with the formula: the focused member's, else any member's
-            self._adduct = self._adduct_of(ctx, candidates + list(members.values()))
-        with QtCore.QSignalBlocker(self.mode_combo):
-            self.mode_combo.setCurrentIndex(FORMULA if formula or analyte is None else MASS)
-        self.query_edit.setText(
-            formula if formula
-            else "" if analyte is None
-            else f"{neutral_mass(self._precursor_mz, self._adduct):.4f}"
-        )
-
-    @staticmethod
-    def _adduct_of(ctx, ensembles) -> Optional[str]:
-        """The first of `ensembles` whose formula assignment has an adduct."""
-        for ensemble in ensembles:
-            assignment = ensemble.formula_assignment
-            candidate = assignment and (assignment.chosen or assignment.top)
-            if candidate and candidate.adduct:
-                return ion_name(candidate.adduct, assignment.charge)
-        return None
 
     # -- ranking ------------------------------------------------------------
 
@@ -239,23 +198,16 @@ class AnnotationPanel(
         """The selected candidate."""
         return self._shown
 
-    def score_kwargs(self, smiles: str, name: str = "", ensemble: Optional['Ensemble'] = None) -> Optional[dict]:
+    def score_kwargs(self, smiles: str, name: str = "", other: Optional['AnnotationTarget'] = None) -> Optional[dict]:
         """
-        rank_candidates kwargs scoring one structure against the focus's MS2
-        (or `ensemble`'s own MS2, precursor and adduct); None if it can't be.
+        rank_candidates kwargs scoring one structure against the target's MS2
+        (or `other`'s own MS2, precursor and adduct); None if it can't be.
         """
-        if ensemble is not None:
-            ms2 = ensemble.composite_spectrum.ms2
-        elif self._key is not None:
-            ms2 = self.ms2
-        else:
-            return None
-        if ms2 is None or not ms2.size or not glacier.model_available():
+        target = other if other is not None else self._target
+        if target is None or target.ms2 is None or not target.ms2.size or not glacier.model_available():
             return None
         kwargs = self._rank_kwargs([DbCandidate(USER, "", name, smiles, "")], rank_params_from_config(load_config()))
-        if ensemble is not None:
-            kwargs.update(ms2=ms2, precursor_mz=ensemble.resolved_precursor_mz,
-                          adduct=self._adduct_of(self._ctx, [ensemble]))
+        kwargs.update(ms2=target.ms2, precursor_mz=target.precursor_mz, adduct=target.adduct)
         return kwargs
 
     def set_ranking(self, key: tuple, result: Optional['RankResult']):
@@ -331,11 +283,11 @@ class AnnotationPanel(
         self.sigCandidateSelected.emit(self._shown)
 
     def _accept(self):
-        s, result, analyte = self._shown, self.result(), self._analyte
-        if s is None or result is None or analyte is None:
+        s, result = self._shown, self.result()
+        if s is None or result is None or self._target is None:
             return
         c = s.candidate
-        self.sigAccepted.emit(analyte.uuid, Hypothesis(
+        self.sigAccepted.emit(Hypothesis(
             c.smiles, c.label, origin=c.source, db_id=c.db_id,
             scores=scores_of(s, result),
         ))

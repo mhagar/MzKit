@@ -1,13 +1,12 @@
 """
-The Inspector's spectral-library panel: search the spectral libraries
-(core/utils/spectrum_db.py) for the focused analyte's MS2, by identity
-(cosine within the precursor window) or by analogue (embedding similarity;
-core/cli/search_spectra.py, run in the background by MainController), and
-accept a hit as a Hypothesis of the focused ensemble's EnsembleAnnotation.
+Spectral search: search the spectral libraries (core/utils/spectrum_db.py) for
+the host's AnnotationTarget's MS2, by identity (cosine within the precursor
+window) or by analogue (embedding similarity; core/cli/search_spectra.py, run
+in the background by MainController), and accept a hit as a Hypothesis
+(sigAccepted).
 
-The viewer mirrors the selected hit's library spectrum against the focus's
-MS2 in the bottom MS2 plot. Results are cached per (focus, mode) for the
-session.
+The host mirrors the selected hit's library spectrum against the target's MS2.
+Results are cached per (target key, mode) for the session.
 """
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -20,39 +19,36 @@ from core.utils import spectrum_db
 from core.utils.config import load_config
 from gui.dialogues.CompoundDbDialog import NumberItem
 from gui.resources.SpectrumSearchPanel import Ui_SpectrumSearchPanel
-from gui.views.alignment_viewer.annotation_editor import _parses
+from gui.widgets.annotation_editor import _parses
 from gui.widgets.StructureWidget import NAME_ROLE, StructureDelegate
 
 if TYPE_CHECKING:
     from core.cli.search_spectra import LibraryHit, SearchResult
-    from core.data_structs.alignment import AlignedAnalyte
-    from core.data_structs.ensemble import Ensemble
     from core.utils.array_types import SpectrumArray
-    from gui.views.alignment_viewer.context import AlignmentContext
+    from gui.widgets.annotation_target import AnnotationTarget
 
 ROW_HEIGHT = 80
 HIT_ROLE = QtCore.Qt.UserRole + 1   # a row's first cell: its index into SearchResult.hits
 
 
-class SpectrumSearchPanel(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
-    # ((focus key, mode), search_spectra kwargs): MainController runs it and hands
-    # the SearchResult back to `set_result`. The focus key is (AnalyteUUID, EnsembleUUID or None)
+class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
+    # ((target key, mode), search_spectra kwargs): MainController runs it and hands
+    # the SearchResult back to `set_result`
     sigSearchRequested = QtCore.pyqtSignal(object, dict)
     sigRebuildRequested = QtCore.pyqtSignal()   # MainController calls `refresh_index` when done
     sigHitSelected = QtCore.pyqtSignal(object)  # the selected LibraryHit to mirror, or None
-    sigAccepted = QtCore.pyqtSignal(object, object)   # AnalyteUUID, Hypothesis
+    sigAccepted = QtCore.pyqtSignal(object)     # Hypothesis
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._ctx: Optional['AlignmentContext'] = None
-        self._analyte: Optional['AlignedAnalyte'] = None
+        self._target: Optional['AnnotationTarget'] = None
         self.ms2: Optional['SpectrumArray'] = None
         self._precursor_mz: Optional[float] = None
-        self._key: Optional[tuple] = None   # the focus: (AnalyteUUID, EnsembleUUID or None)
+        self._key = None   # the target's key
         self._results: dict = {}   # (focus key, mode) -> (SearchResult, status text)
         self._pending: set = set()
         self._shown: Optional['LibraryHit'] = None
-        # Imported embedder -> {analyte uuid str: vector} (session only)
+        # Imported embedder -> {embedding id (analyte uuid str): vector} (session only)
         self._query_embeddings: dict[str, dict] = {}
 
         self.setupUi(self)
@@ -144,41 +140,31 @@ class SpectrumSearchPanel(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
 
     # -- focus --------------------------------------------------------------
 
-    def show_analyte(
-        self,
-        ctx: Optional['AlignmentContext'],
-        analyte: Optional['AlignedAnalyte'],
-        ensemble: Optional['Ensemble'] = None,
-    ):
-        """Follow the focus (None clears): the analyte's representative MS2, or `ensemble`'s own."""
-        key = None if analyte is None else (analyte.uuid, ensemble and ensemble.uuid)
-        self._ctx = ctx
+    def set_target(self, target: Optional['AnnotationTarget']):
+        """Follow the host's focus (None clears): search the target's MS2 at its precursor."""
+        key = None if target is None else target.key
+        self._target = target
         if key is not None and key == self._key:
             return
-        self._analyte, self._key = analyte, key
-        if analyte is None:
-            self.ms2, self._precursor_mz = None, None
-        elif ensemble is not None:
-            self.ms2, self._precursor_mz = ensemble.composite_spectrum.ms2, ensemble.resolved_precursor_mz
-        else:
-            rep = ctx.representative(analyte)
-            self.ms2, self._precursor_mz = (None if rep is None else rep.composite.ms2), analyte.consensus_mz
+        self._key = key
+        self.ms2, self._precursor_mz = (None, None) if target is None else (target.ms2, target.precursor_mz)
         self._fill_modes()
         self._refresh_state()
 
     def _query_embedding(self, embedder: str):
-        """The focus's imported embedding (analyte focus only: the consensus .mgf is per analyte)."""
-        if self._key is None or self._key[1] is not None:
+        """The target's imported embedding (analytes only: the consensus .mgf is per analyte)."""
+        embedding_id = None if self._target is None else self._target.embedding_id
+        if embedding_id is None:
             return None
-        return self._query_embeddings.get(embedder, {}).get(str(self._key[0]))
+        return self._query_embeddings.get(embedder, {}).get(embedding_id)
 
     def _problem(self) -> str:
-        if self._analyte is None:
-            return "Focus an analyte to search the spectral libraries"
+        if self._target is None:
+            return "Focus an analyte or open an ensemble to search the spectral libraries"
         if not self.library_checks:
             return f"No spectral library index: add .mgf files to {spectrum_db.DB_DIR} and Rebuild index"
         if self.ms2 is None or not self.ms2.size:
-            return f"This {'ensemble' if self._key[1] is not None else 'analyte'} has no MS2"
+            return f"This {self._target.noun} has no MS2"
         return ""
 
     def _refresh_state(self):
@@ -292,10 +278,10 @@ class SpectrumSearchPanel(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         self.sigHitSelected.emit(self._shown)
 
     def _accept(self):
-        h, result, analyte = self._shown, self.result(), self._analyte
-        if h is None or result is None or analyte is None:
+        h, result = self._shown, self.result()
+        if h is None or result is None or self._target is None:
             return
-        self.sigAccepted.emit(analyte.uuid, Hypothesis(
+        self.sigAccepted.emit(Hypothesis(
             h.smiles, h.name, origin=h.library,
             claim='structure' if result.mode == IDENTITY else 'analogue',
             db_id=h.spectrum_id,

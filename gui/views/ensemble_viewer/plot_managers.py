@@ -456,6 +456,7 @@ class SpectrumPlotManager(QtCore.QObject):
         # (which doesn't exist in composite mode).
         self._current_ms1: Optional[NDArray] = None
         self._current_ms2: Optional[NDArray] = None
+        self._current_ms2_precursor: Optional[float] = None
 
         self.ms1_plot.mgf_headers_provider = lambda: self._mgf_headers(1)
         self.ms2_plot.mgf_headers_provider = lambda: self._mgf_headers(2)
@@ -603,6 +604,7 @@ class SpectrumPlotManager(QtCore.QObject):
             self._current_ms1 = spectrum
         else:
             self._current_ms2 = spectrum
+            self._current_ms2_precursor = precursor_mz
 
         intsy = spectrum['intsy']
         bpc = float(intsy.max()) if intsy.size else 0.0
@@ -615,6 +617,14 @@ class SpectrumPlotManager(QtCore.QObject):
         plot.update_bpc_label(
             f"BPC: {bpc:.2e}" if bpc > 0 else ""
         )
+
+    def redraw_ms2(self):
+        """Re-draw the MS2 on screen (e.g. after a mirror took the plot over)."""
+        if self._current_ms2 is not None:
+            self._render_spectrum(
+                self.ms2_plot, 2, self._current_ms2,
+                self._current_ms2_precursor,
+            )
 
     def add_signal_marker(
         self,

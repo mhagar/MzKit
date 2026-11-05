@@ -91,109 +91,6 @@
        <property name="documentMode">
         <bool>true</bool>
        </property>
-       <widget class="QWidget" name="tabAnnotation">
-        <attribute name="title">
-         <string>Annotation</string>
-        </attribute>
-        <layout class="QVBoxLayout" name="verticalLayout_3" stretch="0,0,0,1">
-         <property name="spacing">
-          <number>2</number>
-         </property>
-         <property name="leftMargin">
-          <number>0</number>
-         </property>
-         <property name="topMargin">
-          <number>2</number>
-         </property>
-         <property name="rightMargin">
-          <number>0</number>
-         </property>
-         <property name="bottomMargin">
-          <number>0</number>
-         </property>
-         <item>
-          <widget class="QLabel" name="labelAnnotationTarget">
-           <property name="text">
-            <string/>
-           </property>
-           <property name="wordWrap">
-            <bool>true</bool>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <layout class="QHBoxLayout" name="horizontalLayout_3">
-           <item>
-            <widget class="QLineEdit" name="editAnalyteName">
-             <property name="placeholderText">
-              <string>Name...</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item>
-          <widget class="QLineEdit" name="editAnalyteNotes">
-           <property name="placeholderText">
-            <string>Notes...</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QSplitter" name="splitterHypotheses">
-           <property name="orientation">
-            <enum>Qt::Vertical</enum>
-           </property>
-           <property name="childrenCollapsible">
-            <bool>false</bool>
-           </property>
-           <widget class="QTreeWidget" name="treeHypotheses">
-            <property name="editTriggers">
-             <set>QAbstractItemView::DoubleClicked|QAbstractItemView::EditKeyPressed</set>
-            </property>
-            <property name="textElideMode">
-             <enum>Qt::ElideRight</enum>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>false</bool>
-            </property>
-            <property name="uniformRowHeights">
-             <bool>true</bool>
-            </property>
-            <property name="wordWrap">
-             <bool>false</bool>
-            </property>
-            <column>
-             <property name="text">
-              <string>Structure</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Name</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Origin</string>
-             </property>
-            </column>
-           </widget>
-           <widget class="StructureView" name="svgAnalyteStructure" native="true"/>
-          </widget>
-         </item>
-        </layout>
-       </widget>
-       <widget class="SpectrumSearchPanel" name="spectrumSearchPanel">
-        <attribute name="title">
-         <string>Search (spectra)</string>
-        </attribute>
-       </widget>
-       <widget class="AnnotationPanel" name="annotationPanel">
-        <attribute name="title">
-         <string>Search (structures)</string>
-        </attribute>
-       </widget>
       </widget>
       <widget class="QWidget" name="widget" native="true">
        <property name="sizePolicy">
@@ -506,18 +403,6 @@
    <class>StructureView</class>
    <extends>QWidget</extends>
    <header>gui.widgets.StructureWidget</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
-   <class>AnnotationPanel</class>
-   <extends>QWidget</extends>
-   <header>gui.views.alignment_viewer.annotation_panel</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
-   <class>SpectrumSearchPanel</class>
-   <extends>QWidget</extends>
-   <header>gui.views.alignment_viewer.spectrum_search_panel</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

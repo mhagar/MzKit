@@ -16,9 +16,12 @@ from core.cli.export_ensemble import (
 from core.utils.config import load_config
 from core.utils.formula_formatting import (
     format_formula_obj_to_html,
+    format_assignment_formula_text,
     format_assignment_label_html,
 )
 from gui.resources.EnsembleViewerWindow import Ui_Form
+from gui.widgets.annotation_tabs import AnnotationTabs
+from gui.widgets.annotation_target import AnnotationTarget, ensemble_adduct
 from gui.views.ensemble_viewer.tools import (
     ToolType, ToolStage, Mode,
     ToolManager,
@@ -54,6 +57,10 @@ class EnsembleViewer(
     # Auto-annotate (find-mfs) requested for the current ensemble. The
     # MainController runs it through ProcessController and registers the result.
     sigAutoFindMfRequested = QtCore.pyqtSignal(object)  # Ensemble
+    # The annotation tabs' background work, as the Alignment Viewer's (MainController runs it)
+    sigRankCandidatesRequested = QtCore.pyqtSignal(object, dict)
+    sigSpectralSearchRequested = QtCore.pyqtSignal(object, dict)
+    sigSpectralRebuildRequested = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -120,11 +127,57 @@ class EnsembleViewer(
         self._connect_signals()
         self._hide_misc_plots()
         self._add_status_bar()
+        self._setup_annotation_tabs()
 
         # React to formula assignments (from the manual tool, the auto button,
         # or a headless batch) landing for whatever ensemble is on screen, so
         # the title strip + adduct labels refresh without a bespoke callback.
         self.data_source.sigEnsembleAnnotated.connect(self._on_assignment_changed)
+
+    def _setup_annotation_tabs(self):
+        """
+        Annotation / Search tabs for the ensemble on screen, in the misc-plots
+        tab widget; their mirror takes over the MS2 plot.
+        """
+        tabs = self.annotation_tabs = AnnotationTabs(self.tabWidget, self.data_source)
+        tabs.sigRankRequested.connect(self.sigRankCandidatesRequested)
+        tabs.sigSpectralSearchRequested.connect(self.sigSpectralSearchRequested)
+        tabs.sigSpectralRebuildRequested.connect(self.sigSpectralRebuildRequested)
+        tabs.sigMirror.connect(self._on_mirror)
+        tabs.sigStatus.connect(self.status_bar.showMessage)
+        self.ms2_plot.sigMirrorSignalHovered.connect(
+            lambda signal: signal[0] == 'bottom' and tabs.mirror_hovered(signal[1])
+        )
+        self.ms2_plot.sigMSpectrumLeaved.connect(lambda: tabs.mirror_hovered(None))
+
+    def _annotation_target(self) -> Optional[AnnotationTarget]:
+        """The annotation tabs' target: the ensemble on screen, with its composite MS2."""
+        e = self.ensemble
+        if e is None:
+            return None
+        composite = e.composite_spectrum
+        return AnnotationTarget(
+            key=('ensemble', e.uuid),
+            ensemble=e,
+            ms2=composite.ms2,
+            precursor_mz=composite.precursor_mz,
+            formula=format_assignment_formula_text(e.formula_assignment).rstrip('?') or None,
+            adduct=ensemble_adduct(e),
+            header=f"{e.injection.name} · m/z {e.base_mz:.4f} · {e.peak_rt / 60:.2f} min",
+            members=[e],
+        )
+
+    def _on_mirror(self, spec):
+        """Draw the annotation tabs' MS2 mirror (None: back to the MS2 on screen)."""
+        if spec is None:
+            self.ms2_plot.clear_mirror()
+            self.spectrum_manager.redraw_ms2()
+            self._redraw_annotations_for_current_scan()
+            return
+        self.ms2_plot.set_mirror_spectra(
+            spec.top, spec.bottom, spec.top_label, spec.bottom_label, matched=spec.matches,
+            labels_right=True, top_precursor=spec.top_precursor, bottom_precursor=spec.bottom_precursor,
+        )
 
     def _add_status_bar(self):
         """
@@ -476,6 +529,7 @@ class EnsembleViewer(
         self._redraw_annotations_for_current_scan()
         self.initialize_property_table()
         self.refresh_assignment_display()
+        self.annotation_tabs.set_target(self._annotation_target())
 
         self.toolAutoFindMf.setEnabled(True)
         self.actionAutoFindMf.setEnabled(True)
@@ -530,6 +584,7 @@ class EnsembleViewer(
         self._redraw_annotations_for_current_scan()
         if self.properties_model is not None:
             self.properties_model.refresh_formula()
+        self.annotation_tabs.set_target(self._annotation_target())
 
     def reset_for_new_project(self):
         """
@@ -547,6 +602,7 @@ class EnsembleViewer(
         self.properties_model = None
 
         self.refresh_assignment_display()
+        self.annotation_tabs.set_target(None)
 
     def _hide_misc_plots(self):
         self.checkShowMiscPlots.setChecked(False)

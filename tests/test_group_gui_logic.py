@@ -122,31 +122,31 @@ def test_viewer_shows_group_track_and_panel(data_registry, sample, ensemble, mon
         line_edit.editingFinished.emit()
         _app.processEvents()
 
-    edit(viewer.editAnalyteName, " Psammaplin A ")
-    edit(viewer.editAnalyteNotes, "sponge")
+    edit(viewer.annotation_tabs.editor.edit_name, " Psammaplin A ")
+    edit(viewer.annotation_tabs.editor.edit_notes, "sponge")
     annotation = ensemble.annotation
     assert (annotation.name, annotation.notes) == ("Psammaplin A", "sponge")
-    assert viewer.editAnalyteName.text() == "Psammaplin A"
-    assert viewer.svgAnalyteStructure.isHidden()   # no structure yet
+    assert viewer.annotation_tabs.editor.edit_name.text() == "Psammaplin A"
+    assert viewer.annotation_tabs.editor.structure.isHidden()   # no structure yet
 
     # An invalid typed SMILES is refused
     warnings = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *args: warnings.append(args[1]))
-    viewer.treeHypotheses.topLevelItem(0).setText(1, "not a smiles")
+    viewer.annotation_tabs.editor.tree.topLevelItem(0).setText(1, "not a smiles")
     assert warnings == ["Invalid SMILES"] and not ensemble.annotation.hypotheses
-    viewer.treeHypotheses.topLevelItem(0).setText(1, "CCO")
+    viewer.annotation_tabs.editor.tree.topLevelItem(0).setText(1, "CCO")
     assert ensemble.annotation.smiles == "CCO"   # the first is chosen
-    assert not viewer.svgAnalyteStructure.isHidden()
+    assert not viewer.annotation_tabs.editor.structure.isHidden()
 
     # Clearing everything drops the annotation
-    viewer.annotation_editor._delete(0)
-    edit(viewer.editAnalyteName, "")
-    edit(viewer.editAnalyteNotes, "")
+    viewer.annotation_tabs.editor._delete(0)
+    edit(viewer.annotation_tabs.editor.edit_name, "")
+    edit(viewer.annotation_tabs.editor.edit_notes, "")
     assert ensemble.annotation is None
-    assert viewer.svgAnalyteStructure.isHidden()
+    assert viewer.annotation_tabs.editor.structure.isHidden()
 
     viewer.selection_model.set_selection([])
-    assert not viewer.editAnalyteName.isEnabled()
+    assert not viewer.annotation_tabs.editor.edit_name.isEnabled()
     assert viewer.stackedWidget.currentWidget() is viewer.labelAlignmentSummary.parentWidget()
     viewer.close()
 

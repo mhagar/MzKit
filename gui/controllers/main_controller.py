@@ -309,15 +309,7 @@ class MainController:
         alignment_viewer.sigClusterRequested.connect(
             self._handle_cluster_analytes_request
         )
-        alignment_viewer.sigRankCandidatesRequested.connect(
-            self._handle_rank_candidates_request
-        )
-        alignment_viewer.sigSpectralSearchRequested.connect(
-            self._handle_spectral_search_request
-        )
-        alignment_viewer.sigSpectralRebuildRequested.connect(
-            self._handle_spectral_rebuild_request
-        )
+        self._connect_annotation_tabs(alignment_viewer)
 
     def _connect_ensemble_viewer_signals(self) -> None:
         """
@@ -333,6 +325,18 @@ class MainController:
         ensemble_viewer.sigAutoFindMfRequested.connect(
             self._handle_auto_find_mf_request
         )
+        self._connect_annotation_tabs(ensemble_viewer)
+
+    def _connect_annotation_tabs(self, viewer) -> None:
+        """A viewer hosting AnnotationTabs: its searches run here, results go back to its tabs."""
+        tabs = viewer.annotation_tabs
+        viewer.sigRankCandidatesRequested.connect(
+            lambda key, kwargs: self._handle_rank_candidates_request(tabs, key, kwargs)
+        )
+        viewer.sigSpectralSearchRequested.connect(
+            lambda slot, kwargs: self._handle_spectral_search_request(tabs, slot, kwargs)
+        )
+        viewer.sigSpectralRebuildRequested.connect(self._handle_spectral_rebuild_request)
 
     def _handle_add_samples_request(
         self,
@@ -1054,40 +1058,41 @@ class MainController:
             ),
         )
 
-    def _handle_rank_candidates_request(self, key, kwargs: dict):
-        """Rank the focused analyte's / ensemble's database candidates by GLACIER
-        in the background (Alignment Viewer annotation panel); the result goes
-        back to the viewer under the panel's focus `key`."""
-        alignment_viewer = self.subwindow_manager.get_window('alignment_viewer')
+    def _handle_rank_candidates_request(self, tabs, key, kwargs: dict):
+        """Rank a target's database candidates by GLACIER in the background
+        (a viewer's AnnotationTabs); the result goes back to `tabs` under `key`."""
         self.process_controller.start_process(
             module_path="core.cli.rank_candidates",
             function_name="rank_candidates",
             parameters=kwargs,
-            on_completion_func=lambda result: alignment_viewer.set_ranking(
-                key, result,
-            ),
+            on_completion_func=lambda result: tabs.set_ranking(key, result),
         )
 
-    def _handle_spectral_search_request(self, slot, kwargs: dict):
-        """Search the spectral libraries for the focus's MS2 in the background
-        (Alignment Viewer spectral search tab); the result goes back under `slot`."""
-        alignment_viewer = self.subwindow_manager.get_window('alignment_viewer')
+    def _handle_spectral_search_request(self, tabs, slot, kwargs: dict):
+        """Search the spectral libraries for a target's MS2 in the background
+        (a viewer's AnnotationTabs); the result goes back to `tabs` under `slot`."""
         self.process_controller.start_process(
             module_path="core.cli.search_spectra",
             function_name="search_spectra",
             parameters=kwargs,
-            on_completion_func=lambda result: alignment_viewer.set_spectral_result(
-                slot, result,
-            ),
+            on_completion_func=lambda result: tabs.set_spectral_result(slot, result),
         )
 
     def _handle_spectral_rebuild_request(self):
-        """Rebuild the spectral library index (spectra/*.mgf) in the background."""
-        alignment_viewer = self.subwindow_manager.get_window('alignment_viewer')
+        """Rebuild the spectral library index (spectra/*.mgf) in the background;
+        every viewer's spectral search re-reads it."""
+        viewers = [self.subwindow_manager.get_window(name)
+                   for name in ('alignment_viewer', 'ensemble_viewer')]
+
+        def done(_):
+            for viewer in viewers:
+                if viewer is not None:
+                    viewer.annotation_tabs.refresh_index()
+
         self.process_controller.start_process(
             module_path="core.utils.spectrum_db",
             function_name="build_db",
-            on_completion_func=lambda _: alignment_viewer.spectrum_panel.refresh_index(),
+            on_completion_func=done,
         )
 
     def _handle_cluster_analytes_request(
