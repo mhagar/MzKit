@@ -1253,10 +1253,9 @@ class MainController:
         protect_user_choices: bool = True,
     ):
         """
-        Set each assignment on its ensemble. sigEnsembleAnnotated then drives the Ensemble
-        Viewer's title-strip + adduct-label refresh and the Sample Viewer's
-        overlay label. (Adduct annotations were already attached to the
-        ensemble in the worker.) The run's summary, including what was skipped
+        Set each assignment and adduct network on its ensemble.
+        sigEnsembleAnnotated then drives the Ensemble Viewer's title-strip +
+        ion-label refresh and the Sample Viewer's overlay label. The run's summary, including what was skipped
         and why, goes to the status bar.
 
         With `protect_user_choices`, an ensemble whose formula the user chose
@@ -1279,6 +1278,7 @@ class MainController:
                 continue
             self.data_registry.update_ensemble(
                 ensemble.uuid, formula_assignment=assignment,
+                adduct_network=result.networks.get(ensemble.uuid),
             )
             registered.append(assignment)
         result.assignments = registered

@@ -12,6 +12,7 @@ from core.data_structs import (
 )
 from core.data_structs.scan_array import ScanArrayParameters
 from core.data_structs.ensemble import (
+    AdductNetwork,
     EnsembleAnnotation,
     GenericAnnotation,
     IonAnnotation,
@@ -220,6 +221,11 @@ def deserialize_alignment(
     )
 
 
+def _generic_annot(d: dict) -> GenericAnnotation:
+    # Pre-2.0 files carry a `source` key
+    return GenericAnnotation(**{k: v for k, v in d.items() if k != 'source'})
+
+
 def deserialize_assignment(data: Optional[dict]) -> Optional['FormulaAssignment']:
     """
     Inverse of asdict(FormulaAssignment): it's primitive-only
@@ -404,6 +410,10 @@ def serialize_injection_ensembles(
             'formula_assignment': (
                 asdict(ensemble.formula_assignment)
                 if ensemble.formula_assignment is not None else None
+            ),
+            'adduct_network': (
+                asdict(ensemble.adduct_network)
+                if ensemble.adduct_network is not None else None
             ),
             'annotation': (
                 asdict(ensemble.annotation)
@@ -689,11 +699,17 @@ def deserialize_injection_ensembles(
                 IonPairAnnotation(**d) for d in e_dict['ion_pair_annots']
             ],
             generic_annots={
-                k: GenericAnnotation(**d)
+                k: _generic_annot(d)
                 for k, d in e_dict['generic_annots'].items()
+                # find-mfs adduct labels now live in adduct_network
+                if d.get('source') != 'auto_adduct'
             },
             formula_assignment=deserialize_assignment(
                 e_dict.get('formula_assignment')
+            ),
+            adduct_network=(
+                AdductNetwork(**e_dict['adduct_network'])
+                if e_dict.get('adduct_network') else None
             ),
             annotation=EnsembleAnnotation.from_dict(e_dict.get('annotation')),
             # User-editable properties (with defaults for backward compat)

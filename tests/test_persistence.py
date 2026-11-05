@@ -1,4 +1,5 @@
 from core.utils import persistence
+from core.data_structs.ensemble import AdductNetwork
 
 from core.data_structs import DataRegistry
 
@@ -67,8 +68,15 @@ def test_formula_assignment_roundtrip(data_registry, sample, ensemble, tmp_path)
         elements="CHNOSClBr", max_counts="C*H*N*O*S2Cl4Br4", min_counts=None,
         halogen_detected=True,
         params={"max_counts": "C*H*N*O*P0S2", "halogen_cap": "Cl4Br4"},
+        envelope=[0, 2], scan_num=7, M=355.0053,
     )
-    data_registry.update_ensemble(ensemble.uuid, formula_assignment=assignment)
+    network = AdductNetwork(
+        M=355.0053, base_envelope=[0, 2], ions={0: '[M+H]+', 3: '[M+Na]+'},
+        near_tie_adducts=[('H', 1), (None, 1)],
+    )
+    data_registry.update_ensemble(
+        ensemble.uuid, formula_assignment=assignment, adduct_network=network,
+    )
 
     loaded = _reloaded(data_registry, sample, ensemble, tmp_path).formula_assignment
     assert loaded == assignment
@@ -83,6 +91,10 @@ def test_formula_assignment_roundtrip(data_registry, sample, ensemble, tmp_path)
 
     assert len(loaded.candidates) == 2
     assert loaded.candidates[1].manual and loaded.candidates[1].error_ppm is None
+    assert loaded.envelope == [0, 2] and loaded.scan_num == 7
+
+    loaded_net = _reloaded(data_registry, sample, ensemble, tmp_path).adduct_network
+    assert loaded_net == network and loaded_net.base_ion == '[M+H]+'
     assert not loaded.candidates[0].manual
     c = loaded.candidates[0]
     assert c.formula_str == "C12H15Cl2NO5S"
@@ -177,7 +189,7 @@ def test_ensemble_annotation_roundtrip(data_registry, sample, ensemble, tmp_path
         Formula('C15H21NO3'), -0.4, 0.0001, 6.0), label='x', scan_num=3)
     ens.add_ion_pair_annot(a.uuid, b.uuid, 'neutral_loss')
     ens.add_mz_diff_annot(0, 0, 1, 18.0106, formula='H2O')
-    ens.add_generic_annot(0, 1, 'hello', source='auto_adduct')
+    ens.add_generic_annot(0, 1, 'hello')
     assert ens.ion_pair_annots[0].formula_diff == 'H2O'
     assert a.isotope_envelope.size  # adduct path still builds an ion formula
 

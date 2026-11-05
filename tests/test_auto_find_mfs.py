@@ -2,8 +2,7 @@
 Tests for core/cli/auto_find_mfs — the DIA auto-annotation glue.
 
 find-mfs itself is mocked (synthetic search results): these exercise OUR
-integration — result conversion, top-hit auto-pick, adduct-label attachment,
-re-run replacement, and the DDA precursor pin — without loading MistNet or depending on
+integration — result conversion, top-hit auto-pick, the adduct network, and the DDA precursor pin — without loading MistNet or depending on
 its output. A real DIA `Ensemble` (composite spectrum + cofeature validation)
 comes from the gitignored tests/data/std_mix.mzk.
 """
@@ -19,10 +18,8 @@ from core.cli.auto_find_mfs import (
     annotate_ensembles_dia,
     BatchAnnotationResult,
     EnsembleSelection,
-    ADDUCT_ANNOT_SOURCE,
 )
 from core.formula.params import FindMfsParams
-from core.data_structs.ensemble import GenericAnnotation
 
 
 # --- fixtures ---------------------------------------------------------------
@@ -42,7 +39,6 @@ def dia_ensemble(_std_mix_registry):
         inj = sample.injection
         if inj and getattr(inj, 'acquisition_mode', None) == 'dia' and inj.ensembles:
             ens = next(iter(inj.ensembles.values()))
-            ens.generic_annots = {}
             ens._composite = None
             return ens
     pytest.skip('no DIA ensemble in std_mix')
@@ -72,16 +68,19 @@ def _fake_results(formulas):
 
 
 def _install_fake_annotate(monkeypatch, *, formulas=('C6H12O6', 'C5H10O5'),
-                           adduct_labels=('[M+H]+', None), mono_idx=(0, 1)):
+                           adduct_labels=('[M+H]+', None), mono_idx=(0, 1),
+                           group_labels=(0, 0, 1)):
     """Mock find-mfs so no MistNet load / real search happens."""
     grouped = SimpleNamespace(
         n_groups=len(adduct_labels),
         adduct_label=np.array(adduct_labels, dtype=object),
         mono_idx=np.array(mono_idx),
+        group_labels=np.array(group_labels),
     )
     res = SimpleNamespace(
         candidates=_fake_results(formulas),
         precursor_mz=180.0634, charge=1, grouped=grouped,
+        base_group_id=0, M=179.0561, near_tie_adducts=[('H', 1), ('Na', 1)],
     )
     monkeypatch.setattr('core.cli.auto_find_mfs._get_scorer', lambda mp: object())
     monkeypatch.setattr('find_mfs.annotate_analyte_dia',
@@ -91,10 +90,11 @@ def _install_fake_annotate(monkeypatch, *, formulas=('C6H12O6', 'C5H10O5'),
 
 # --- conversion + top-hit + labels ------------------------------------------
 
-def test_annotate_builds_assignment_and_labels(dia_ensemble, monkeypatch):
+def test_annotate_builds_assignment_and_network(dia_ensemble, monkeypatch):
     _install_fake_annotate(monkeypatch)
 
-    out = annotate_ensembles_dia([dia_ensemble]).assignments
+    result = annotate_ensembles_dia([dia_ensemble])
+    out = result.assignments
 
     assert len(out) == 1
     a = out[0]
@@ -105,35 +105,35 @@ def test_annotate_builds_assignment_and_labels(dia_ensemble, monkeypatch):
     assert [c.formula_str for c in a.candidates] == ['C6H12O6', 'C5H10O5']
     assert a.candidates[0].adduct == 'H'
     assert a.chosen_by == 'auto'
+    assert a.envelope == [0, 1]                    # the base group's peaks
+    assert a.M == pytest.approx(179.0561)
+    assert a.scan_num == dia_ensemble.composite_ms1_scan_num()
 
-    # Only the labelled group (idx 0) becomes an adduct annotation; None skipped.
-    auto = [x for x in dia_ensemble.generic_annots.values()
-            if x.source == ADDUCT_ANNOT_SOURCE]
-    assert len(auto) == 1
-    assert auto[0].text == '[M+H]+'
-    assert auto[0].cofeature_idx == 0
-    assert auto[0].ms_level == 1
-    assert auto[0].scan_num is None                # scan-agnostic (composite)
+    # Only the labelled group (mono idx 0) gets an ion; None skipped.
+    net = result.networks[dia_ensemble.uuid]
+    assert net.ions == {0: '[M+H]+'}
+    assert net.base_envelope == [0, 1]
+    assert net.base_ion == '[M+H]+'
+    assert net.M == pytest.approx(179.0561)
+    assert net.near_tie_adducts == [('H', 1), ('Na', 1)]
+    assert net.by == 'auto'
 
 
-def test_rerun_replaces_labels_and_spares_user(dia_ensemble, monkeypatch):
+def test_run_does_not_mutate_ensemble(dia_ensemble, monkeypatch):
+    """The worker hands networks back; the caller sets them."""
     _install_fake_annotate(monkeypatch)
-
-    # A pre-existing manual annotation must survive the auto pass.
-    dia_ensemble.add_generic_annot(
-        cofeature_idx=1, ms_level=1, text='mine', source='user'
-    )
-
+    before = dict(dia_ensemble.generic_annots)
     annotate_ensembles_dia([dia_ensemble])
-    first = [x for x in dia_ensemble.generic_annots.values()
-             if x.source == ADDUCT_ANNOT_SOURCE]
-    annotate_ensembles_dia([dia_ensemble])
-    second = [x for x in dia_ensemble.generic_annots.values()
-              if x.source == ADDUCT_ANNOT_SOURCE]
+    assert dia_ensemble.generic_annots == before
+    assert dia_ensemble.adduct_network is None
 
-    assert len(first) == len(second) == 1          # replaced, not stacked
-    user = [x for x in dia_ensemble.generic_annots.values() if x.source == 'user']
-    assert len(user) == 1 and user[0].text == 'mine'
+
+def test_base_envelope_outside_cofeatures_gives_no_network(dia_ensemble, monkeypatch):
+    n = len(dia_ensemble.ms1_cofeatures)
+    _install_fake_annotate(monkeypatch, group_labels=(-1,) * (n + 1) + (0,))
+    result = annotate_ensembles_dia([dia_ensemble])
+    assert dia_ensemble.uuid not in result.networks
+    assert result.assignments[0].envelope is None
 
 
 def test_dda_pins_composite_precursor(dia_ensemble, monkeypatch):
@@ -325,18 +325,3 @@ def test_summary_mentions_empty_searches():
         n_ensembles=1,
     )
     assert r.summary() == "Annotated 1 of 1 ensemble (1 with no candidate formula)"
-
-
-# --- GenericAnnotation.source persistence semantics -------------------------
-
-def test_generic_annotation_source_roundtrips():
-    # Mirrors persistence.py: save = asdict(annot); load = GenericAnnotation(**d).
-    a = GenericAnnotation(cofeature_idx=1, ms_level=1, text='[M+H]+',
-                          source='auto_adduct')
-    d = asdict(a)
-    assert d['source'] == 'auto_adduct'
-    assert GenericAnnotation(**d) == a
-
-    # Old .mzk files predate the field -> default to 'user'.
-    d.pop('source')
-    assert GenericAnnotation(**d).source == 'user'

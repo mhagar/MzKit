@@ -521,10 +521,12 @@ def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
         params=params,
         selection=selection,
         keep=registry.user_chosen_sources(),
-        attach_adduct_labels=not args.no_adduct_labels,
     )
     for assignment in result.assignments:
-        registry.update_ensemble(assignment.source_uuid, formula_assignment=assignment)
+        registry.update_ensemble(
+            assignment.source_uuid, formula_assignment=assignment,
+            adduct_network=result.networks.get(assignment.source_uuid),
+        )
 
     output = _resolve_output(args, mzk_path)
     save_project(output, registry)
@@ -1048,10 +1050,6 @@ def build_parser() -> argparse.ArgumentParser:
         '--min-intensity', type=float, default=None,
         help='Only annotate ensembles whose base-peak intensity is at least '
              'this (default: no floor)',
-    )
-    p_find_mf.add_argument(
-        '--no-adduct-labels', action='store_true', default=False,
-        help='Do not attach adduct labels to MS1 signals',
     )
     p_find_mf.set_defaults(func=cmd_auto_find_mfs)
 

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from core.utils.array_types import ChromArray, EnsembleArray, SpectrumArray
     from core.data_structs.formula_assignment import FormulaAssignment
     from .annotations import (
-        EnsembleAnnotation,
+        AdductNetwork, EnsembleAnnotation,
         MzDiffAnnotation, IonAnnotation, IonPairAnnotation, GenericAnnotation,
     )
 
@@ -88,6 +88,10 @@ class Ensemble(EnsembleMS2Mixin, EnsembleAnnotationMixin):
     formula_assignment: Optional['FormulaAssignment'] = field(
         default=None, repr=False,
     )
+
+    # Which ion each MS1 envelope is (upstream of formula_assignment). Set
+    # through DataRegistry.update_ensemble so views hear about it
+    adduct_network: Optional['AdductNetwork'] = field(default=None, repr=False)
 
     # Structure hypotheses, chosen structure, name, notes. Set through
     # DataRegistry.update_ensemble so views hear about it

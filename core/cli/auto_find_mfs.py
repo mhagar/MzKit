@@ -4,9 +4,9 @@ via find-mfs `annotate_analyte_dia`
 
 Hands each ensemble's composite (representative) MS1 + MS2 spectrum to find-mfs,
 which does its own base-envelope/precursor selection, charge + adduct resolution
-and ranked formula search. Produces one FormulaAssignment per ensemble and, when
-enabled, attaches the resolved per-envelope adduct labels to the ensemble's MS1
-signals as 'auto_adduct'-tagged generic annotations.
+and ranked formula search. Produces one FormulaAssignment and one AdductNetwork
+(the resolved ion of each MS1 envelope) per ensemble; the caller sets both on the
+ensemble. Ensembles aren't mutated here (this runs in a worker thread).
 
 For DDA, the composite's precursor (the tallest fragmented precursor) is passed
 to find-mfs so it picks the envelope the composite MS2 actually came from.
@@ -29,6 +29,7 @@ from core.formula.assign_formula import (
 )
 from core.formula.params import FindMfsParams
 from core.data_structs.formula_assignment import FormulaAssignment
+from core.data_structs.ensemble import AdductNetwork
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -36,10 +37,6 @@ if TYPE_CHECKING:
     from core.data_structs.uuid_types import EnsembleUUID
 
 logger = logging.getLogger(__name__)
-
-# The generic-annotation source tag for adduct labels we attach,
-# so re-runs can clear+replace only these (leaving user annotations alone).
-ADDUCT_ANNOT_SOURCE = 'auto_adduct'
 
 SELECTION_SECTION = 'auto_find_mfs'
 
@@ -122,6 +119,7 @@ class BatchAnnotationResult:
     What a find-mfs annotation run did, including what it skipped and why
     """
     assignments: list[FormulaAssignment] = field(default_factory=list)
+    networks: dict['EnsembleUUID', AdductNetwork] = field(default_factory=dict)
     n_ensembles: int = 0            # handed in
     n_below_intensity: int = 0      # skipped: below the base-peak intensity floor
     n_beyond_count: int = 0         # skipped: outside the N most intense
@@ -170,7 +168,6 @@ def annotate_ensembles_dia(
     selection: Optional[EnsembleSelection] = None,
     keep: Collection['EnsembleUUID'] = (),
     model_path: Optional[str] = None,
-    attach_adduct_labels: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event: Optional[threading.Event] = None,
 ) -> BatchAnnotationResult:
@@ -178,9 +175,8 @@ def annotate_ensembles_dia(
     Run find-mfs `annotate_analyte_dia` over each ensemble.
 
     For each ensemble: builds a FormulaAssignment (top candidate pre-selected,
-    `chosen_idx=0`, `chosen_by='auto'`), and — if
-    `attach_adduct_labels` — replaces prior 'auto_adduct' generic annotations
-    with the resolved per-envelope adduct labels.
+    `chosen_idx=0`, `chosen_by='auto'`) and its AdductNetwork (in
+    `result.networks`, keyed by ensemble).
 
     Ensembles are annotated most intense first (so a cancelled run has done
     the ones that matter), limited by `selection` if given.
@@ -225,12 +221,11 @@ def annotate_ensembles_dia(
             progress_callback(100.0 * i / n, f"Annotating {i + 1}/{n}")
 
         try:
-            assignment = _annotate_one(
+            assignment, network = _annotate_one(
                 ensemble,
                 annotate_analyte_dia=annotate_analyte_dia,
                 scorer=scorer,
                 params=params,
-                attach_adduct_labels=attach_adduct_labels,
             )
         except ValueError as exc:
             # find-mfs raises on an empty scan / no resolvable envelope. Skip
@@ -242,6 +237,8 @@ def annotate_ensembles_dia(
             continue
 
         result.assignments.append(assignment)
+        if network is not None:
+            result.networks[ensemble.uuid] = network
 
     logger.info(result.summary())
     if progress_callback is not None:
@@ -256,8 +253,7 @@ def _annotate_one(
     annotate_analyte_dia,
     scorer,
     params: FindMfsParams,
-    attach_adduct_labels: bool,
-) -> FormulaAssignment:
+) -> tuple[FormulaAssignment, Optional[AdductNetwork]]:
     # DIA: find-mfs picks the base envelope itself (precursor_mz=None).
     # DDA: the composite MS2 belongs to a known precursor, so pin the envelope to it.
     composite = ensemble.composite_spectrum
@@ -268,6 +264,7 @@ def _annotate_one(
         scorer=scorer,
         **params.search_kwargs(),
     )
+    network = network_from(res, len(ensemble.ms1_cofeatures))
 
     candidates = results_to_assigned_candidates(
         res.candidates, ms2_weight=params.ms2_weight, top_n=params.top_n
@@ -282,47 +279,47 @@ def _annotate_one(
         charge=res.charge,                       # resolved charge
         ms2_mode=ensemble.default_ms2_mode,
         params=asdict(params),
+        envelope=network.base_envelope if network else None,
+        scan_num=ensemble.composite_ms1_scan_num(),
+        M=float(res.M),
         **search_provenance(res.candidates),
     )
-
-    if attach_adduct_labels:
-        _attach_adduct_labels(ensemble, res.grouped)
-
-    return assignment
+    return assignment, network
 
 
-def _attach_adduct_labels(
-    ensemble: 'Ensemble',
-    grouped,
-) -> None:
+def network_from(res, n_ms1: int) -> Optional[AdductNetwork]:
     """
-    Replace this ensemble's prior 'auto_adduct' labels with the resolved
-    per-envelope adduct labels from find-mfs.
+    The AdductNetwork of a find-mfs `annotate_analyte_dia` result.
 
-    Only groups in the resolved base component carry an `adduct_label` (others
-    are None). Peak indices map 1:1 to the ensemble's MS1 cofeatures, since the
-    composite MS1 is cofeature-ordered and find-mfs preserves input order.
+    Peak indices map 1:1 to the ensemble's MS1 cofeatures, since a spectrum
+    from `Ensemble.get_spectrum` is cofeature-ordered and find-mfs preserves
+    input order. Only groups in the resolved component carry an `adduct_label`.
+    None if the base envelope maps outside the cofeatures.
     """
-    ensemble.remove_generic_annots_by_source(ADDUCT_ANNOT_SOURCE)
+    grouped = res.grouped
+    base = [int(i) for i, g in enumerate(grouped.group_labels)
+            if g == res.base_group_id]
+    if not base or not all(0 <= i < n_ms1 for i in base):
+        logger.warning("base envelope %s outside the %d MS1 cofeatures", base, n_ms1)
+        return None
 
-    n_ms1 = len(ensemble.ms1_cofeatures)
+    ions = {}
     for gid in range(grouped.n_groups):
         label = grouped.adduct_label[gid]
+        idx = int(grouped.mono_idx[gid])
         if label is None:
             continue
-
-        cofeature_idx = int(grouped.mono_idx[gid])
-        if not (0 <= cofeature_idx < n_ms1):
+        if not (0 <= idx < n_ms1):
             logger.warning(
                 "adduct label %r maps to out-of-range cofeature %d (ms1=%d); "
-                "skipping", label, cofeature_idx, n_ms1
+                "skipping", label, idx, n_ms1
             )
             continue
+        ions[idx] = str(label)
 
-        ensemble.add_generic_annot(
-            cofeature_idx=cofeature_idx,
-            ms_level=1,
-            text=str(label),
-            scan_num=None,                 # scan-agnostic: shows in composite view
-            source=ADDUCT_ANNOT_SOURCE,
-        )
+    return AdductNetwork(
+        M=float(res.M),
+        base_envelope=base,
+        ions=ions,
+        near_tie_adducts=list(res.near_tie_adducts or []),
+    )

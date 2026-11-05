@@ -61,6 +61,13 @@ class FormulaAssignment:
     adducts: Optional[list[str]] = None
     ms2_mode: Optional[str] = None
 
+    # What was searched: the envelope's MS1 cofeature idxs, the MS1 scan they
+    # were read from, and the analyte neutral mass M the search implied
+    # (stale once the ensemble's AdductNetwork M moves)
+    envelope: Optional[list[int]] = None
+    scan_num: Optional[int] = None
+    M: Optional[float] = None
+
     # The search find-mfs actually ran: element set and bounds *after* any
     # halogen widening, and whether the Cl/Br pattern was detected (None when
     # detection was off).

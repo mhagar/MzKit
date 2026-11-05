@@ -527,7 +527,7 @@ class EnsembleViewer(
         """
         An ensemble's formula assignment changed. If it's the ensemble on
         screen, refresh the formula title strip and redraw annotations (the
-        auto pass may have attached adduct labels to the ensemble).
+        adduct network may have changed too).
         """
         if not self.ensemble or ensemble_uuid != self.ensemble.uuid:
             return
@@ -1255,6 +1255,11 @@ class EnsembleViewer(
         for annotation in self.ensemble.generic_annots.values():
             if self._is_annot_on_current_scan(annotation):
                 self._draw_generic_annotation(annotation)
+
+        # Ion of each MS1 envelope (scan-agnostic; not clickable/deletable)
+        network = self.ensemble.adduct_network
+        for cofeature_idx, ion in (network.ions.items() if network else ()):
+            self.ms1_plot.add_anchored_label(spec_idx=cofeature_idx, text=ion)
 
         # Keep chromatogram-side markers in sync with whatever lives on
         # the ensemble right now. Cheap (one ScatterPlotItem swap) and
