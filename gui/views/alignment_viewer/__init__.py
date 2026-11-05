@@ -52,6 +52,7 @@ from core.cli.cluster_samples import (
     LINEAGE, SampleClusterParams, SampleClustering, cluster_samples_by,
     sample_cluster_params_from_config,
 )
+from core.cli.rank_candidates import ScoredCandidate
 from core.data_structs.analyte_annotation import Hypothesis
 from core.data_structs.similarity_matrix import SimilarityMatrix
 from core.utils.config import load_config
@@ -67,6 +68,7 @@ from gui.views.alignment_viewer.groups_panel import (
 )
 from gui.views.alignment_viewer.inspector import Inspector
 from gui.views.alignment_viewer.render_params_dialog import RenderParamsDialog
+from gui.views.alignment_viewer.spectrum_search_panel import SpectrumSearchPanel
 from gui.views.alignment_viewer.sample_cluster_params_dialog import (
     SampleClusterParamsDialog,
 )
@@ -99,6 +101,9 @@ class AlignmentViewer(
     sigClusterRequested = QtCore.pyqtSignal(object, object, str)
     # Annotation panel focus key, rank_candidates kwargs; the result comes back via set_ranking
     sigRankCandidatesRequested = QtCore.pyqtSignal(object, dict)
+    # Spectral search slot, search_spectra kwargs; the result comes back via set_spectral_result
+    sigSpectralSearchRequested = QtCore.pyqtSignal(object, dict)
+    sigSpectralRebuildRequested = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -169,8 +174,9 @@ class AlignmentViewer(
             btn_remove=self.btnGroupRemoveSelected,
         )
         self.annotation_panel: AnnotationPanel = self.annotationPanel
-        # The bottom MS2 plot mirrors the front annotation tab's selected
-        # structure: this ScoredCandidate (None: not mirroring)
+        self.spectrum_panel: SpectrumSearchPanel = self.spectrumSearchPanel
+        # The bottom MS2 plot mirrors the front annotation tab's selection: a
+        # structure's ScoredCandidate, or a library LibraryHit (None: not mirroring)
         self._mirrored = None
         # (focus key, SMILES) -> a hypothesis's ScoredCandidate, for the session
         self._hypothesis_scores: dict = {}
@@ -298,9 +304,15 @@ class AlignmentViewer(
             lambda s: self.tabsAnnotation.currentWidget() is self.annotation_panel and self._show_candidate(s)
         )
         self.annotation_panel.sigAccepted.connect(self._on_accepted)
+        self.spectrum_panel.sigSearchRequested.connect(self.sigSpectralSearchRequested)
+        self.spectrum_panel.sigRebuildRequested.connect(self.sigSpectralRebuildRequested)
+        self.spectrum_panel.sigHitSelected.connect(
+            lambda h: self.tabsAnnotation.currentWidget() is self.spectrum_panel and self._show_hit(h)
+        )
+        self.spectrum_panel.sigAccepted.connect(self._on_accepted)
         self.tabsAnnotation.currentChanged.connect(
-            lambda: (self.annotation_panel if self.tabsAnnotation.currentWidget() is self.annotation_panel
-                     else self.annotation_editor).reselect()
+            lambda: (self.annotation_editor if self.tabsAnnotation.currentWidget() is self.tabAnnotation
+                     else self.tabsAnnotation.currentWidget()).reselect()
         )
         self.plotMS2.sigMirrorSignalHovered.connect(self._on_ms2_mirror_hovered)
         self.plotMS2.sigMSpectrumLeaved.connect(self._on_ms2_mirror_left)
@@ -789,10 +801,12 @@ class AlignmentViewer(
         focus = self.selection_model.focus
         if focus is None or self._ctx is None:
             self.annotation_panel.show_analyte(None, None)
+            self.spectrum_panel.show_analyte(None, None)
             self.annotation_editor.show_analyte(None, None)
             return
         ensemble = focus.ensemble if focus.kind == 'ensemble' else None
         self.annotation_panel.show_analyte(self._ctx, focus.analyte, ensemble)
+        self.spectrum_panel.show_analyte(self._ctx, focus.analyte, ensemble)
         self.annotation_editor.show_analyte(
             self._ctx, focus.analyte, ensemble, self.annotation_panel.sample_uuid,
         )
@@ -864,8 +878,8 @@ class AlignmentViewer(
             self.data_source.register_annotation(annotation)
 
     def _on_accepted(self, analyte_uuid, hypothesis: Hypothesis):
-        """A Search candidate becomes the analyte's chosen hypothesis, shown in its tab."""
-        if (shown := self.annotation_panel.shown) is not None:
+        """A search candidate / library hit becomes the analyte's chosen hypothesis, shown in its tab."""
+        if self.tabsAnnotation.currentWidget() is self.annotation_panel and (shown := self.annotation_panel.shown) is not None:
             self._hypothesis_scores[(self.annotation_panel.focus_key, hypothesis.smiles)] = shown
         self.annotation_editor.add_hypothesis(hypothesis)
         self.tabsAnnotation.setCurrentWidget(self.tabAnnotation)
@@ -885,6 +899,10 @@ class AlignmentViewer(
         if (self.tabsAnnotation.currentWidget() is self.tabAnnotation and selected is not None
                 and selected.smiles == smiles and self.annotation_panel.focus_key == focus_key):
             self._show_candidate(scored)
+
+    def set_spectral_result(self, slot, result):
+        """A finished spectral-library search (None: failed / cancelled), from MainController."""
+        self.spectrum_panel.set_result(slot, result)
 
     def _on_hypothesis_selected(self, hypothesis: Optional[Hypothesis]):
         """Mirror a hypothesis: its GLACIER prediction for the focus's MS2, scored once per session."""
@@ -912,8 +930,21 @@ class AlignmentViewer(
         self.detail_panel.show_ms2_mirror(
             self.annotation_panel.ms2, scored.prediction, "Observed",
             "Predicted (GLACIER)", scored.matches,
+            self.annotation_panel.precursor_mz, self.annotation_panel.precursor_mz,
         )
         self._mirrored = scored
+
+    def _show_hit(self, hit):
+        """Mirror the focus's MS2 against library hit `hit`'s spectrum (None: back to normal)."""
+        if hit is None:
+            self._show_candidate(None)
+            return
+        self.detail_panel.show_ms2_mirror(
+            self.spectrum_panel.ms2, hit.peaks, "Observed",
+            f"Library ({hit.library}: {hit.name or hit.spectrum_id})", hit.matches,
+            self.spectrum_panel.precursor_mz, hit.precursor_mz,
+        )
+        self._mirrored = hit
 
     def _highlight_fragment(self, peak_idx: Optional[int]):
         if self.tabsAnnotation.currentWidget() is self.annotation_panel:
@@ -923,11 +954,11 @@ class AlignmentViewer(
 
     def _on_ms2_mirror_hovered(self, signal: tuple):
         """(half, spec_idx, mz, intsy): a predicted peak lights up its fragment."""
-        if self._mirrored is not None and signal[0] == 'bottom':
+        if isinstance(self._mirrored, ScoredCandidate) and signal[0] == 'bottom':
             self._highlight_fragment(signal[1])
 
     def _on_ms2_mirror_left(self):
-        if self._mirrored is not None:
+        if isinstance(self._mirrored, ScoredCandidate):
             self._highlight_fragment(None)
 
     def _anchor_similarities(self) -> dict:

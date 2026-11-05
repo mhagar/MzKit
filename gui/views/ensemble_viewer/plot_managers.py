@@ -7,6 +7,7 @@ from PyQt5 import QtCore
 from scipy.stats import pearsonr, spearmanr
 
 from core.utils.array_types import to_spec_arr
+from core.utils.spectra import normalize_spectrum
 
 from gui.views.ensemble_viewer.utils import (
     match_chrom_arrs,
@@ -557,7 +558,10 @@ class SpectrumPlotManager(QtCore.QObject):
                 ms_level=ms_level,
                 scan_rt=scan_rt,
             )
-            self._render_spectrum(plot, ms_level, spectrum)
+            self._render_spectrum(
+                plot, ms_level, spectrum,
+                self.ensemble.resolved_precursor_mz if ms_level == 2 else None,
+            )
 
     def populate_composite(
         self,
@@ -580,6 +584,7 @@ class SpectrumPlotManager(QtCore.QObject):
         self._render_spectrum(
             self.ms2_plot, 2,
             composite.ms2 if composite.ms2 is not None else empty,
+            composite.precursor_mz,
         )
 
     def _render_spectrum(
@@ -587,10 +592,12 @@ class SpectrumPlotManager(QtCore.QObject):
         plot: 'MSPlotWidget',
         ms_level: Literal[1, 2],
         spectrum: NDArray,
+        precursor_mz: Optional[float] = None,
     ):
         """
         Cache the raw spectrum for spec_idx lookups, then draw it (normalized
-        for display if enabled). Shared by the scan and composite paths.
+        for display if enabled; MS2 to its max below the precursor region).
+        Shared by the scan and composite paths.
         """
         if ms_level == 1:
             self._current_ms1 = spectrum
@@ -602,8 +609,7 @@ class SpectrumPlotManager(QtCore.QObject):
 
         display = spectrum
         if self._normalize_spectra and bpc > 0:
-            display = spectrum.copy()
-            display['intsy'] = display['intsy'] / bpc
+            display = normalize_spectrum(spectrum, precursor_mz=precursor_mz)
 
         plot.setSpectrumArray(display)
         plot.update_bpc_label(

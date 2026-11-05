@@ -202,7 +202,9 @@ def compute_similarity_matrix(
 
     ProcessController-compatible. Returns None if cancelled.
     """
-    analytes, spectra = analyte_ms2_spectra(alignment, samples)
+    analytes, spectra = analyte_ms2_spectra(
+        alignment, samples, informative_only=params.scoring != MS2DEEPSCORE,
+    )
     scored = similarity_matrix(
         spectra, params, progress_callback, cancel_event,
     )
@@ -279,6 +281,7 @@ def cluster_from_similarity(
 def analyte_ms2_spectra(
     alignment: 'EnsembleAlignment',
     samples: list['Sample'],
+    informative_only: bool = False,
 ) -> tuple[list['AlignedAnalyte'], list[Spectrum]]:
     """
     `alignment`'s analytes that have a representative MS2, and those MS2s
@@ -288,7 +291,7 @@ def analyte_ms2_spectra(
     analytes: list['AlignedAnalyte'] = []
     spectra: list[Spectrum] = []
     for analyte in alignment.analytes:
-        spectrum = _ms2_spectrum(analyte, sample_of.get)
+        spectrum = _ms2_spectrum(analyte, sample_of.get, informative_only)
         if spectrum is not None:
             analytes.append(analyte)
             spectra.append(spectrum)
@@ -298,16 +301,22 @@ def analyte_ms2_spectra(
 def _ms2_spectrum(
     analyte: 'AlignedAnalyte',
     get_sample: Callable,
+    informative_only: bool = False,
 ) -> Optional[Spectrum]:
-    """The analyte's representative MS2 as a matchms Spectrum, or None."""
+    """The analyte's representative MS2 as a matchms Spectrum, or None.
+    `informative_only` keeps just the peaks below the precursor window."""
     rep = analyte.representative_spectrum(analyte.resolve_members(get_sample))
     if rep is None:
         return None
     ms2 = rep.composite.ms2
     if ms2 is None or not np.any(ms2['intsy'] > 0):
         return None
-    spectrum = _spectrum_from(ms2['mz'], ms2['intsy'])
-    spectrum.set('precursor_mz', float(rep.composite.precursor_mz))
+    precursor_mz = float(rep.composite.precursor_mz)
+    # MS2DeepScore was trained with the precursor region in (it predates matchms'
+    # remove_peaks_relative_to_precursor_mz), so only cosine scoring gets the window
+    window = precursor_mz if informative_only else None
+    spectrum = _spectrum_from(ms2['mz'], ms2['intsy'], window)
+    spectrum.set('precursor_mz', precursor_mz)
     return spectrum
 
 

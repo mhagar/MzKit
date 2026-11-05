@@ -48,7 +48,7 @@ def test_new_path_matches_old_on_test_alignment(alignment_project):
     """transform(floor=0) on computed cosine is a no-op: same clustering."""
     samples, alignment = alignment_project
     params = ClusterParams(scoring=MODIFIED_COSINE)
-    analytes, spectra = analyte_ms2_spectra(alignment, samples)
+    analytes, spectra = analyte_ms2_spectra(alignment, samples, informative_only=True)
     sim, _ = similarity_matrix(spectra, params)
     old = cluster_from_similarity(
         analytes, sim, 'average',

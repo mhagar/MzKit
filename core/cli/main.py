@@ -341,9 +341,6 @@ def cmd_align(args: argparse.Namespace) -> None:
         rt_tolerance=args.rt_tolerance,
         mz_tolerance=args.mz_tolerance,
         ms1_similarity_threshold=args.ms1_threshold,
-        ms2_similarity_threshold=args.ms2_threshold,
-        ms1_weight=args.ms1_weight,
-        ms2_weight=args.ms2_weight,
     )
 
     n_ens = sum(len(s.injection.ensembles) for s in samples)
@@ -402,9 +399,6 @@ def cmd_merge_alignments(args: argparse.Namespace) -> None:
         rt_tolerance=args.rt_tolerance,
         mz_tolerance=args.mz_tolerance,
         ms1_similarity_threshold=args.ms1_threshold,
-        ms2_similarity_threshold=args.ms2_threshold,
-        ms1_weight=args.ms1_weight,
-        ms2_weight=args.ms2_weight,
     )
 
     samples = registry.get_all_samples()
@@ -693,6 +687,17 @@ def cmd_export_compound(args: argparse.Namespace) -> None:
             normalize=normalize,
             formulas=registry.chosen_formulas(),
         )
+
+
+def cmd_build_spectral_db(args: argparse.Namespace) -> None:
+    from core.utils import spectrum_db
+
+    path = spectrum_db.build_db(
+        Path(args.mgf_dir), Path(args.output),
+        progress_callback=lambda pct, msg: print(f"[{pct:5.1f}%] {msg}", flush=True),
+    )
+    print(f"Built {path}: {', '.join(spectrum_db.available_libraries(path))}; "
+          f"embeddings: {', '.join(spectrum_db.embedders(path)) or 'none'}")
 
 
 def cmd_import_similarity(args: argparse.Namespace) -> None:
@@ -1084,12 +1089,6 @@ def build_parser() -> argparse.ArgumentParser:
                          help='m/z tolerance for peak pairing (default: 0.01)')
     p_align.add_argument('--ms1-threshold', type=float, default=0.7,
                          help='Min MS1 cosine similarity (default: 0.7)')
-    p_align.add_argument('--ms2-threshold', type=float, default=0.6,
-                         help='Min MS2 cosine similarity (default: 0.6)')
-    p_align.add_argument('--ms1-weight', type=float, default=0.5,
-                         help='Weight of MS1 similarity in score (default: 0.5)')
-    p_align.add_argument('--ms2-weight', type=float, default=0.5,
-                         help='Weight of MS2 similarity in score (default: 0.5)')
     p_align.set_defaults(func=cmd_align)
 
     # --- merge-alignments ---
@@ -1128,12 +1127,6 @@ def build_parser() -> argparse.ArgumentParser:
                          help='m/z tolerance for peak pairing (default: 0.01)')
     p_merge.add_argument('--ms1-threshold', type=float, default=0.7,
                          help='Min MS1 cosine similarity (default: 0.7)')
-    p_merge.add_argument('--ms2-threshold', type=float, default=0.6,
-                         help='Min MS2 cosine similarity (default: 0.6)')
-    p_merge.add_argument('--ms1-weight', type=float, default=0.5,
-                         help='Weight of MS1 similarity in score (default: 0.5)')
-    p_merge.add_argument('--ms2-weight', type=float, default=0.5,
-                         help='Weight of MS2 similarity in score (default: 0.5)')
     p_merge.set_defaults(func=cmd_merge_alignments)
 
     # --- filter ---
@@ -1328,6 +1321,22 @@ def build_parser() -> argparse.ArgumentParser:
         help='Output .mzk file (default: modify input in place)',
     )
     p_sim.set_defaults(func=cmd_import_similarity)
+
+    # --- build-spectral-db ---
+    from core.utils.spectrum_db import DB_DIR, DEFAULT_DB
+    p_specdb = subparsers.add_parser(
+        'build-spectral-db',
+        help='(Re)build the spectral library index (+ embeddings) from a folder of .mgf files',
+    )
+    p_specdb.add_argument(
+        '--mgf-dir', default=str(DB_DIR),
+        help=f'Folder of <library>.mgf (and <library>.<embedder>.npz) files (default: {DB_DIR})',
+    )
+    p_specdb.add_argument(
+        '-o', '--output', default=str(DEFAULT_DB),
+        help=f'Index to write (default: {DEFAULT_DB})',
+    )
+    p_specdb.set_defaults(func=cmd_build_spectral_db)
 
     return parser
 

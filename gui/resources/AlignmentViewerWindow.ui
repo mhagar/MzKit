@@ -208,9 +208,14 @@
          </item>
         </layout>
        </widget>
+       <widget class="SpectrumSearchPanel" name="spectrumSearchPanel">
+        <attribute name="title">
+         <string>Search (spectra)</string>
+        </attribute>
+       </widget>
        <widget class="AnnotationPanel" name="annotationPanel">
         <attribute name="title">
-         <string>Search</string>
+         <string>Search (structures)</string>
         </attribute>
        </widget>
       </widget>
@@ -531,6 +536,12 @@
    <class>AnnotationPanel</class>
    <extends>QWidget</extends>
    <header>gui.views.alignment_viewer.annotation_panel</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>SpectrumSearchPanel</class>
+   <extends>QWidget</extends>
+   <header>gui.views.alignment_viewer.spectrum_search_panel</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

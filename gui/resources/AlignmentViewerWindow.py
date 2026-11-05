@@ -103,6 +103,9 @@ class Ui_Form(object):
         self.verticalLayout_3.addWidget(self.splitterHypotheses)
         self.verticalLayout_3.setStretch(2, 1)
         self.tabsAnnotation.addTab(self.tabAnnotation, "")
+        self.spectrumSearchPanel = SpectrumSearchPanel()
+        self.spectrumSearchPanel.setObjectName("spectrumSearchPanel")
+        self.tabsAnnotation.addTab(self.spectrumSearchPanel, "")
         self.annotationPanel = AnnotationPanel()
         self.annotationPanel.setObjectName("annotationPanel")
         self.tabsAnnotation.addTab(self.annotationPanel, "")
@@ -252,7 +255,8 @@ class Ui_Form(object):
         self.treeHypotheses.headerItem().setText(2, _translate("Form", "Origin"))
         self.treeHypotheses.headerItem().setText(3, _translate("Form", "Sample"))
         self.tabsAnnotation.setTabText(self.tabsAnnotation.indexOf(self.tabAnnotation), _translate("Form", "Annotation"))
-        self.tabsAnnotation.setTabText(self.tabsAnnotation.indexOf(self.annotationPanel), _translate("Form", "Search"))
+        self.tabsAnnotation.setTabText(self.tabsAnnotation.indexOf(self.spectrumSearchPanel), _translate("Form", "Search (spectra)"))
+        self.tabsAnnotation.setTabText(self.tabsAnnotation.indexOf(self.annotationPanel), _translate("Form", "Search (structures)"))
         self.btnGroupSelected.setText(_translate("Form", "..."))
         self.btnGroupEdit.setText(_translate("Form", "..."))
         self.btnGroupDelete.setText(_translate("Form", "..."))
@@ -263,6 +267,7 @@ class Ui_Form(object):
         self.btnClusterMode.setText(_translate("Form", "..."))
         self.btnSampleClusterMode.setText(_translate("Form", "..."))
 from gui.views.alignment_viewer.annotation_panel import AnnotationPanel
+from gui.views.alignment_viewer.spectrum_search_panel import SpectrumSearchPanel
 from gui.widgets.AlignmentDendrogramWidget import AlignmentDendrogramWidget
 from gui.widgets.AlignmentGroupTrackWidget import AlignmentGroupTrackWidget
 from gui.widgets.AlignmentPlotWidget import AlignmentPlotWidget

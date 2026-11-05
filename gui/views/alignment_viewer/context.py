@@ -36,6 +36,7 @@ class ItemSpectra:
     formula_count: str = ""   # analytes: members agreeing, e.g. "3/4"
     formula: str = ""         # bare, for arithmetic
     analyte_uuid: Optional[int] = None
+    precursor_mz: Optional[float] = None
 
 
 class AlignmentContext:
@@ -133,6 +134,7 @@ class AlignmentContext:
                 base_mz=float(ensemble.base_mz),
                 formula_label=formula,
                 formula=formula.rstrip('?'),
+                precursor_mz=composite.precursor_mz,
             )
 
         if target.kind == 'analyte' and target.analyte is not None:
@@ -153,6 +155,7 @@ class AlignmentContext:
                 ),
                 formula=agreement[0] if agreement else "",
                 analyte_uuid=analyte.uuid,
+                precursor_mz=rep.composite.precursor_mz,
             )
 
         return None
@@ -167,4 +170,5 @@ class AlignmentContext:
         """
         return score_spectrum_pair(
             a.ms1, b.ms1, a.ms2, b.ms2, self.alignment.parameters,
+            a.precursor_mz, b.precursor_mz,
         )

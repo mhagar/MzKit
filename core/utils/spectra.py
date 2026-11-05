@@ -13,6 +13,33 @@ from ms_entropy import calculate_entropy_similarity
 from typing import Iterable, Generator, Optional
 
 
+# Da below the precursor that MS2 similarity and plot scaling ignore: the
+# precursor, its isotopes and small uninformative losses (H2O, NH3)
+PRECURSOR_MARGIN = 20.0
+
+
+def informative_mask(mz: np.ndarray, precursor_mz: Optional[float]) -> np.ndarray:
+    """
+    Peaks of an MS2 spectrum that carry fragment information:
+    m/z < precursor - PRECURSOR_MARGIN (all of them if `precursor_mz` is None)
+    """
+    mz = np.asarray(mz)
+    if precursor_mz is None:
+        return np.ones(mz.shape, bool)
+    return mz < float(precursor_mz) - PRECURSOR_MARGIN
+
+
+def informative_max(spec: np.ndarray, precursor_mz: Optional[float]) -> float:
+    """
+    Max intensity over the informative window, or the global max if it is
+    empty (0.0 for an empty spectrum). Used to scale MS2 plots.
+    """
+    intsy = np.asarray(spec['intsy'])
+    window = intsy[informative_mask(spec['mz'], precursor_mz)]
+    pool = window if window.size and window.max() > 0 else intsy
+    return float(pool.max()) if pool.size else 0.0
+
+
 def merge_spectra(
         spectra: Iterable[SpectrumArray],
         bin_width: float,
@@ -220,14 +247,18 @@ def _to_peaks(
 def normalize_spectrum(
         spec: SpectrumArray | np.ndarray,
         max_range: float = 1.0,
+        precursor_mz: Optional[float] = None,
 ) -> np.ndarray:
     """
     Normalize spectrum intensities to a range [0, max_intsy]
+
+    With `precursor_mz` (MS2 for display), scales to the informative
+    window's max (see `informative_max`), so precursor peaks can exceed it
     """
     if spec.size == 0:
         return spec
 
-    max_intsy = spec['intsy'].max()
+    max_intsy = informative_max(spec, precursor_mz)
     if max_intsy <= 0:
         return spec
 

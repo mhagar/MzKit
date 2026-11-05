@@ -309,6 +309,12 @@ class MainController:
         alignment_viewer.sigRankCandidatesRequested.connect(
             self._handle_rank_candidates_request
         )
+        alignment_viewer.sigSpectralSearchRequested.connect(
+            self._handle_spectral_search_request
+        )
+        alignment_viewer.sigSpectralRebuildRequested.connect(
+            self._handle_spectral_rebuild_request
+        )
 
     def _connect_ensemble_viewer_signals(self) -> None:
         """
@@ -1061,6 +1067,28 @@ class MainController:
             on_completion_func=lambda result: alignment_viewer.set_ranking(
                 key, result,
             ),
+        )
+
+    def _handle_spectral_search_request(self, slot, kwargs: dict):
+        """Search the spectral libraries for the focus's MS2 in the background
+        (Alignment Viewer spectral search tab); the result goes back under `slot`."""
+        alignment_viewer = self.subwindow_manager.get_window('alignment_viewer')
+        self.process_controller.start_process(
+            module_path="core.cli.search_spectra",
+            function_name="search_spectra",
+            parameters=kwargs,
+            on_completion_func=lambda result: alignment_viewer.set_spectral_result(
+                slot, result,
+            ),
+        )
+
+    def _handle_spectral_rebuild_request(self):
+        """Rebuild the spectral library index (spectra/*.mgf) in the background."""
+        alignment_viewer = self.subwindow_manager.get_window('alignment_viewer')
+        self.process_controller.start_process(
+            module_path="core.utils.spectrum_db",
+            function_name="build_db",
+            on_completion_func=lambda _: alignment_viewer.spectrum_panel.refresh_index(),
         )
 
     def _handle_cluster_analytes_request(

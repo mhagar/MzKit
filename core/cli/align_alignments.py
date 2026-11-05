@@ -5,7 +5,7 @@ This reuses the `align_ensembles` machinery almost verbatim, with the
 analyte playing the role that an ensemble plays in a from-scratch align,
 and the source alignment playing the role of the sample:
 
-1. Build one *consensus* MS1 (and MS2) spectrum per analyte by pooling the
+1. Build one *consensus* MS1 spectrum per analyte by pooling the
    spectra of its member ensembles (extracted once via `_build_spectra`) and
     merging co-located peaks.
 
@@ -21,7 +21,7 @@ and the source alignment playing the role of the sample:
    satisfied.
 """
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 from matchms import Spectrum
@@ -167,7 +167,7 @@ def _build_analyte_spectra(
     """
     Flatten every analyte across all alignments into re-alignable items
 
-    Each analyte's consensus MS1/MS2 spectrum is merged from its member
+    Each analyte's consensus MS1 spectrum is merged from its member
     ensembles' spectra, which are extracted once by `_build_spectra` and
     looked up by (sample_uuid, ensemble_uuid)
     """
@@ -185,23 +185,18 @@ def _build_analyte_spectra(
     rts: list[float] = []
     mzs: list[float] = []
     ms1_specs: list[Spectrum] = []
-    ms2_specs: list[Optional[Spectrum]] = []
 
     for align_idx, alignment in enumerate(alignments):
         mz_tol = alignment.parameters.mz_tolerance
         for analyte in alignment.analytes:
             member_ms1: list[Spectrum] = []
-            member_ms2: list[Spectrum] = []
             for su, eu in analyte.ensemble_map.items():
                 k = spec_of.get((su, eu))
                 if k is None:
                     continue
                 member_ms1.append(ens_bundle.ms1_specs[k])
-                if ens_bundle.ms2_specs[k] is not None:
-                    member_ms2.append(ens_bundle.ms2_specs[k])
 
             ms1_spec = _merge_spectra(member_ms1, mz_tol)
-            ms2_spec = _merge_spectra(member_ms2, mz_tol) if member_ms2 else None
 
             items.append(_AnalyteItem(
                 align_idx=align_idx,
@@ -213,7 +208,6 @@ def _build_analyte_spectra(
             rts.append(analyte.consensus_rt)
             mzs.append(analyte.consensus_mz)
             ms1_specs.append(ms1_spec)
-            ms2_specs.append(ms2_spec)
 
     # Pack into a _SpectraBundle so _score_pairs can be reused as-is. Its
     # "sample index" is the source-alignment index (so same-alignment
@@ -225,7 +219,6 @@ def _build_analyte_spectra(
     bundle.rts = np.asarray(rts, dtype=float)
     bundle.mzs = np.asarray(mzs, dtype=float)
     bundle.ms1_specs = ms1_specs
-    bundle.ms2_specs = ms2_specs
     return items, bundle
 
 

@@ -232,7 +232,11 @@ def deserialize_alignment(
         uuid=data['uuid'],
         name=data.get('name', ''),
         sample_uuids=tuple(data['sample_uuids']),
-        parameters=AlignmentParams(**data['parameters']),
+        # Drop keys of retired params (e.g. pre-MS1-only ms2_* / weights)
+        parameters=AlignmentParams(**{
+            k: v for k, v in data['parameters'].items()
+            if k in AlignmentParams._fields
+        }),
         analytes=analytes,
     )
 

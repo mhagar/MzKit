@@ -33,10 +33,6 @@ class AlignmentParamsDialog(QtWidgets.QDialog):
         ('mz_tolerance', 'm/z tolerance', 0.0, 10.0, 4, 0.001),
         ('ms1_similarity_threshold', 'MS1 similarity threshold',
          0.0, 1.0, 3, 0.05),
-        ('ms2_similarity_threshold', 'MS2 similarity threshold',
-         0.0, 1.0, 3, 0.05),
-        ('ms1_weight', 'MS1 weight', 0.0, 1.0, 3, 0.05),
-        ('ms2_weight', 'MS2 weight', 0.0, 1.0, 3, 0.05),
     )
 
     def __init__(

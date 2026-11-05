@@ -59,7 +59,7 @@ DataRegistry                       core/data_structs/data_registry.py
 │   │   ├── ScanArray (MS1)        scan_array.py
 │   │   ├── ScanArray (MS2) [opt]               — DDA/DIA carry precursor metadata
 │   │   └── ensembles: {EnsembleUUID -> Ensemble}
-│   │        └── Ensemble          ensemble.py  — THE analytical unit
+│   │        └── Ensemble          ensemble/    — THE analytical unit (+ ms2.py, annotations.py)
 │   │             ├── ms1_cofeatures: [FeaturePointer]   feature_pointer.py
 │   │             ├── ms2_cofeatures: [FeaturePointer]
 │   │             └── annotations: IonAnnotation / MzDiffAnnotation /

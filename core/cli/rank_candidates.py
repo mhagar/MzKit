@@ -21,6 +21,7 @@ import numpy as np
 
 from core.utils import compound_db
 from core.utils.array_types import to_spec_arr
+from core.utils.spectra import informative_mask
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -182,10 +183,10 @@ def considered_peaks(
 ) -> np.ndarray:
     """
     Indices into `ms2` of the peaks explained-k/N is scored over: the most
-    intense fragments, relative to the base fragment (an often dominant
-    precursor would otherwise push real fragments under min_exp_rel).
+    intense fragments in the informative window (below the precursor
+    region), relative to the base fragment there.
     """
-    idx = np.flatnonzero(np.abs(ms2['mz'] - precursor_mz) > params.mz_tolerance)
+    idx = np.flatnonzero(informative_mask(ms2['mz'], precursor_mz))
     if not idx.size:
         return idx
     idx = idx[ms2['intsy'][idx] >= params.min_exp_rel * ms2['intsy'][idx].max()]
@@ -262,7 +263,8 @@ def rank_candidates(
                 continue
             mz, intsy, src = glacier.merge_peaks(pred['spec'])
             prediction = to_spec_arr(mz, intsy)
-            score, matches = _cosine_with_matches(cosine, ms2, prediction)
+            # Both sides share the precursor: GLACIER's intact-ion peak must not score
+            score, matches = _cosine_with_matches(cosine, ms2, prediction, precursor_mz, precursor_mz)
             explained = explained_peaks(ms2, considered, prediction, params)
             scored.append(ScoredCandidate(
                 cand, len(explained), score, prediction, pred['frag'][src],

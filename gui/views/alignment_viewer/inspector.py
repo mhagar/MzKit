@@ -158,9 +158,7 @@ class Inspector(QtCore.QObject):
             f"Alignment Parameters:\n"
             f"  RT tolerance: {p.rt_tolerance} s\n"
             f"  m/z tolerance: {p.mz_tolerance}\n"
-            f"  MS1 / MS2 thresholds: "
-            f"{p.ms1_similarity_threshold} / {p.ms2_similarity_threshold}\n"
-            f"  MS1 / MS2 weights: {p.ms1_weight} / {p.ms2_weight}\n\n"
+            f"  MS1 similarity threshold: {p.ms1_similarity_threshold}\n\n"
             f"Click a strip or line to inspect it; "
             f"Ctrl+click to select several."
         )

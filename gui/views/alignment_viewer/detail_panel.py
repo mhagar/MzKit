@@ -146,7 +146,7 @@ class DetailPanel:
             ]
         ms_x = self._ms_x_range
         self._show_single(self.ms1_plot, composite.ms1, titles[0])
-        self._show_single(self.ms2_plot, composite.ms2, titles[1])
+        self._show_single(self.ms2_plot, composite.ms2, titles[1], composite.precursor_mz)
         self._frame_ms([composite.ms1, composite.ms2], ms_x)
 
     def show_mirror(
@@ -168,6 +168,7 @@ class DetailPanel:
             self.ms2_plot.set_mirror_spectra(
                 top.ms2, bottom.ms2, top.label, bottom.label,
                 matched=score.ms2_matches,
+                top_precursor=top.precursor_mz, bottom_precursor=bottom.precursor_mz,
             )
             _set_label(self.ms2_plot, "")
             self.ms2_plot.update_bpc_label(f"MS2 cosine: {score.ms2:.3f}")
@@ -184,11 +185,14 @@ class DetailPanel:
         top_label: str,
         bottom_label: str,
         matches: list[tuple[int, int]],
+        top_precursor: Optional[float] = None,
+        bottom_precursor: Optional[float] = None,
     ):
         """MS2 only (e.g. observed vs predicted), labelled on the right; MS1 is left as is."""
         ms_x = self._ms_x_range
         self.ms2_plot.set_mirror_spectra(
             top, bottom, top_label, bottom_label, matched=matches, labels_right=True,
+            top_precursor=top_precursor, bottom_precursor=bottom_precursor,
         )
         _set_label(self.ms2_plot, "")
         self.ms2_plot.update_bpc_label("")
@@ -216,14 +220,16 @@ class DetailPanel:
         plot: 'MSPlotWidget',
         spectrum: Optional['SpectrumArray'],
         label: str,
+        precursor_mz: Optional[float] = None,
     ):
+        """`precursor_mz` (MS2): scale to the peaks below the precursor region"""
         plot.setSpectrumArray(
-            normalize_spectrum(spectrum) if spectrum is not None
+            normalize_spectrum(spectrum, precursor_mz=precursor_mz) if spectrum is not None
             else _empty_spectrum()
         )
         _set_label(plot, label if spectrum is not None else f"{label} (none)")
         plot.update_bpc_label(_bpc_label(spectrum))  # raw base peak intensity
-        plot.pi.scaleViewboxToSpectrumArray()
+        plot.pi.scaleViewboxToSpectrumArray(intsy_max=1.0 if precursor_mz is not None else None)
 
     def _frame_ms(
         self,

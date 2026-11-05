@@ -59,18 +59,13 @@ class AlignmentParams(NamedTuple):
         when computing spectral cosine similarity.
     ms1_similarity_threshold: Minimum MS1 cosine similarity
         to consider a match.
-    ms2_similarity_threshold: Minimum MS2 cosine similarity
-        to consider a match (only used when both ensembles
-        have MS2 data).
-    ms1_weight: Weight for MS1 similarity in combined score.
-    ms2_weight: Weight for MS2 similarity in combined score.
+
+    Alignment is MS1 + RT only: it's an identity claim that annotations
+    (MS2-derived or otherwise) can't move.
     """
     rt_tolerance: float = 10.0
     mz_tolerance: float = 0.01
     ms1_similarity_threshold: float = 0.7
-    ms2_similarity_threshold: float = 0.6
-    ms1_weight: float = 0.5
-    ms2_weight: float = 0.5
 
 
 @dataclass

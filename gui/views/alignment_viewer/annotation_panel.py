@@ -38,10 +38,14 @@ SCORED_ROLE = QtCore.Qt.UserRole + 1
 FORMULA, MASS = 0, 1
 
 
-class AnnotationPanel(QtWidgets.QWidget, Ui_AnnotationPanel):
+class AnnotationPanel(
+    QtWidgets.QWidget,
+    Ui_AnnotationPanel,
+):
     # (focus key, rank_candidates kwargs): MainController runs it and hands the
     # RankResult back to `set_ranking`. The key is (AnalyteUUID, EnsembleUUID or None)
     sigRankRequested = QtCore.pyqtSignal(object, dict)
+
     # The selected candidate to mirror (ScoredCandidate), or None
     sigCandidateSelected = QtCore.pyqtSignal(object)
     sigAccepted = QtCore.pyqtSignal(object, object)   # AnalyteUUID, Hypothesis
@@ -54,7 +58,8 @@ class AnnotationPanel(QtWidgets.QWidget, Ui_AnnotationPanel):
         self._precursor_mz: Optional[float] = None
         self._sample_uuid = None   # whose MS2 the focus ranks
         self._adduct: Optional[str] = None
-        # The focus: (AnalyteUUID, the focused member's EnsembleUUID or None)
+
+        # Focused AnalyteUUID, the focused member's EnsembleUUID or None
         self._key: Optional[tuple] = None
         # focus key -> (RankResult, status text); and those still running
         self._rankings: dict = {}
@@ -65,6 +70,7 @@ class AnnotationPanel(QtWidgets.QWidget, Ui_AnnotationPanel):
         # Short names for the .ui's widgets
         self.mode_combo, self.query_edit, self.rank_btn = self.comboMode, self.editQuery, self.btnRank
         self.status_label, self.accept_btn = self.labelStatus, self.btnAccept
+
         self.rank_btn.clicked.connect(self._rank)
         self.query_edit.returnPressed.connect(self._rank)
 
@@ -91,6 +97,12 @@ class AnnotationPanel(QtWidgets.QWidget, Ui_AnnotationPanel):
         self.show_analyte(None, None)
 
     # -- analyte ------------------------------------------------------------
+
+
+    @property
+    def precursor_mz(self) -> Optional[float]:
+        """The focus's precursor m/z (None when nothing is focused)."""
+        return self._precursor_mz
 
     def show_analyte(
         self,

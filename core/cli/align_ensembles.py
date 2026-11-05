@@ -2,7 +2,7 @@
 Cross-sample ensemble alignment algorithm
 
 Matches ensembles across samples by spectral similarity
-(MS1 and optionally MS2), producing AlignedAnalytes.
+(MS1 cosine within an RT window), producing AlignedAnalytes.
 
 Design
 ------
@@ -10,7 +10,7 @@ The work is split into three stages so each can be tuned or
 swapped independently:
 
 1. `_build_spectra`:
-    Convert every ensemble's composite MS1 (and MS2) spectrum *once*
+    Convert every ensemble's composite MS1 spectrum *once*
     into `matchms.Spectrum` objects.
 
 2. `_score_pairs`: RT-windowed, cross-sample similarity scoring
@@ -32,6 +32,7 @@ from matchms import Spectrum
 from matchms.similarity import CosineGreedy
 from matchms.similarity.spectrum_similarity_functions import collect_peak_pairs
 
+from core.utils.spectra import informative_mask
 from core.data_structs.alignment import (
     AlignmentParams,
     AlignedAnalyte,
@@ -64,11 +65,6 @@ def alignment_params_from_config(config: 'ConfigParser') -> AlignmentParams:
         ms1_similarity_threshold=config.getfloat(
             s, "ms1_similarity_threshold",
             fallback=d.ms1_similarity_threshold),
-        ms2_similarity_threshold=config.getfloat(
-            s, "ms2_similarity_threshold",
-            fallback=d.ms2_similarity_threshold),
-        ms1_weight=config.getfloat(s, "ms1_weight", fallback=d.ms1_weight),
-        ms2_weight=config.getfloat(s, "ms2_weight", fallback=d.ms2_weight),
     )
 
 
@@ -103,7 +99,6 @@ class _SpectraBundle:
     rts: np.ndarray = field(default_factory=lambda: np.empty(0, float))
     mzs: np.ndarray = field(default_factory=lambda: np.empty(0, float))
     ms1_specs: list[Spectrum] = field(default_factory=list)
-    ms2_specs: list[Optional[Spectrum]] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.ens_uuids)
@@ -142,25 +137,33 @@ def align_ensembles(
     )
 
 
-def _spectrum_from(mz: np.ndarray, intsy: np.ndarray) -> Spectrum:
+def _spectrum_from(
+    mz: np.ndarray,
+    intsy: np.ndarray,
+    precursor_mz: Optional[float] = None,
+) -> Spectrum:
     """
     Build an m/z-sorted matchms Spectrum,
-     dropping zero-intensity peaks
+     dropping zero-intensity peaks and, given an MS2's `precursor_mz`,
+      peaks outside the informative window (see `informative_mask`)
     """
-    spectrum, _ = _spectrum_and_order_from(mz, intsy)
+    spectrum, _ = _spectrum_and_order_from(mz, intsy, precursor_mz)
     return spectrum
 
 
 def _spectrum_and_order_from(
     mz: np.ndarray,
     intsy: np.ndarray,
+    precursor_mz: Optional[float] = None,
 ) -> tuple[Spectrum, np.ndarray]:
     """
     As `_spectrum_from`, but also returns the indices into the *input*
      arrays of each peak kept in the Spectrum (in Spectrum order), so
       matched peaks can be mapped back onto the source array
     """
-    keep = np.flatnonzero(np.asarray(intsy) > 0.0)
+    keep = np.flatnonzero(
+        (np.asarray(intsy) > 0.0) & informative_mask(mz, precursor_mz)
+    )
     order = keep[np.argsort(np.asarray(mz)[keep], kind='stable')]  # matchms requires ascending m/z
     spectrum = Spectrum(
         mz=np.ascontiguousarray(np.asarray(mz)[order], dtype=float),
@@ -168,21 +171,6 @@ def _spectrum_and_order_from(
         metadata_harmonization=False,
     )
     return spectrum, order
-
-
-def _composite_spectra(
-    ensemble: 'Ensemble',
-) -> tuple[Spectrum, Optional[Spectrum]]:
-    """
-    The (MS1, MS2) matchms Spectra alignment scores an ensemble by:
-     its composite spectrum
-    """
-    composite = ensemble.composite_spectrum
-    ms1 = _spectrum_from(composite.ms1['mz'], composite.ms1['intsy'])
-    ms2 = None
-    if composite.ms2 is not None and composite.ms2.size:
-        ms2 = _spectrum_from(composite.ms2['mz'], composite.ms2['intsy'])
-    return ms1, ms2
 
 
 def _build_spectra(samples: list['Sample']) -> _SpectraBundle:
@@ -206,12 +194,12 @@ def _build_spectra(samples: list['Sample']) -> _SpectraBundle:
         si = sample_idx_of[sample.uuid]
 
         for ens_uuid, ensemble in injection.ensembles.items():
-            ms1_spec, ms2_spec = _composite_spectra(ensemble)
+            ms1 = ensemble.composite_spectrum.ms1
+            ms1_spec = _spectrum_from(ms1['mz'], ms1['intsy'])
 
             bundle.sample_uuids.append(sample.uuid)
             bundle.ens_uuids.append(ens_uuid)
             bundle.ms1_specs.append(ms1_spec)
-            bundle.ms2_specs.append(ms2_spec)
             sample_idxs.append(si)
             rts.append(ensemble.peak_rt)
             mzs.append(ensemble.base_mz)
@@ -254,13 +242,18 @@ def _cosine_with_matches(
     cosine: CosineGreedy,
     spec_a: 'SpectrumArray',
     spec_b: 'SpectrumArray',
+    prec_a: Optional[float] = None,
+    prec_b: Optional[float] = None,
 ) -> tuple[float, list[tuple[int, int]]]:
     """
     CosineGreedy score, plus the greedily-matched peak pairs
      (mirrors matchms' `score_best_matches` peak assignment)
+
+    For MS2, pass each side's precursor m/z: only the informative window
+     is scored (indices still refer to the full input arrays)
     """
-    mspec_a, order_a = _spectrum_and_order_from(spec_a['mz'], spec_a['intsy'])
-    mspec_b, order_b = _spectrum_and_order_from(spec_b['mz'], spec_b['intsy'])
+    mspec_a, order_a = _spectrum_and_order_from(spec_a['mz'], spec_a['intsy'], prec_a)
+    mspec_b, order_b = _spectrum_and_order_from(spec_b['mz'], spec_b['intsy'], prec_b)
     if not order_a.size or not order_b.size:
         return 0.0, []
 
@@ -293,9 +286,12 @@ def score_spectrum_pair(
     ms2_a: Optional['SpectrumArray'],
     ms2_b: Optional['SpectrumArray'],
     params: AlignmentParams,
+    prec_a: Optional[float] = None,
+    prec_b: Optional[float] = None,
 ) -> PairScore:
     """
     Score two (MS1, MS2) spectrum pairs the way alignment does
+     (MS2 over each side's informative window, given its precursor m/z)
     """
     cosine = _make_cosine(params)
     ms1, ms1_matches = _cosine_with_matches(cosine, ms1_a, ms1_b)
@@ -303,7 +299,7 @@ def score_spectrum_pair(
     ms2: Optional[float] = None
     ms2_matches: list[tuple[int, int]] = []
     if ms2_a is not None and ms2_b is not None and ms2_a.size and ms2_b.size:
-        ms2, ms2_matches = _cosine_with_matches(cosine, ms2_a, ms2_b)
+        ms2, ms2_matches = _cosine_with_matches(cosine, ms2_a, ms2_b, prec_a, prec_b)
 
     return PairScore(ms1, ms2, ms1_matches, ms2_matches)
 
@@ -320,6 +316,7 @@ def score_ensemble_pair(
     comp_b = ensemble_b.composite_spectrum
     return score_spectrum_pair(
         comp_a.ms1, comp_b.ms1, comp_a.ms2, comp_b.ms2, params,
+        comp_a.precursor_mz, comp_b.precursor_mz,
     )
 
 
@@ -334,7 +331,7 @@ def _score_pairs(
 
     Returns three parallel arrays `(i, j, score)` describing
      the surviving edges: `i`/`j` are ensemble indices into
-      `bundle` and `score` is the combined MS1(/MS2) similarity
+      `bundle` and `score` is the MS1 cosine similarity
 
     RT blocking: ensembles are visited in ascending-RT order and each
     is only compared against the forward run of ensembles still within
@@ -343,13 +340,9 @@ def _score_pairs(
     n = len(bundle)
     cosine = _make_cosine(params)
     ms1_thr = params.ms1_similarity_threshold
-    ms2_thr = params.ms2_similarity_threshold
-    w1 = params.ms1_weight
-    w2 = params.ms2_weight
     rt_tol = params.rt_tolerance
 
     ms1 = bundle.ms1_specs
-    ms2 = bundle.ms2_specs
     sample_idxs = bundle.sample_idxs
 
     # Visit ensembles in ascending-RT order.
@@ -372,36 +365,13 @@ def _score_pairs(
             if sample_idxs[i] == sample_idxs[j]:
                 continue
 
-            score = 0.0
-            total_weight = 0.0
-
-            # MS1 only gates/contributes when it carries weight; w1 == 0
-            # disables MS1 comparison entirely (its threshold included).
-            if w1 > 0.0:
-                ms1_sim = float(cosine.pair(ms1[i], ms1[j])['score'])
-                if ms1_sim < ms1_thr:
-                    continue
-                score += ms1_sim * w1
-                total_weight += w1
-
-            # Likewise MS2: w2 == 0 disables MS2 comparison entirely, so a
-            # poor (or DDA-ambiguous) MS2 match can't veto a strong MS1 one.
-            if w2 > 0.0:
-                spec2_i, spec2_j = ms2[i], ms2[j]
-                if spec2_i is not None and spec2_j is not None:
-                    ms2_sim = float(cosine.pair(spec2_i, spec2_j)['score'])
-                    if ms2_sim < ms2_thr:
-                        continue
-                    score += ms2_sim * w2
-                    total_weight += w2
-
-            # Both weights zero (or no usable spectra) => nothing to score on.
-            if total_weight == 0.0:
+            score = float(cosine.pair(ms1[i], ms1[j])['score'])
+            if score < ms1_thr:
                 continue
 
             edges_i.append(i)
             edges_j.append(j)
-            edges_s.append(score / total_weight)
+            edges_s.append(score)
 
         if progress_callback is not None and (a % 100 == 0 or a == n - 1):
             progress_callback(

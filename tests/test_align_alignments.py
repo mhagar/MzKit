@@ -138,7 +138,7 @@ def two_batches(alignment_project):
 
     params = AlignmentParams(
         rt_tolerance=10.0, mz_tolerance=0.01,
-        ms1_similarity_threshold=0.7, ms2_similarity_threshold=0.6,
+        ms1_similarity_threshold=0.7,
     )
     mid = len(samples) // 2
     batch_a, batch_b = samples[:mid], samples[mid:]
