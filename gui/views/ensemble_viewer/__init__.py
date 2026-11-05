@@ -1032,7 +1032,7 @@ class EnsembleViewer(
 
     def add_generic_annotation(
         self,
-        cofeature_idx: int,
+        cofeature_idxs: list[int],
         ms_level: Literal[1, 2],
         text: str,
     ):
@@ -1040,7 +1040,7 @@ class EnsembleViewer(
             return
 
         annotation = self.ensemble.add_generic_annot(
-            cofeature_idx=cofeature_idx,
+            cofeature_idxs=cofeature_idxs,
             ms_level=ms_level,
             text=text,
             scan_num=self._current_scan_num(ms_level),
@@ -1147,6 +1147,11 @@ class EnsembleViewer(
             return None
         return int(scan_array.rt_to_scan_num(self.spectrum_manager.selected_rt))
 
+    def ms1_scan_on_screen(self) -> int:
+        """The MS1 scan on screen; the composite's MS1 is a single scan too."""
+        scan_num = self._current_scan_num(1)
+        return scan_num if scan_num is not None else self.ensemble.composite_ms1_scan_num()
+
     def _draw_ion_annotation(self, annotation: 'IonAnnotation'):
         """
         Draws an ion annotation graphic (label + isotope envelope)
@@ -1166,7 +1171,7 @@ class EnsembleViewer(
 
     def _draw_generic_annotation(self, annotation: 'GenericAnnotation'):
         """
-        Draws a free-form user annotation as an anchored text label.
+        Draws a free-form user annotation as a text label at its first peak.
         """
         ms_plot = {
             1: self.ms1_plot,
@@ -1174,7 +1179,7 @@ class EnsembleViewer(
         }[annotation.ms_level]
 
         plot_id = ms_plot.add_anchored_label(
-            spec_idx=annotation.cofeature_idx,
+            spec_idx=annotation.cofeature_idxs[0],
             text=annotation.text,
         )
         self._generic_annot_plot_ids[annotation.uuid] = plot_id
@@ -1233,8 +1238,11 @@ class EnsembleViewer(
         if not self.ensemble:
             return
 
-        # Reset transient plot-id maps \u2014 the prior IDs were invalidated
-        # by the spectrum redraw / clear_*().
+        # Idempotent: also called without a spectrum change (sigEnsembleAnnotated)
+        for plot in (self.ms1_plot, self.ms2_plot):
+            plot.clear_anchored_labels()
+            plot.clear_ion_annotations()
+            plot.clear_delta_brackets()
         self._mz_diff_plot_ids.clear()
         self._ion_annot_plot_ids.clear()
         self._generic_annot_plot_ids.clear()
@@ -1255,6 +1263,23 @@ class EnsembleViewer(
         network = self.ensemble.adduct_network
         for cofeature_idx, ion in (network.ions.items() if network else ()):
             self.ms1_plot.add_anchored_label(spec_idx=cofeature_idx, text=ion)
+
+        # The formula assignment over the envelope it was searched with, on
+        # that scan (drawn like an ion annotation, but not one)
+        assignment = self.ensemble.formula_assignment
+        candidate = assignment and (assignment.chosen or assignment.top)
+        if (candidate and assignment.envelope
+                and assignment.scan_num == self.ms1_scan_on_screen()):
+            shown = IonAnnotation(
+                cofeature_idxs=assignment.envelope, ms_level=1,
+                formula=candidate.formula_str, error_ppm=candidate.error_ppm,
+                adduct=candidate.adduct,
+            )
+            self.ms1_plot.add_ion_annotation(
+                spec_idxs=shown.cofeature_idxs,
+                text=shown.format_string,
+                envelope=shown.isotope_envelope,
+            )
 
         # Keep chromatogram-side markers in sync with whatever lives on
         # the ensemble right now. Cheap (one ScatterPlotItem swap) and

@@ -189,7 +189,7 @@ def test_ensemble_annotation_roundtrip(data_registry, sample, ensemble, tmp_path
         Formula('C15H21NO3'), -0.4, 0.0001, 6.0), label='x', scan_num=3)
     ens.add_ion_pair_annot(a.uuid, b.uuid, 'neutral_loss')
     ens.add_mz_diff_annot(0, 0, 1, 18.0106, formula='H2O')
-    ens.add_generic_annot(0, 1, 'hello')
+    ens.add_generic_annot([0], 1, 'hello')
     assert ens.ion_pair_annots[0].formula_diff == 'H2O'
     assert a.isotope_envelope.size  # adduct path still builds an ion formula
 
@@ -197,3 +197,10 @@ def test_ensemble_annotation_roundtrip(data_registry, sample, ensemble, tmp_path
 
     for field in ('mz_diffs', 'ion_annots', 'ion_pair_annots', 'generic_annots'):
         assert getattr(loaded, field) == getattr(ens, field)
+
+
+def test_old_generic_annotation_loads_as_multi_peak():
+    a = persistence._generic_annot(
+        {'cofeature_idx': 3, 'ms_level': 1, 'text': 'x', 'uuid': 1, 'source': 'user'}
+    )
+    assert a.cofeature_idxs == [3] and a.text == 'x'

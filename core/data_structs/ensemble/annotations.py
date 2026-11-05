@@ -101,23 +101,23 @@ class EnsembleAnnotationMixin:
 
     def add_generic_annot(
         self,
-        cofeature_idx: int,
+        cofeature_idxs: list[int],
         ms_level: Literal[1, 2],
         text: str,
         scan_num: Optional[int] = None,
     ) -> 'GenericAnnotation':
         """
-        Create and add a free-form annotation anchored to a peak.
+        Create and add a free-form annotation on one or more peaks.
         """
-        cofeatures = self._get_cofeatures(ms_level)
-        if not (0 <= cofeature_idx < len(cofeatures)):
+        n = len(self._get_cofeatures(ms_level))
+        if not cofeature_idxs or not all(0 <= i < n for i in cofeature_idxs):
             raise ValueError(
-                f"Invalid cofeature_idx: {cofeature_idx}. Ensemble only "
-                f"contains {len(cofeatures)} cofeatures"
+                f"Invalid cofeature_idxs: {cofeature_idxs}. Ensemble only "
+                f"contains {n} cofeatures"
             )
 
         annot = GenericAnnotation(
-            cofeature_idx=cofeature_idx,
+            cofeature_idxs=list(cofeature_idxs),
             ms_level=ms_level,
             text=text,
             scan_num=scan_num,
@@ -191,10 +191,10 @@ class MzDiffAnnotation:
 @dataclass
 class GenericAnnotation:
     """
-    Free-form user annotation anchored to a single cofeature peak.
-    `scan_num`: see `MzDiffAnnotation.scan_num`.
+    Free-form user label on one or more peaks, drawn at the first
+    (the tallest, when made). `scan_num`: see `MzDiffAnnotation.scan_num`.
     """
-    cofeature_idx: int
+    cofeature_idxs: list[int]
     ms_level: Literal[1, 2]
     text: str
     uuid: int = field(default_factory=lambda: uuid.uuid4().int)
@@ -239,7 +239,7 @@ class IonAnnotation:
     cofeature_idxs: list[int]
     ms_level: Literal[1, 2]
     formula: str  # core formula (without adduct), str(molmass.Formula)
-    error_ppm: float
+    error_ppm: Optional[float]
     adduct: Optional[str] = None  # find-mfs adduct string, e.g. 'Na', '-H'
     uuid: int = field(default_factory=lambda: uuid.uuid4().int)
     user_label: Optional[str] = None
@@ -252,8 +252,9 @@ class IonAnnotation:
         display in MSPlotWidget
         """
         formula_html = format_formula_obj_to_html(Formula(self.formula))
-        return (f"{formula_html}<br>"
-                f"{self.error_ppm:.1f} ppm")
+        if self.error_ppm is None:   # e.g. a typed-in formula
+            return formula_html
+        return f"{formula_html}<br>{self.error_ppm:.1f} ppm"
 
     @property
     def isotope_envelope(self) -> np.ndarray:

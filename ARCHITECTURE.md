@@ -64,6 +64,7 @@ DataRegistry                       core/data_structs/data_registry.py
 │   │             ├── ms2_cofeatures: [FeaturePointer]
 │   │             ├── peak annotations: IonAnnotation / MzDiffAnnotation /
 │   │             │                     IonPairAnnotation / GenericAnnotation
+│   │             ├── adduct_network: AdductNetwork (ion of each MS1 envelope)
 │   │             ├── formula_assignment: FormulaAssignment   formula_assignment.py
 │   │             └── annotation: EnsembleAnnotation (structure hypotheses, name, notes)
 │   └── Fingerprint    [optional]  fingerprint.py — bioassay data, "stapled" on
@@ -216,8 +217,8 @@ the round-trip.
   `alignments/<uuid>.json`, `groups/<uuid>.json`, and
   `similarity/<uuid>.npz` (raw values, no pickle) + `similarity/<uuid>.json`.
 - Annotations live on the Ensemble and ride along in its `ensembles.pkl`
-  record: peak-level annotations, `formula_assignment` and `annotation`
-  (structure hypotheses + the chosen one, name, notes). All are primitive-only
+  record: peak-level annotations, `adduct_network`, `formula_assignment` and
+  `annotation` (structure hypotheses + the chosen one, name, notes). All are primitive-only
   dataclasses round-tripped with `asdict` / `Cls(**d)`.
 - **Back-compat:** deserializers use `.get(..., default)` for fields added over
   time. The 2026-11 annotation rework (format 2.0.0) broke it on purpose: older
@@ -267,5 +268,11 @@ Tracked here so they're explicit rather than surprising:
   `dda_overlays.py`); continue lowest-risk-first (export, annotation drawing).
 - **Cross-platform** — `main.py` forces `QT_QPA_PLATFORM=xcb` (X11). Must be
   conditioned on Linux before shipping to macOS/Windows users.
+- **Ion → formula** — the `adduct_network` (find-mfs's mass-difference network,
+  or the formula finder's Ion pick) is upstream of `formula_assignment`, which
+  records the envelope / scan / neutral mass M it searched. The formula finder
+  (`gui/dialogues/formula_finder`) is the adduct-assignment tool; its `review()`
+  mode is the Review formula dialog. `core/formula/network.py` clears a formula
+  whose M the network no longer implies (not yet called by the GUI).
 - **Annotation caveats** — e.g. `Ensemble.add_ion_pair_annot` does not yet handle
   adducts (see its inline TODO) — don't rely on it for adduct relationships.

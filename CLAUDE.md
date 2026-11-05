@@ -34,7 +34,7 @@ tests/
 - **Sample**: top-level container. Has an optional Injection (MS data) and/or Fingerprint (bioactivity).
 - **Injection**: raw LC/MS data. Contains ScanArrays (MS1, optionally MS2) and Ensembles.
 - **ScanArray**: structured numpy array of (mz, intensity, scan_num) across scans.
-- **Ensemble**: a group of coeluting ions (cofeatures) extracted from a ScanArray. The central analytical unit. All annotations live on it (`formula_assignment`, `annotation`, peak-level annotations); edit them via `DataRegistry.update_ensemble` (emits `sigEnsembleAnnotated`).
+- **Ensemble**: a group of coeluting ions (cofeatures) extracted from a ScanArray. The central analytical unit. All annotations live on it (`adduct_network`, `formula_assignment`, `annotation`, peak-level annotations); edit them via `DataRegistry.update_ensemble` (emits `sigEnsembleAnnotated`).
 - **EnsembleAlignment**: cross-sample alignment of Ensembles (MS1 + RT only). Contains AlignedAnalytes mapping SampleUUID -> EnsembleUUID. Immutable after creation. An analyte's annotations are display-only aggregates over its members.
 - **EnsembleGroup**: a user basket of EnsembleUUIDs (title, notes, SMILES), independent of alignments.
 - **DataRegistry**: central in-memory store. Holds Samples, EnsembleAlignments, EnsembleGroups and SimilarityMatrices. Uses Qt signals for change notification.

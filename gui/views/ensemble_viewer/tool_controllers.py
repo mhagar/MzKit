@@ -4,7 +4,7 @@ Base tool controller class and implementations for ensemble viewer tools
 from PyQt5 import QtCore
 from gui.views.ensemble_viewer.tools import ToolType, ToolStage
 
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from gui.views.ensemble_viewer import EnsembleViewer
 
@@ -83,50 +83,45 @@ class BaseToolController(QtCore.QObject):
         pass
 
 
-class MeasureLossController(BaseToolController):
+class SelectingToolController(BaseToolController):
     """
-    Controller for the 'Measure Loss' tool.
+    A tool that collects signals of one MS level: a click toggles a signal,
+    clicking another level starts over, Enter confirms (`on_enter_pressed`).
     """
-
-    def __init__(
-        self,
-        viewer: 'EnsembleViewer',
-    ):
-        super().__init__(
-            viewer=viewer,
-            tool_type=ToolType.MEASURELOSS,
-        )
-        # Add tool-specific state here
+    def __init__(self, viewer: 'EnsembleViewer', tool_type: ToolType):
+        super().__init__(viewer=viewer, tool_type=tool_type)
+        self.selected_ms_level: Literal[None, 1, 2] = None
+        self.selected_signals: list[tuple[float, float, int]] = []  # mz, intsy, spec_idx
 
     def on_activated(self):
-        """
-        Called when Measure Loss tool is activated
-        """
-        # TODO: Implement tool initialization
-        print('Measure loss tool activated')
-        self.viewer.tool_manager.request_next_stage()
-
-    def on_enter_pressed(self):
-        """
-        Called when user presses Enter while selecting signals
-        """
-        # TODO: Implement confirmation behavior
-        pass
+        self.handle_clear_selections()
+        self.viewer.tool_manager.request_next_stage()   # IDLE -> SELECTING
 
     def on_cancelled(self):
-        """
-        Called when tool is cancelled
-        """
-        # TODO: Implement cleanup
-        pass
+        self.handle_clear_selections()
 
     def handle_ms_signal_clicked(
         self,
-        data: tuple[int, float],
+        data: tuple[float, float, int],  # mz, intsy, spec_idx
         ms_level: Literal[1, 2],
     ):
-        """
-        Handle signal clicks for measure loss tool
-        """
-        # TODO: Implement signal selection logic
-        pass
+        if self.selected_ms_level != ms_level:
+            self.handle_clear_selections()
+            self.selected_ms_level = ms_level
+
+        if self.viewer.tool_manager.active_stage != ToolStage.SELECTING:
+            return
+        selected = data not in self.selected_signals
+        if selected:
+            self.selected_signals.append(data)
+        else:
+            self.selected_signals.remove(data)
+        mz, intsy, spec_idx = data
+        self.sigSignalSelected.emit(
+            mz, intsy, spec_idx, self.selected_ms_level, selected,
+        )
+
+    def handle_clear_selections(self):
+        self.selected_signals.clear()
+        self.selected_ms_level = None
+        self.sigSelectionCleared.emit()

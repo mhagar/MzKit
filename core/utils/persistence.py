@@ -222,8 +222,11 @@ def deserialize_alignment(
 
 
 def _generic_annot(d: dict) -> GenericAnnotation:
-    # Pre-2.0 files carry a `source` key
-    return GenericAnnotation(**{k: v for k, v in d.items() if k != 'source'})
+    # Pre-2.0 files: one `cofeature_idx`, and a `source` key
+    d = {k: v for k, v in d.items() if k != 'source'}
+    if 'cofeature_idx' in d:
+        d['cofeature_idxs'] = [d.pop('cofeature_idx')]
+    return GenericAnnotation(**d)
 
 
 def deserialize_assignment(data: Optional[dict]) -> Optional['FormulaAssignment']:

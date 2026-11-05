@@ -3,18 +3,17 @@ Interactive formula finding. Includes a controller that manages
 the ensemble viewer displays
 """
 from gui.dialogues.formula_finder import FormulaFinderDialog
-from gui.views.ensemble_viewer.tools import (
-    ToolType, Mode, ToolStage
-)
-from gui.views.ensemble_viewer.tool_controllers import BaseToolController
+from gui.views.ensemble_viewer.tools import ToolType
+from gui.views.ensemble_viewer.tool_controllers import SelectingToolController
 from PyQt5 import QtCore
 
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from find_mfs import FormulaCandidate
     from gui.views.ensemble_viewer import EnsembleViewer
 
 
-class FindFormulaController(BaseToolController):
+class FindFormulaController(SelectingToolController):
     """
     Controller for the 'Find Formula' tool
     """
@@ -32,8 +31,6 @@ class FindFormulaController(BaseToolController):
             viewer=ensemble_viewer,
             tool_type=ToolType.FINDFORMULA,
         )
-        self.selected_ms_level: Literal[None, 1, 2] = None
-        self.selected_signals: list[tuple[float, float, int]] = []
         self.formula_finder_menu: FormulaFinderDialog = FormulaFinderDialog(
             parent=ensemble_viewer,
             config=ensemble_viewer.config,
@@ -49,66 +46,12 @@ class FindFormulaController(BaseToolController):
             self.handle_compound_assigned
         )
 
-    def on_activated(self):
-        """
-        Called when Find Formula tool is activated
-        """
-        self.handle_clear_selections()
-        # Request next stage (IDLE -> SELECTING)
-        self.viewer.tool_manager.request_next_stage()
-
     def on_enter_pressed(self):
         """
         Called when user presses Enter while selecting signals
         """
         self.handle_show_finder_menu()
         self.viewer.tool_manager.request_next_stage()
-
-    def on_cancelled(self):
-        """
-        Called when tool is cancelled
-        """
-        self.handle_clear_selections()
-
-    def handle_ms_signal_clicked(
-        self,
-        data: tuple[float, float, int],  # mz, intsy, spec_idx
-        ms_level: Literal[1, 2],
-    ):
-        if self.selected_ms_level != ms_level:
-            if not self.selected_ms_level:
-                self.selected_ms_level = ms_level
-            else:
-                self.handle_clear_selections()
-
-        if self.viewer.tool_manager.active_stage == ToolStage.SELECTING:
-            mz, intsy, spec_idx = data
-
-            if data in self.selected_signals:
-                # Remove signal from selection
-                self.selected_signals.remove(data)
-                self.sigSignalSelected.emit(
-                    mz,
-                    intsy,
-                    spec_idx,
-                    self.selected_ms_level,
-                    False,
-                )
-            else:
-                # Add signal to selection
-                self.selected_signals.append(data)
-                self.sigSignalSelected.emit(
-                    mz,
-                    intsy,
-                    spec_idx,
-                    self.selected_ms_level,
-                    True,
-                )
-
-    def handle_clear_selections(self):
-        self.selected_signals.clear()
-        self.selected_ms_level = None
-        self.sigSelectionCleared.emit()
 
     def handle_show_finder_menu(self):
         self.formula_finder_menu.show()
@@ -161,14 +104,9 @@ class FindFormulaController(BaseToolController):
         return (
             ensemble,
             [x[2] for x in self.selected_signals],
-            # None while the composite is on screen; its MS1 is this scan
-            self._scan_on_screen(ensemble),
+            self.viewer.ms1_scan_on_screen(),
             ms2_override,
         )
-
-    def _scan_on_screen(self, ensemble) -> int:
-        scan_num = self.viewer._current_scan_num(1)
-        return scan_num if scan_num is not None else ensemble.composite_ms1_scan_num()
 
     def handle_compound_assigned(
             self,
