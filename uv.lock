@@ -171,8 +171,8 @@ wheels = [
 
 [[package]]
 name = "find-mfs"
-version = "0.6.0"
-source = { git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring#42170376198b18080dd910f3505f4efb17b83351" }
+version = "0.6.1"
+source = { git = "https://github.com/mhagar/find-mfs?branch=improve-mf-scoring#fdab04c6ec760576ff807a1da965b884a74188c3" }
 dependencies = [
     { name = "isospecpy" },
     { name = "molmass" },
@@ -490,7 +490,7 @@ wheels = [
 
 [[package]]
 name = "mzkit"
-version = "1.1.4"
+version = "1.1.5"
 source = { editable = "." }
 dependencies = [
     { name = "find-mfs" },
