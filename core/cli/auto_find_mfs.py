@@ -265,26 +265,41 @@ def _annotate_one(
         **params.search_kwargs(),
     )
     network = network_from(res, len(ensemble.ms1_cofeatures))
+    assignment = assignment_from(
+        res, ensemble, params, ensemble.composite_ms1_scan_num(), network,
+    )
+    return assignment, network
 
+
+def assignment_from(
+    res,
+    ensemble: 'Ensemble',
+    params: FindMfsParams,
+    scan_num: int,
+    network: Optional[AdductNetwork],
+    ms2_mode: Optional[str] = None,
+) -> FormulaAssignment:
+    """
+    The FormulaAssignment of a find-mfs `annotate_analyte_dia` result, top hit
+    pre-chosen by 'auto'.
+    """
     candidates = results_to_assigned_candidates(
         res.candidates, ms2_weight=params.ms2_weight, top_n=params.top_n
     )
-
-    assignment = FormulaAssignment(
+    return FormulaAssignment(
         source_uuid=ensemble.uuid,
         candidates=candidates,
         chosen_idx=0 if candidates else None,   # auto-pick the top hit
         chosen_by='auto' if candidates else None,
         precursor_mz=res.precursor_mz,          # precursor find-mfs actually used
         charge=res.charge,                       # resolved charge
-        ms2_mode=ensemble.default_ms2_mode,
+        ms2_mode=ms2_mode or ensemble.default_ms2_mode,
         params=asdict(params),
         envelope=network.base_envelope if network else None,
-        scan_num=ensemble.composite_ms1_scan_num(),
+        scan_num=scan_num,
         M=float(res.M),
         **search_provenance(res.candidates),
     )
-    return assignment, network
 
 
 def network_from(res, n_ms1: int) -> Optional[AdductNetwork]:

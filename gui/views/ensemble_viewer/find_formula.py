@@ -7,10 +7,7 @@ from gui.views.ensemble_viewer.tools import (
     ToolType, Mode, ToolStage
 )
 from gui.views.ensemble_viewer.tool_controllers import BaseToolController
-from core.formula import query_from_signals, assign_formula
-from core.formula.assign_formula import to_formula_candidate
-
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore
 
 from typing import Literal, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -47,9 +44,6 @@ class FindFormulaController(BaseToolController):
     def _connect_signals(self):
         self.formula_finder_menu.sigFormulaAssigned.connect(
             self.handle_formula_assigned
-        )
-        self.formula_finder_menu.sigCompoundSearchRequested.connect(
-            self.handle_compound_search
         )
         self.formula_finder_menu.sigCompoundAssigned.connect(
             self.handle_compound_assigned
@@ -123,6 +117,7 @@ class FindFormulaController(BaseToolController):
         self.formula_finder_menu.populate_table(
             [(x[0], x[1]) for x in self.selected_signals]
         )
+        self.formula_finder_menu.set_source(*self._compound_source())
 
         self.formula_finder_menu.on_search_execute()
 
@@ -143,101 +138,51 @@ class FindFormulaController(BaseToolController):
 
         self.handle_clear_selections()
 
-    def handle_compound_search(self, params: dict):
+    def _compound_source(self) -> tuple:
         """
-        Run the MS2 compound assignment.
-
-        The dialog forwards params + the selected MS1 envelope;
-        here we add the ensemble + MS2 and run find-mfs
-
-        Synchronous for now because EnsembleViewer doesn't have a ProcessController handle;
-         # TODO: move to background task runner
+        `FormulaFinderDialog.set_source` args for the selection: the
+        ensemble, the selected MS1 cofeatures and their scan (None for an MS2
+        selection, which has no compound search).
         """
-        dialog = self.formula_finder_menu
         ensemble = self.viewer.ensemble
-
-        if ensemble is None:
-            return
-
-        if self.selected_ms_level == 2:
-            dialog.statusbar.showMessage(
-                "Compound assignment needs the MS1 isotopologue group, not MS2."
-            )
-
-            return
-
-        ms1_signals = params.get("ms1_signals")
-        if not ms1_signals:
-            dialog.statusbar.showMessage("No MS1 signals selected")
-            return
-
-        query_kwargs = dict(
-            adducts=params.get("adducts"),
-            params=params["params"],
-        )
+        if ensemble is None or self.selected_ms_level != 1:
+            return (None,)
 
         # TEMPORARY DDA path: ensemble MS2 production isn't wired up yet, so
         # hand find-mfs whatever MS2 spectrum the viewer currently shows
         # (mirrors the one-button AutoFindMF DDA stopgap). Retire once DDA
         # MS2 stitching lands and query_from_signals covers DDA natively.
+        ms2_override = None
         if ensemble.is_dda:
-            ms2_spec = self.viewer.spectrum_manager.current_ms2
-            if ms2_spec is not None and len(ms2_spec) == 0:
-                ms2_spec = None
-            query_kwargs["ms2_spec"] = ms2_spec
-            query_kwargs["ms2_mode"] = "selected_scan"
+            ms2_override = self.viewer.spectrum_manager.current_ms2
+            if ms2_override is not None and len(ms2_override) == 0:
+                ms2_override = None
 
-        try:
-            query = query_from_signals(ensemble, ms1_signals, **query_kwargs)
-        except NotImplementedError:
-            dialog.statusbar.showMessage(
-                "Compound formula assignment is not yet supported for DDA."
-            )
-            return
-
-        dialog.statusbar.showMessage(
-            "Assigning compound formula (MS2)…"
+        return (
+            ensemble,
+            [x[2] for x in self.selected_signals],
+            # None while the composite is on screen; its MS1 is this scan
+            self._scan_on_screen(ensemble),
+            ms2_override,
         )
-        QtWidgets.QApplication.setOverrideCursor(
-            QtCore.Qt.WaitCursor
-        )
-        try:
-            assignment = assign_formula([query])[0]
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
 
-        dialog.populate_compound_results(assignment)
+    def _scan_on_screen(self, ensemble) -> int:
+        scan_num = self.viewer._current_scan_num(1)
+        return scan_num if scan_num is not None else ensemble.composite_ms1_scan_num()
 
     def handle_compound_assigned(
             self,
-            assignment
+            assignment,
+            network,
     ):
         """
-        Set the accepted compound assignment on its ensemble, through the
-        DataRegistry (the EnsembleViewer's data_source)
+        Set the accepted compound assignment and the ion network it implies
+        on its ensemble, through the DataRegistry (the EnsembleViewer's
+        data_source); sigEnsembleAnnotated refreshes the viewer.
         """
-        registry = self.viewer.data_source
-        registry.update_ensemble(assignment.source_uuid, formula_assignment=assignment)
-
-        chosen = assignment.chosen
-        if self.viewer.ensemble is not None and chosen is not None:
-            # Debug aid: also drop an ion annotation on the envelope that fed the
-            # assignment, reusing the ion-formula draw path (add_ion_annot + the
-            # on-plot predicted envelope). selected_signals still hold the picked
-            # cofeatures at this point (cleared just below).
-            if self.selected_ms_level and self.selected_signals:
-                self.sigFormulaAssigned.emit(
-                    to_formula_candidate(chosen),
-                    self.selected_ms_level,
-                    [x[2] for x in self.selected_signals],
-                )
-
-        # Show the assignment as the MS1 title strip.
-        if hasattr(self.viewer, "refresh_assignment_display"):
-            self.viewer.refresh_assignment_display()
-
+        self.viewer.data_source.update_ensemble(
+            assignment.source_uuid,
+            formula_assignment=assignment,
+            adduct_network=network,
+        )
         self.handle_clear_selections()
-
-
-
-

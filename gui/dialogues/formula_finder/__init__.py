@@ -2,13 +2,17 @@
 Interactive formula search: the selected signals + the shared find-mfs
 parameter sheet in, ranked candidates (FormulaResultsWidget) out.
 
-Two searches:
-  - Ion ('Find Ion MF'): runs here, synchronously; no MS2. Results are a
-    transient (unregistered) FormulaAssignment, and assigning one annotates
-    the selected signals (sigFormulaAssigned).
-  - Compound ('Find Compound MF (MS2)'): the host runs it (it needs the
-    ensemble's MS2) and hands back a FormulaAssignment; assigning one
-    registers it (sigCompoundAssigned).
+The Ion combo is the adduct-assignment tool: "Unknown" or an IonType of
+find-mfs's ION_VOCAB.
+
+Two searches, both synchronous:
+  - Ion ('Find Ion MF'): no MS2. Results are a transient (unregistered)
+    FormulaAssignment, and assigning one annotates the selected signals
+    (sigFormulaAssigned). Unknown searches the ion as observed (no adduct).
+  - Compound ('Find Compound MF (MS2)'): needs the ensemble the envelope came
+    from (`set_source`). Assigning one hands back the FormulaAssignment and the
+    AdductNetwork it implies (sigCompoundAssigned); the host sets both. Unknown
+    lets find-mfs's network decide the ion.
 """
 from dataclasses import asdict
 
@@ -16,6 +20,7 @@ import numpy as np
 from PyQt5 import QtWidgets, QtCore
 from find_mfs import FormulaScorer, annotate_precursor
 from find_mfs.spectra.halogen import HALOGEN_M2_OFFSET
+from find_mfs.spectra.ions import ION_VOCAB, IonType
 
 from gui.resources.FormulaFinderWindow import Ui_Form
 from core.utils.array_types import to_spec_arr
@@ -25,10 +30,14 @@ from core.formula.assign_formula import (
     search_provenance,
     to_formula_candidate,
 )
+from core.formula.compound import ion_query, search_compound
 
 from numpy.typing import NDArray
 from configparser import ConfigParser
-from typing import Literal, Optional
+from typing import Literal, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.data_structs import Ensemble
 
 # By default, use the pre-shipped COCONUT GMM.
 # TODO: Expose route to user for training their own GMM
@@ -43,8 +52,10 @@ class FormulaFinderDialog(
     )
     # Placeholder source for ion-search assignments, which are never registered
     ION_SEARCH_SOURCE = 0
-    sigCompoundSearchRequested = QtCore.pyqtSignal(dict)
-    sigCompoundAssigned = QtCore.pyqtSignal(object)  # FormulaAssignment
+    sigCompoundAssigned = QtCore.pyqtSignal(
+        object,  # FormulaAssignment
+        object,  # AdductNetwork, or None
+    )
 
     def __init__(
         self,
@@ -61,6 +72,9 @@ class FormulaFinderDialog(
             self.setWindowFlags(QtCore.Qt.Window)
 
         self.setupUi(self)
+        self.comboIon.addItem("Unknown", None)
+        for ion in ION_VOCAB:
+            self.comboIon.addItem(ion.label, ion)
 
         self._connect_signals()
         self._setup_statusbar()
@@ -73,6 +87,11 @@ class FormulaFinderDialog(
         self.search_query: list[tuple[float, float]] = []
         # Which search produced the results on show (decides what Assign does)
         self._results_mode: Optional[Literal["ion", "compound"]] = None
+        # The network the compound results on show imply
+        self._compound_network = None
+        # Where the selected envelope came from, for the compound search:
+        # (ensemble, MS1 cofeature idxs, MS1 scan_num, MS2 override)
+        self._source: Optional[tuple] = None
         self.config = config
         # The find-mfs parameter sheet (element/counts/RDBE/octet + scoring
         # groups) and all [findmfs] persistence live in the promoted widget,
@@ -88,7 +107,7 @@ class FormulaFinderDialog(
 
         # Two search buttons: ion (synchronous) vs compound/MS2 (via controller).
         self.btnFindIonMF.clicked.connect(self.on_search_execute)
-        self.btnFindCmpdMF.clicked.connect(self._request_compound_search)
+        self.btnFindCmpdMF.clicked.connect(self.on_compound_search_execute)
 
         # Assigning routes depending on ion search or cmpd search
         self.formulaResults.sigAssignRequested.connect(self.on_assign_selected)
@@ -124,15 +143,21 @@ class FormulaFinderDialog(
         has_envelope = envelope.shape[0] > 1
         spec = to_spec_arr(envelope[:, 0], envelope[:, 1]) if has_envelope else None
 
-        adduct = self.lineAdduct.text().strip() or None
-        charge = (
-            self.charge_override if self.charge_override is not None
-            else params.charge
-        )
+        ion = self.selected_ion() if self.charge_override is None else None
+        if ion is not None:
+            query_mz, adducts, _ = ion_query(search_mz, ion)
+            charge = ion.charge
+        else:
+            # Unknown: the formula of the ion as observed
+            charge = (
+                self.charge_override if self.charge_override is not None
+                else params.charge
+            )
+            query_mz, adducts = search_mz, [(None, charge)]
 
         results = annotate_precursor(
-            search_mz,
-            adducts=[(adduct, charge)],
+            query_mz,
+            adducts=adducts,
             scorer=SCORER,
             ms1_peaks=spec,
             **params.search_kwargs(),
@@ -146,7 +171,7 @@ class FormulaFinderDialog(
             ),
             precursor_mz=search_mz,
             charge=charge,
-            adducts=[adduct] if adduct else None,
+            adducts=[ion.label] if ion else None,
             params=asdict(params),
             **search_provenance(results),
         )
@@ -188,15 +213,16 @@ class FormulaFinderDialog(
 
     def populate_compound_results(
             self,
-            assignment: "FormulaAssignment"
+            assignment: "FormulaAssignment",
+            network=None,
     ):
-        """
-        Public: called by the host after a compound (MS2) search.
-        """
+        """Show a compound (MS2) search's results."""
         self._results_mode = "compound"
+        self._compound_network = network
         self.formulaResults.set_assignment(assignment)
+        ion = f" as {network.base_ion}" if network and network.base_ion else ""
         self.statusbar.showMessage(
-            f"Compound (MS2): {len(assignment.candidates)} candidates — "
+            f"Compound (MS2){ion}: {len(assignment.candidates)} candidates — "
             f"select a row and hit Assign Selected"
         )
 
@@ -217,28 +243,68 @@ class FormulaFinderDialog(
 
             return
 
-    def _request_compound_search(self):
+    def selected_ion(self) -> Optional[IonType]:
+        """The IonType picked in the Ion combo; None for Unknown."""
+        return self.comboIon.currentData()
+
+    def set_source(
+        self,
+        ensemble: Optional['Ensemble'],
+        envelope: list[int] = (),
+        scan_num: Optional[int] = None,
+        ms2_override=None,
+    ):
         """
-        Ask the controller to run the MS2 compound assignment
+        The ensemble the selected signals belong to (None: no compound search),
+        their MS1 cofeature idxs and scan, and (DDA stopgap) the MS2 to use.
+        """
+        self._source = (
+            (ensemble, list(envelope), scan_num, ms2_override)
+            if ensemble is not None else None
+        )
+
+    def on_compound_search_execute(self):
+        """
+        'Find Compound MF (MS2)': rank compound formulae for the selected
+        envelope with the ensemble's MS2, reading it as the picked ion.
         """
         self._retrieve_table_input()
         if not self.search_query:
+            return
+        if self._source is None:
             self.statusbar.showMessage(
-                "Select the MS1 isotopologue group first"
+                "Compound search needs an MS1 isotopologue group of an ensemble"
             )
             return
-
         error = self.findMfsParams.validation_error()
         if error:
             self.statusbar.showMessage(f"Invalid parameters: {error}")
             return
 
-        adduct = self.lineAdduct.text().strip() or None
-        self.sigCompoundSearchRequested.emit({
-            "ms1_signals": list(self.search_query),
-            "adducts": [adduct] if adduct else None,
-            "params": self.findMfsParams.get_params(),
-        })
+        ensemble, envelope, scan_num, ms2_override = self._source
+        kwargs = {}
+        if ms2_override is not None:
+            kwargs = dict(ms2_spec=ms2_override, ms2_mode="selected_scan")
+
+        self.statusbar.showMessage("Assigning compound formula (MS2)…")
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            assignment, network = search_compound(
+                ensemble, self.search_query, envelope, scan_num,
+                self.selected_ion(), self.findMfsParams.get_params(), **kwargs,
+            )
+        except NotImplementedError:
+            self.statusbar.showMessage(
+                "Compound formula assignment is not yet supported for DDA."
+            )
+            return
+        except ValueError as exc:   # find-mfs found no envelope at the selection
+            self.statusbar.showMessage(str(exc))
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        self.populate_compound_results(assignment, network)
 
     def on_assign_selected(self, idx: int):
         """
@@ -252,7 +318,7 @@ class FormulaFinderDialog(
         if self._results_mode == "compound":
             assignment.chosen_idx = idx
             assignment.chosen_by = 'user'
-            self.sigCompoundAssigned.emit(assignment)
+            self.sigCompoundAssigned.emit(assignment, self._compound_network)
         else:
             self.sigFormulaAssigned.emit(
                 to_formula_candidate(assignment.candidates[idx])

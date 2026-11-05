@@ -90,12 +90,29 @@
            <item>
             <widget class="QLabel" name="label_22">
              <property name="text">
-              <string>Adduct:</string>
+              <string>Ion:</string>
              </property>
             </widget>
            </item>
            <item>
-            <widget class="QLineEdit" name="lineAdduct"/>
+            <widget class="QComboBox" name="comboIon">
+             <property name="toolTip">
+              <string>Ion the selected envelope is; Unknown lets find-mfs decide (compound search) or searches the ion as observed (ion search)</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="horizontalSpacer_2">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
            </item>
           </layout>
          </item>
