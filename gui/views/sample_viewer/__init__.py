@@ -825,18 +825,14 @@ class SampleViewer(
         sample_uuid: 'SampleUUID',
         ensemble_uuid: 'EnsembleUUID'
     ):
-        from gui.dialogues.formula_assignment_dialog import (
-            FormulaAssignmentDialog, ensemble_title,
-        )
+        from gui.dialogues.formula_finder import FormulaFinderDialog
 
         injection = self.model.getInjection(sample_uuid)
         ensemble = injection.ensembles.get(ensemble_uuid) if injection else None
-        FormulaAssignmentDialog(
-            self.data_source,
-            ensemble_uuid,
-            title=ensemble_title(ensemble) if ensemble else None,
-            parent=self,
-        ).show()
+        if ensemble is not None:
+            FormulaFinderDialog.review(
+                self.data_source, ensemble, parent=self, config=self.config,
+            ).show()
 
     def _open_ensemble_in_viewer(
         self,

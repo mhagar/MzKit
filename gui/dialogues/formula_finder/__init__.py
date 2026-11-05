@@ -13,6 +13,9 @@ Two searches, both synchronous:
     from (`set_source`). Assigning one hands back the FormulaAssignment and the
     AdductNetwork it implies (sigCompoundAssigned); the host sets both. Unknown
     lets find-mfs's network decide the ion.
+
+`FormulaFinderDialog.review` opens it on an ensemble's formula assignment
+instead: the searched envelope frozen, the ion editable, re-search in place.
 """
 from dataclasses import asdict
 
@@ -38,10 +41,21 @@ from typing import Literal, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
+    from core.interfaces.data_sources import EnsembleDataSource
 
 # By default, use the pre-shipped COCONUT GMM.
 # TODO: Expose route to user for training their own GMM
 SCORER = FormulaScorer()
+
+
+def ensemble_title(ensemble: 'Ensemble') -> str:
+    """Window title naming an ensemble, e.g. 'Formula Assignment: S1 · m/z
+    356.0126 · 4.21 min'."""
+    return (
+        f"Formula Assignment: {ensemble.injection.name} · "
+        f"m/z {ensemble.base_mz:.4f} · {ensemble.peak_rt / 60:.2f} min"
+    )
+
 
 class FormulaFinderDialog(
     QtWidgets.QWidget,
@@ -242,6 +256,76 @@ class FormulaFinderDialog(
             self.search_query = []
 
             return
+
+    @classmethod
+    def review(
+        cls,
+        data_source: 'EnsembleDataSource',
+        ensemble: 'Ensemble',
+        parent=None,
+        config: Optional[ConfigParser] = None,
+    ) -> 'FormulaFinderDialog':
+        """
+        The finder on `ensemble`'s formula assignment: its envelope frozen,
+        the current pick highlighted. Find Compound re-searches in place;
+        Assign / Clear go through `data_source`, so every view refreshes.
+        """
+        dlg = cls(parent, config)
+        dlg.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        dlg.setWindowTitle(ensemble_title(ensemble))
+        for widget in (dlg.btnAddSignal, dlg.btnRemoveSignal,
+                       dlg.btnClearSignals, dlg.btnFindIonMF):
+            widget.hide()
+        dlg.tableInput.setEnabled(False)
+
+        dlg._review = ensemble
+        dlg.sigCompoundAssigned.connect(
+            lambda a, network: data_source.update_ensemble(
+                a.source_uuid, formula_assignment=a, adduct_network=network,
+            )
+        )
+        dlg.formulaResults.sigClearRequested.connect(
+            lambda: data_source.set_chosen_candidate(ensemble.uuid, None)
+        )
+        # Follow the registry: e.g. auto find-mfs re-run while this is open
+        data_source.sigEnsembleAnnotated.connect(dlg._on_ensemble_annotated)
+        dlg._show_review()
+        return dlg
+
+    def _on_ensemble_annotated(self, ensemble_uuid):
+        if ensemble_uuid == self._review.uuid:
+            self._show_review()
+
+    def _show_review(self):
+        ensemble = self._review
+        assignment = ensemble.formula_assignment
+        if assignment is None:
+            self._results_mode = None
+            self.formulaResults.clear("No formula assignment for this ensemble")
+            return
+
+        signals = []
+        if assignment.envelope and assignment.scan_num is not None:
+            spec = ensemble.get_spectrum(ms_level=1, scan_num=assignment.scan_num)
+            signals = [(float(spec['mz'][i]), float(spec['intsy'][i]))
+                       for i in assignment.envelope]
+            self.populate_table(signals)
+        self.set_source(
+            ensemble if signals else None, assignment.envelope or (),
+            assignment.scan_num,
+            ensemble.composite_spectrum.ms2 if ensemble.is_dda else None,
+        )
+
+        network = ensemble.adduct_network
+        self.comboIon.setCurrentIndex(max(0, self.comboIon.findText(
+            network.base_ion if network and network.base_ion else "Unknown"
+        )))
+        self._results_mode = "compound"
+        self._compound_network = network
+        self.formulaResults.set_assignment(assignment, allow_clear=True)
+        self.statusbar.showMessage(
+            "" if signals else "No searched envelope recorded; nothing to re-search"
+        )
 
     def selected_ion(self) -> Optional[IonType]:
         """The IonType picked in the Ion combo; None for Unknown."""

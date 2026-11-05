@@ -3,7 +3,7 @@ Reusable view of one FormulaAssignment: provenance line, sortable ranked
 candidate table, and Assign / Clear buttons.
 
 Embedded (via Qt Designer widget promotion) into FormulaFinderDialog for fresh
-searches, and wrapped by FormulaAssignmentDialog for reviewing or changing an
+searches, and in its review mode (FormulaFinderDialog.review) for reviewing or changing an
 assignment that's already registered. The widget only displays and reports
 the user's pick; what "assign" means (register an assignment, annotate a
 signal, change a registered choice) is up to its host.

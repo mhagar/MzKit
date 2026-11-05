@@ -500,15 +500,10 @@ class EnsembleViewer(
         """Open the current ensemble's formula assignment for review."""
         if not self.ensemble:
             return
-        from gui.dialogues.formula_assignment_dialog import (
-            FormulaAssignmentDialog, ensemble_title,
-        )
+        from gui.dialogues.formula_finder import FormulaFinderDialog
 
-        FormulaAssignmentDialog(
-            self.data_source,
-            self.ensemble.uuid,
-            title=ensemble_title(self.ensemble),
-            parent=self,
+        FormulaFinderDialog.review(
+            self.data_source, self.ensemble, parent=self, config=self.config,
         ).show()
 
     def _assignment_label_html(self) -> Optional[str]:

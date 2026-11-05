@@ -2,7 +2,7 @@
 Tests for reviewing / changing a formula assignment:
   - DataRegistry.set_chosen_candidate (+ chosen_by, update signal)
   - FormulaResultsWidget (sorting, current pick, what 'assign' reports)
-  - FormulaAssignmentDialog (assign / clear go through the registry)
+  - FormulaFinderDialog.review (frozen envelope; assign / clear go through the registry)
   - to_formula_candidate (AssignedCandidate -> find-mfs FormulaCandidate)
 """
 import os
@@ -150,25 +150,34 @@ def test_widget_starts_on_current_pick(qapp):
 
 # --- review dialog ----------------------------------------------------------
 
-def test_review_dialog_assign_and_clear(qapp):
-    from gui.dialogues.formula_assignment_dialog import FormulaAssignmentDialog
+def test_review_mode_assign_and_clear(qapp, data_registry, ensemble):
+    import gui.controllers.main_controller  # noqa: F401  (app import order)
+    from gui.dialogues.formula_finder import FormulaFinderDialog
+    from core.data_structs.ensemble import AdductNetwork
 
-    reg = _registry()
-    _assign(reg, _assignment())
+    a = _assignment()
+    a.source_uuid, a.envelope, a.scan_num = ensemble.uuid, [0], ensemble.base_scan_num
+    net = AdductNetwork(M=1.0, base_envelope=[0], ions={0: '[M+Na]+'})
+    data_registry.update_ensemble(ensemble.uuid, formula_assignment=a, adduct_network=net)
 
-    dlg = FormulaAssignmentDialog(reg, SOURCE)
-    dlg.results.btnClearAssignment.click()
-    assert _assigned(reg).chosen is None
-    assert dlg.results.assignment.chosen_idx is None   # dialog refreshed
+    dlg = FormulaFinderDialog.review(data_registry, ensemble)
+    assert dlg.tableInput.rowCount() == 1 and not dlg.tableInput.isEnabled()
+    assert dlg.btnFindIonMF.isHidden() and dlg.btnAddSignal.isHidden()
+    assert dlg.comboIon.currentText() == '[M+Na]+'
 
-    dlg.results.tableResults.selectRow(1)             # posterior order
-    dlg.results.btnAssignSelected.click()
-    assert _assigned(reg).chosen_idx == 1
+    dlg.formulaResults.btnClearAssignment.click()
+    assert ensemble.formula_assignment.chosen is None
+    assert dlg.formulaResults.assignment.chosen_idx is None   # dialog refreshed
+
+    dlg.formulaResults.tableResults.selectRow(1)             # posterior order
+    dlg.formulaResults.btnAssignSelected.click()
+    assert ensemble.formula_assignment.chosen_idx == 1
+    assert ensemble.formula_assignment.chosen_by == 'user'
+    assert ensemble.adduct_network is net
 
     # Closed + deleted: later registry updates must not reach it
-    dlg.close()
     qapp.processEvents()
-    reg.set_chosen_candidate(SOURCE, 0)
+    data_registry.set_chosen_candidate(ensemble.uuid, 0)
 
 
 # --- conversion -------------------------------------------------------------
