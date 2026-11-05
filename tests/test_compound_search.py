@@ -80,3 +80,14 @@ def test_finder_ion_combo():
     assert dlg.selected_ion() is None
     dlg.comboIon.setCurrentIndex(labels.index('[2M+Na]+'))
     assert dlg.selected_ion() is _ION['[2M+Na]+']
+
+
+def test_search_compound_anchored_ion_labels_other_envelopes(ensemble):
+    """A picked ion anchors find-mfs's network: M follows from it, and other envelopes get ions too."""
+    if ensemble.is_dda:
+        pytest.skip("fixture ensemble is DDA")
+    signals, idxs, scan = _envelope(ensemble)
+    a, net = search_compound(ensemble, signals, idxs, scan, _ION['[M+H]+'])
+    assert net.by == 'user' and net.base_ion == '[M+H]+'
+    assert net.M == pytest.approx(281.16271, abs=0.005)
+    assert len(net.ions) > 1 and net.near_tie_adducts == [('H', 1)]

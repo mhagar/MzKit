@@ -5,8 +5,11 @@ returns an AdductNetwork with the FormulaAssignment.
 
   - ion unknown: find-mfs's mass-difference network decides it, from the
     whole scan with the base envelope pinned to the selection.
-  - ion given (an `IonType` of find_mfs.spectra.ions.ION_VOCAB): search that
-    ion only; the network is just "this envelope is <ion>".
+  - ion given (an `IonType` of find_mfs.spectra.ions.ION_VOCAB): the same
+    network, anchored on it: M follows from the ion, the other envelopes' ions
+    from M (network `by='user'`). If find-mfs finds no envelope at the selection
+    (e.g. below its noise floor), that ion alone is searched and the network is
+    just "this envelope is <ion>".
 
 Qt-free.
 """
@@ -77,18 +80,27 @@ def search_compound(
         ensemble, signals, params=params, ms2_spec=ms2_spec, ms2_mode=ms2_mode,
     )
 
-    if ion is None:
-        from find_mfs import annotate_analyte_dia
-        from core.cli.auto_find_mfs import assignment_from, network_from
+    from find_mfs import annotate_analyte_dia
+    from core.cli.auto_find_mfs import assignment_from, network_from
 
+    try:
         res = annotate_analyte_dia(
             ms1_peaks=ensemble.get_spectrum(ms_level=1, scan_num=scan_num),
             precursor_mz=query.precursor_mz,
             ms2_peaks=query.ms2_spec,
             scorer=_get_scorer(None),
+            base_ion=ion,
             **params.search_kwargs(),
         )
-        network = network_from(res, len(ensemble.ms1_cofeatures))
+    except ValueError:
+        if ion is None:
+            raise
+        res = None
+    network = None if res is None else network_from(res, len(ensemble.ms1_cofeatures))
+    # An unmappable anchored network falls back too, so the user's ion is kept
+    if res is not None and (ion is None or network is not None):
+        if ion is not None:
+            network.by = 'user'
         return assignment_from(
             res, ensemble, params, scan_num, network, ms2_mode=ms2_mode,
         ), network

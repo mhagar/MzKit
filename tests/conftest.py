@@ -25,7 +25,7 @@ TEST_ALIGNMENT_MZK = DATA_DIR / 'test_alignment.mzk'
 
 # Cycloheximide M+H
 TARGET_MZ = 282.17024
-TARGET_RT = 145
+TARGET_RT = 161.5
 
 
 @pytest.fixture

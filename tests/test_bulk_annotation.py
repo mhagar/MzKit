@@ -61,4 +61,4 @@ def test_apply_formula_to_members_finds_source_formula(ensemble):
     (uuid, got, net), = res.updates
     assert uuid == 12345 and got.chosen_by == 'user'
     assert got.chosen.formula_str == assignment.chosen.formula_str
-    assert net.base_ion == '[M+H]+' and got.envelope == idxs
+    assert net.base_ion == "[M+H]+" and got.envelope == assignment.envelope
