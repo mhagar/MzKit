@@ -6,7 +6,8 @@ in the background by MainController), and accept a hit as a Hypothesis
 (sigAccepted).
 
 The host mirrors the selected hit's library spectrum against the target's MS2.
-Results are cached per (target key, mode) for the session.
+Results are cached per (target key, mode) for the session. The index is
+rebuilt, and query embeddings imported, from Tools > Libraries & databases.
 """
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -30,12 +31,33 @@ if TYPE_CHECKING:
 ROW_HEIGHT = 80
 HIT_ROLE = QtCore.Qt.UserRole + 1   # a row's first cell: its index into SearchResult.hits
 
+# Imported embedder -> {embedding id (analyte uuid str): vector}: session only,
+# shared by every host's spectral search
+QUERY_EMBEDDINGS: dict[str, dict] = {}
+
+
+def import_query_embeddings(path: Path) -> str:
+    """
+    Load <name>.<embedder>.npz (ids, embeddings) into QUERY_EMBEDDINGS.
+
+    :return: the embedder.
+    :raises ValueError: unreadable, or no library embeddings for that embedder.
+    """
+    embedder = Path(path).stem.rpartition('.')[2]
+    ids, embeddings = spectrum_db.read_embeddings_npz(Path(path))
+    if embedder not in spectrum_db.embedders():
+        raise ValueError(
+            f"No library embeddings for {embedder!r}: add <library>.{embedder}.npz to "
+            f"{spectrum_db.DB_DIR} and rebuild the index"
+        )
+    QUERY_EMBEDDINGS[embedder] = dict(zip(ids, embeddings))
+    return embedder
+
 
 class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
     # ((target key, mode), search_spectra kwargs): MainController runs it and hands
     # the SearchResult back to `set_result`
     sigSearchRequested = QtCore.pyqtSignal(object, dict)
-    sigRebuildRequested = QtCore.pyqtSignal()   # MainController calls `refresh_index` when done
     sigHitSelected = QtCore.pyqtSignal(object)  # the selected LibraryHit to mirror, or None
     sigAccepted = QtCore.pyqtSignal(object)     # Hypothesis
 
@@ -48,13 +70,11 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         self._results: dict = {}   # (focus key, mode) -> (SearchResult, status text)
         self._pending: set = set()
         self._shown: Optional['LibraryHit'] = None
-        # Imported embedder -> {embedding id (analyte uuid str): vector} (session only)
-        self._query_embeddings: dict[str, dict] = {}
+        self._params_sheet = None
 
         self.setupUi(self)
         self.btnSearch.clicked.connect(self._search)
-        self.btnRebuild.clicked.connect(self._rebuild)
-        self.btnImportEmbeddings.clicked.connect(self._import_embeddings)
+        self.btnParams.clicked.connect(self._show_params)
         self.btnAccept.clicked.connect(self._accept)
         self.comboMode.currentIndexChanged.connect(self._show_current)
 
@@ -92,9 +112,19 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
             self.library_checks.append(check)
             self.layoutLibraries.addWidget(check)
         self.layoutLibraries.addStretch(1)
-        self.btnRebuild.setEnabled(True)
+        self.refresh_modes()
+
+    def refresh_modes(self):
+        """Re-offer the analogue modes (e.g. after query embeddings were imported)."""
         self._fill_modes()
         self._refresh_state()
+
+    def _show_params(self):
+        from gui.widgets.search_param_sheet import spectral_sheet
+        if self._params_sheet is None:
+            self._params_sheet = spectral_sheet(self)
+        self._params_sheet.show()
+        self._params_sheet.raise_()
 
     def _fill_modes(self):
         """Identity, then each embedder this focus can query (imported ones need query embeddings)."""
@@ -108,35 +138,6 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
                 elif self._query_embedding(embedder) is not None:
                     self.comboMode.addItem(f"Analogue ({embedder})", embedder)
             self.comboMode.setCurrentIndex(max(self.comboMode.findData(current), 0))
-
-    def _rebuild(self):
-        self.btnRebuild.setEnabled(False)
-        self.labelStatus.setText(f"Rebuilding the index from {spectrum_db.DB_DIR} in the background…")
-        self.sigRebuildRequested.emit()
-
-    def _import_embeddings(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Import query embeddings (<name>.<embedder>.npz)", "", "Embeddings (*.npz)",
-        )
-        if not path:
-            return
-        embedder = Path(path).stem.rpartition('.')[2]
-        try:
-            ids, embeddings = spectrum_db.read_embeddings_npz(Path(path))
-        except ValueError as e:
-            QtWidgets.QMessageBox.warning(self, "Import query embeddings", str(e))
-            return
-        if embedder not in spectrum_db.embedders():
-            QtWidgets.QMessageBox.warning(
-                self, "Import query embeddings",
-                f"No library embeddings for {embedder!r}: add <library>.{embedder}.npz to "
-                f"{spectrum_db.DB_DIR} and rebuild the index",
-            )
-            return
-        self._query_embeddings[embedder] = dict(zip(ids, embeddings))
-        self._fill_modes()
-        self.comboMode.setCurrentIndex(self.comboMode.findData(embedder))
-        self._refresh_state()
 
     # -- focus --------------------------------------------------------------
 
@@ -156,13 +157,14 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         embedding_id = None if self._target is None else self._target.embedding_id
         if embedding_id is None:
             return None
-        return self._query_embeddings.get(embedder, {}).get(embedding_id)
+        return QUERY_EMBEDDINGS.get(embedder, {}).get(embedding_id)
 
     def _problem(self) -> str:
         if self._target is None:
             return "Focus an analyte or open an ensemble to search the spectral libraries"
         if not self.library_checks:
-            return f"No spectral library index: add .mgf files to {spectrum_db.DB_DIR} and Rebuild index"
+            return (f"No spectral library index: add .mgf files to {spectrum_db.DB_DIR} and build it "
+                    "from Tools > Libraries & databases")
         if self.ms2 is None or not self.ms2.size:
             return f"This {self._target.noun} has no MS2"
         return ""
@@ -171,7 +173,6 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         problem = self._problem()
         for w in (self.comboMode, self.btnSearch):
             w.setEnabled(not problem)
-        self.btnImportEmbeddings.setEnabled(bool(self.library_checks))
         self._show_current(problem=problem)
 
     def _show_current(self, *_, problem: Optional[str] = None):

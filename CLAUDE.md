@@ -68,8 +68,8 @@ All processing logic lives here as plain functions — no Qt dependency. The GUI
 
 ## Spectral libraries
 
-- `core/utils/spectrum_db.py`: every `spectra/<library>.mgf` (gitignored folder) parsed by matchms `load_from_mgf` (harmonized keys) into `spectra/spectra.sqlite`; negative mode skipped. Rebuild: `uv run mzkit build-spectral-db` or the tab's Rebuild index button
-- Embeddings are row-aligned `spectra.<embedder>.npy` (float16): MS2DeepScore at build time, plus external `<library>.<embedder>.npz` (`ids` = spectrum ids, `embeddings`). Query embeddings for an external embedder: the consensus .mgf from export-table, imported in the tab (session only)
+- `core/utils/spectrum_db.py`: every `spectra/<library>.mgf` (gitignored folder) parsed by matchms `load_from_mgf` (harmonized keys) into `spectra/spectra.sqlite`; negative mode skipped. Rebuild: `uv run mzkit build-spectral-db` or Tools > Libraries & databases (gui/dialogues/LibrariesDialog.py, which also builds the compound DB cache)
+- Embeddings are row-aligned `spectra.<embedder>.npy` (float16): MS2DeepScore at build time, plus external `<library>.<embedder>.npz` (`ids` = spectrum ids, `embeddings`). Query embeddings for an external embedder: the consensus .mgf from export-table, imported in Tools > Libraries & databases (session only, `QUERY_EMBEDDINGS` in gui/widgets/spectral_search_widget.py)
 
 ## MS2DeepScore
 

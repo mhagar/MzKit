@@ -31,6 +31,9 @@ class Ui_AnnotationPanel(object):
         self.btnRank = QtWidgets.QPushButton(AnnotationPanel)
         self.btnRank.setObjectName("btnRank")
         self.layoutQuery.addWidget(self.btnRank)
+        self.btnParams = QtWidgets.QPushButton(AnnotationPanel)
+        self.btnParams.setObjectName("btnParams")
+        self.layoutQuery.addWidget(self.btnParams)
         self.verticalLayout.addLayout(self.layoutQuery)
         self.layoutSources = QtWidgets.QHBoxLayout()
         self.layoutSources.setObjectName("layoutSources")
@@ -79,11 +82,13 @@ class Ui_AnnotationPanel(object):
 
     def retranslateUi(self, AnnotationPanel):
         _translate = QtCore.QCoreApplication.translate
-        self.comboMode.setToolTip(_translate("AnnotationPanel", "Query by molecular formula, or by neutral mass +/- [glacier] mass_ppm"))
+        self.comboMode.setToolTip(_translate("AnnotationPanel", "Query by molecular formula, neutral mass +/- [glacier] mass_ppm, a typed SMILES, or text (name, organism, ID, NP class)"))
         self.comboMode.setItemText(0, _translate("AnnotationPanel", "Formula"))
         self.comboMode.setItemText(1, _translate("AnnotationPanel", "Mass"))
         self.btnRank.setToolTip(_translate("AnnotationPanel", "Query the ticked databases and rank the hits by GLACIER-predicted MS2"))
         self.btnRank.setText(_translate("AnnotationPanel", "Rank"))
+        self.btnParams.setToolTip(_translate("AnnotationPanel", "[glacier] GLACIER prediction and scoring parameters"))
+        self.btnParams.setText(_translate("AnnotationPanel", "Parameters…"))
         item = self.table.horizontalHeaderItem(0)
         item.setText(_translate("AnnotationPanel", "Structure"))
         item = self.table.horizontalHeaderItem(1)

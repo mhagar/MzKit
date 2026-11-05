@@ -101,7 +101,6 @@ class AlignmentViewer(
     sigRankCandidatesRequested = QtCore.pyqtSignal(object, dict)
     # Spectral search slot, search_spectra kwargs; the result goes back to annotation_tabs.set_spectral_result
     sigSpectralSearchRequested = QtCore.pyqtSignal(object, dict)
-    sigSpectralRebuildRequested = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -284,7 +283,6 @@ class AlignmentViewer(
         tabs = self.annotation_tabs
         tabs.sigRankRequested.connect(self.sigRankCandidatesRequested)
         tabs.sigSpectralSearchRequested.connect(self.sigSpectralSearchRequested)
-        tabs.sigSpectralRebuildRequested.connect(self.sigSpectralRebuildRequested)
         tabs.sigMirror.connect(self._on_mirror)
         tabs.sigStatus.connect(self.status_bar.showMessage)
         self.plotMS2.sigMirrorSignalHovered.connect(self._on_ms2_mirror_hovered)

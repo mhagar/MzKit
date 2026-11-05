@@ -47,6 +47,8 @@ def test_fetch_candidates_dedupes_across_sources(db):  # noqa: F811
     by_mass, _ = fetch_candidates(['NPAtlas'], mass=46.0419, ppm=5, db_path=db)
     assert [c.db_id for c in by_mass] == ['NPA1']
     assert by_mass[0].organism == 'Fungi: Aspergillus'
+    by_text, _ = fetch_candidates(['NPAtlas'], text_field='Organism', text='aspergil', db_path=db)
+    assert [c.db_id for c in by_text] == ['NPA1']
 
 
 def test_ion_name_from_find_mfs_adduct():

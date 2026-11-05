@@ -38,7 +38,7 @@
      <item>
       <widget class="QPushButton" name="btnSearch">
        <property name="toolTip">
-        <string>Search the ticked spectral libraries for the focus&apos;s MS2</string>
+        <string>Search the ticked spectral libraries for the target&apos;s MS2</string>
        </property>
        <property name="text">
         <string>Search</string>
@@ -53,22 +53,12 @@
       </spacer>
      </item>
      <item>
-      <widget class="QPushButton" name="btnImportEmbeddings">
+      <widget class="QPushButton" name="btnParams">
        <property name="toolTip">
-        <string>Load &lt;name&gt;.&lt;embedder&gt;.npz (ids, embeddings) for the analytes of the consensus .mgf from Export table, to search libraries embedded by that tool</string>
+        <string>[spectral_search] tolerances and limits (libraries and indexes: Tools &gt; Libraries &amp; databases)</string>
        </property>
        <property name="text">
-        <string>Import query embeddings…</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btnRebuild">
-       <property name="toolTip">
-        <string>Rebuild the spectral library index from the .mgf files (and &lt;library&gt;.&lt;embedder&gt;.npz embeddings) in the spectra/ folder</string>
-       </property>
-       <property name="text">
-        <string>Rebuild index</string>
+        <string>Parameters…</string>
        </property>
       </widget>
      </item>

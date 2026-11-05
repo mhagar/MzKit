@@ -1,6 +1,7 @@
 """
 Structure search: query the compound databases for the host's AnnotationTarget
-(by its formula, or neutral mass), rank the hits by GLACIER
+(by its formula, neutral mass, or text: name / organism / ID / NP class), or
+take a typed SMILES, rank the hits by GLACIER
 (core/cli/rank_candidates.py; run in the background by MainController) and
 accept one as a Hypothesis (sigAccepted).
 
@@ -32,7 +33,9 @@ if TYPE_CHECKING:
 ROW_HEIGHT = 80
 # Candidate row's first cell: its index into RankResult.scored
 SCORED_ROLE = QtCore.Qt.UserRole + 1
-FORMULA, MASS = 0, 1
+# Query modes: the .ui's Formula and Mass, then a typed SMILES and compound_db's text fields
+FORMULA, MASS, SMILES = 0, 1, 2
+_PLACEHOLDERS = {FORMULA: "e.g. C20H34O2", MASS: "neutral mass, e.g. 359.2672", SMILES: "SMILES"}
 
 
 class StructureSearchWidget(
@@ -68,15 +71,14 @@ class StructureSearchWidget(
 
         self.rank_btn.clicked.connect(self._rank)
         self.query_edit.returnPressed.connect(self._rank)
+        self.mode_combo.addItem("SMILES")
+        self.mode_combo.addItems(list(compound_db.TEXT_FIELDS))
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        self._params_sheet = None
+        self.btnParams.clicked.connect(self._show_params)
 
         self.source_checks: list[QtWidgets.QCheckBox] = []
-        if compound_db.cache_ok():
-            for source in compound_db.available_sources():
-                check = QtWidgets.QCheckBox(source)
-                check.setChecked(True)
-                self.source_checks.append(check)
-                self.layoutSources.addWidget(check)
-        self.layoutSources.addStretch(1)
+        self.refresh_sources()
 
         self.table.setItemDelegateForColumn(0, StructureDelegate(self.table))
         self.table.setColumnWidth(0, ROW_HEIGHT * 3 // 2)
@@ -90,6 +92,31 @@ class StructureSearchWidget(
         self.accept_btn.clicked.connect(self._accept)
 
         self.set_target(None)
+
+    def refresh_sources(self):
+        """Re-read the compound databases' sources (e.g. after the cache was rebuilt)."""
+        for check in self.source_checks:
+            check.deleteLater()
+        self.source_checks = []
+        while self.layoutSources.count():
+            self.layoutSources.takeAt(0)
+        for source in compound_db.available_sources() if compound_db.cache_ok() else []:
+            check = QtWidgets.QCheckBox(source)
+            check.setChecked(True)
+            self.source_checks.append(check)
+            self.layoutSources.addWidget(check)
+        self.layoutSources.addStretch(1)
+
+    def _on_mode_changed(self):
+        mode = self.mode_combo.currentIndex()
+        self.query_edit.setPlaceholderText(_PLACEHOLDERS.get(mode, "contains…"))
+
+    def _show_params(self):
+        from gui.widgets.search_param_sheet import glacier_sheet
+        if self._params_sheet is None:
+            self._params_sheet = glacier_sheet(self)
+        self._params_sheet.show()
+        self._params_sheet.raise_()
 
     # -- target -------------------------------------------------------------
 
@@ -116,6 +143,7 @@ class StructureSearchWidget(
         formula = None if target is None else target.formula
         with QtCore.QSignalBlocker(self.mode_combo):
             self.mode_combo.setCurrentIndex(FORMULA if formula or target is None else MASS)
+        self._on_mode_changed()
         self.query_edit.setText(
             formula if formula
             else "" if target is None or self._precursor_mz is None
@@ -126,8 +154,6 @@ class StructureSearchWidget(
             problem = "Focus an analyte or open an ensemble to annotate it"
         elif not glacier.model_available():
             problem = glacier.missing_model_message()
-        elif not self.source_checks:
-            problem = "No compound database cache: build it from Tools > Browse compound databases"
         elif self.ms2 is None or not self.ms2.size:
             problem = f"This {target.noun} has no MS2"
         else:
@@ -156,9 +182,30 @@ class StructureSearchWidget(
         params = rank_params_from_config(load_config())   # picks up config edits
         sources = [c.text() for c in self.source_checks if c.isChecked()]
         text = self.query_edit.text().strip()
+        mode = self.mode_combo.currentIndex()
+        if mode == SMILES:
+            from rdkit import Chem
+            if not text or Chem.MolFromSmiles(text) is None:
+                self.status_label.setText(f"Not a valid SMILES: {text!r}")
+                return
+            self._pending[key] = "Typed SMILES"
+            self._show_ranking(None, "Predicting…")
+            self.sigRankRequested.emit(key, self._rank_kwargs([DbCandidate(USER, "", "", text, "")], params))
+            return
+        if not self.source_checks:
+            self.status_label.setText(
+                "No compound database cache: build it from Tools > Libraries & databases"
+            )
+            return
         try:
-            if self.mode_combo.currentIndex() == FORMULA:
+            if mode == FORMULA:
                 candidates, capped = fetch_candidates(sources, formula=text)
+            elif mode > SMILES:
+                if not text:
+                    raise ValueError("Type something to search for")
+                candidates, capped = fetch_candidates(
+                    sources, text_field=self.mode_combo.currentText(), text=text,
+                )
             else:
                 try:
                     mass = float(text)

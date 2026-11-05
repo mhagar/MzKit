@@ -28,7 +28,7 @@
      <item>
       <widget class="QComboBox" name="comboMode">
        <property name="toolTip">
-        <string>Query by molecular formula, or by neutral mass +/- [glacier] mass_ppm</string>
+        <string>Query by molecular formula, neutral mass +/- [glacier] mass_ppm, a typed SMILES, or text (name, organism, ID, NP class)</string>
        </property>
        <item>
         <property name="text">
@@ -52,6 +52,16 @@
        </property>
        <property name="text">
         <string>Rank</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btnParams">
+       <property name="toolTip">
+        <string>[glacier] GLACIER prediction and scoring parameters</string>
+       </property>
+       <property name="text">
+        <string>Parameters…</string>
        </property>
       </widget>
      </item>

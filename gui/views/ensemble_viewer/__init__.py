@@ -60,7 +60,6 @@ class EnsembleViewer(
     # The annotation tabs' background work, as the Alignment Viewer's (MainController runs it)
     sigRankCandidatesRequested = QtCore.pyqtSignal(object, dict)
     sigSpectralSearchRequested = QtCore.pyqtSignal(object, dict)
-    sigSpectralRebuildRequested = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -142,7 +141,6 @@ class EnsembleViewer(
         tabs = self.annotation_tabs = AnnotationTabs(self.tabWidget, self.data_source)
         tabs.sigRankRequested.connect(self.sigRankCandidatesRequested)
         tabs.sigSpectralSearchRequested.connect(self.sigSpectralSearchRequested)
-        tabs.sigSpectralRebuildRequested.connect(self.sigSpectralRebuildRequested)
         tabs.sigMirror.connect(self._on_mirror)
         tabs.sigStatus.connect(self.status_bar.showMessage)
         self.ms2_plot.sigMirrorSignalHovered.connect(

@@ -68,6 +68,8 @@ class MainController:
             data_registry=self.data_registry,
         )
         self.subwindow_manager.initialize_all_windows()
+        # Tools > Libraries & databases, created on first use
+        self._libraries_dialog = None
 
         # Connect QSignals
         self.process_controller.model.sigProcessUpdated.connect(
@@ -154,6 +156,9 @@ class MainController:
         )
         self.main_view.sigCompoundDbRequested.connect(
             self._handle_compound_db_request
+        )
+        self.main_view.sigLibrariesRequested.connect(
+            self._handle_libraries_request
         )
 
         self._connect_window_menu()
@@ -336,7 +341,6 @@ class MainController:
         viewer.sigSpectralSearchRequested.connect(
             lambda slot, kwargs: self._handle_spectral_search_request(tabs, slot, kwargs)
         )
-        viewer.sigSpectralRebuildRequested.connect(self._handle_spectral_rebuild_request)
 
     def _handle_add_samples_request(
         self,
@@ -1078,22 +1082,41 @@ class MainController:
             on_completion_func=lambda result: tabs.set_spectral_result(slot, result),
         )
 
-    def _handle_spectral_rebuild_request(self):
-        """Rebuild the spectral library index (spectra/*.mgf) in the background;
-        every viewer's spectral search re-reads it."""
-        viewers = [self.subwindow_manager.get_window(name)
-                   for name in ('alignment_viewer', 'ensemble_viewer')]
+    def _handle_libraries_request(self) -> None:
+        """Tools > Libraries & databases (one dialog, kept)."""
+        if self._libraries_dialog is None:
+            from gui.dialogues.LibrariesDialog import LibrariesDialog
+            dialog = self._libraries_dialog = LibrariesDialog(parent=self.main_view)
+            dialog.sigRebuildSpectral.connect(
+                lambda: self._run_index_build("core.utils.spectrum_db", "refresh_index")
+            )
+            dialog.sigBuildCompounds.connect(
+                lambda: self._run_index_build("core.utils.compound_db", "refresh_sources")
+            )
+            dialog.sigEmbeddingsImported.connect(lambda _: self._refresh_annotation_tabs("refresh_modes"))
+        self._libraries_dialog.refresh()
+        self._libraries_dialog.show()
+        self._libraries_dialog.raise_()
 
-        def done(_):
-            for viewer in viewers:
-                if viewer is not None:
-                    viewer.annotation_tabs.refresh_index()
+    def _run_index_build(self, module_path: str, refresh: str) -> None:
+        """Build an index (`module_path`.build_db) in the background; then every
+        viewer's annotation tabs `refresh` and the dialog shows the new state."""
+        def done(result):
+            self._refresh_annotation_tabs(refresh)
+            if self._libraries_dialog is not None:
+                self._libraries_dialog.build_done(bool(result))
 
         self.process_controller.start_process(
-            module_path="core.utils.spectrum_db",
+            module_path=module_path,
             function_name="build_db",
             on_completion_func=done,
         )
+
+    def _refresh_annotation_tabs(self, method: str) -> None:
+        for name in ('alignment_viewer', 'ensemble_viewer'):
+            viewer = self.subwindow_manager.get_window(name)
+            if viewer is not None:
+                getattr(viewer.annotation_tabs, method)()
 
     def _handle_cluster_analytes_request(
         self,

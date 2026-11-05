@@ -43,6 +43,7 @@ class MainView(
     sigCompoundDbRequested = QtCore.pyqtSignal(
         #
     )
+    sigLibrariesRequested = QtCore.pyqtSignal()
     sigShowSampleViewerRequested = QtCore.pyqtSignal(
         list,  #list[QModelIndex]
     )
@@ -61,6 +62,9 @@ class MainView(
     ) -> None:
         super().__init__(parent)
         self.setupUi(self)
+        # Tools > Libraries & databases (added here rather than in MainWindow.ui)
+        self.actionLibraries = self.menuTools.addAction("Libraries && databases…")
+        self.actionLibraries.triggered.connect(self.sigLibrariesRequested)
         self._create_actions()
         self._configure_sample_listview()
         self._configure_alignment_listview()

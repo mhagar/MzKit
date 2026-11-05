@@ -71,7 +71,6 @@ def _editor_page() -> tuple[QtWidgets.QWidget, dict]:
 class AnnotationTabs(QtCore.QObject):
     sigRankRequested = QtCore.pyqtSignal(object, dict)            # key, rank_candidates kwargs
     sigSpectralSearchRequested = QtCore.pyqtSignal(object, dict)  # slot, search_spectra kwargs
-    sigSpectralRebuildRequested = QtCore.pyqtSignal()
     sigMirror = QtCore.pyqtSignal(object)                         # MirrorSpec, or None: back to normal
     sigStatus = QtCore.pyqtSignal(str)                            # for the host's status bar
 
@@ -107,7 +106,6 @@ class AnnotationTabs(QtCore.QObject):
         )
         self.structure_search.sigAccepted.connect(self._on_accepted)
         self.spectral.sigSearchRequested.connect(self.sigSpectralSearchRequested)
-        self.spectral.sigRebuildRequested.connect(self.sigSpectralRebuildRequested)
         self.spectral.sigHitSelected.connect(
             lambda h: self._front() is self.spectral and self._show_hit(h)
         )
@@ -164,6 +162,14 @@ class AnnotationTabs(QtCore.QObject):
     def refresh_index(self):
         """After a spectral index rebuild."""
         self.spectral.refresh_index()
+
+    def refresh_sources(self):
+        """After a compound database cache rebuild."""
+        self.structure_search.refresh_sources()
+
+    def refresh_modes(self):
+        """After query embeddings were imported."""
+        self.spectral.refresh_modes()
 
     def mirror_hovered(self, peak_idx: Optional[int]):
         """A predicted peak of the mirror hovered (None: left): light up its fragment."""

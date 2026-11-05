@@ -182,7 +182,7 @@ class EnsembleGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         if not compound_db.cache_ok():
             QtWidgets.QMessageBox.warning(
                 self, "No compound database",
-                "Build (or rebuild) the cache first: Tools > Browse compound databases.",
+                "Build (or rebuild) the cache first: Tools > Libraries & databases.",
             )
             return
         metric = self.comboSnapMfsMetric.currentData()

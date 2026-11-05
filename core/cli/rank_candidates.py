@@ -121,11 +121,14 @@ def fetch_candidates(
     mass: Optional[float] = None,
     ppm: float = RankParams().mass_ppm,
     db_path=compound_db.DEFAULT_DB,
+    text_field: Optional[str] = None,
+    text: Optional[str] = None,
 ) -> tuple[list[DbCandidate], bool]:
     """
-    Compounds matching `formula` (else neutral `mass` +/- `ppm`) in each of
-    `sources`, merged in source order, one per InChIKey-14 (stereoisomers and
-    cross-database duplicates collapse onto the first seen).
+    Compounds matching `formula`, else `text` in `text_field` (a
+    compound_db.TEXT_FIELDS label, e.g. 'Name'), else neutral `mass` +/- `ppm`,
+    in each of `sources`, merged in source order, one per InChIKey-14
+    (stereoisomers and cross-database duplicates collapse onto the first seen).
 
     :return: (candidates, whether any source hit compound_db.MAX_RESULTS).
     :raises ValueError: if `formula` doesn't parse.
@@ -136,6 +139,8 @@ def fetch_candidates(
     for source in sources:
         if formula is not None:
             rows = compound_db.search_formula(source, formula, db_path)
+        elif text_field is not None:
+            rows = compound_db.search_text(source, text_field, text, db_path)
         else:
             rows = compound_db.search_mass(source, mass, ppm, db_path)
         capped |= len(rows) >= compound_db.MAX_RESULTS
