@@ -73,12 +73,12 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
     assert panel.structure._caption == ""
 
     panel.accept_btn.click()
-    annotation = data_registry.get_annotation(analyte.uuid)
+    annotation = ensemble.annotation
     h = annotation.chosen
     assert (h.smiles, h.origin, h.db_id, annotation.label) == ('CCCO', 'NPAtlas', 'NPA2', 'npa2')
     assert h.scores['explained'] == "2/2"
-    # Ranked with the analyte in focus: the representative's sample
-    assert h.sample_uuid == sample.uuid
+    # Ranked with the analyte in focus: it lands on the representative member
+    assert "(representative member)" in viewer.labelAnnotationTarget.text()
     # ...shown, selected and still mirrored in the Annotation tab
     editor, tree = viewer.annotation_editor, viewer.treeHypotheses
     assert viewer.tabsAnnotation.currentWidget() is viewer.tabAnnotation
@@ -94,23 +94,23 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
     viewer.sigRankCandidatesRequested.connect(lambda key, kwargs: requests.append((key, kwargs)))
     add = tree.topLevelItem(1)
     add.setText(1, "CC(C)O")
-    assert [h.origin for h in data_registry.get_annotation(analyte.uuid).hypotheses] == ['NPAtlas', 'user']
+    assert [h.origin for h in ensemble.annotation.hypotheses] == ['NPAtlas', 'user']
     assert editor.selected().smiles == "CC(C)O"
     (key, kwargs), = requests
     assert key[0] == 'hypothesis' and [c.smiles for c in kwargs['candidates']] == ["CC(C)O"]
     viewer.set_ranking(key, RankResult([_scored('', 'CC(C)O', 1, 0.5)], n_considered=2, adduct='[M+H]+',
                                        adduct_fallback=False, params=RankParams()))
     assert viewer.plotMS2.is_mirror()
-    assert data_registry.get_annotation(analyte.uuid).hypotheses[1].scores['explained'] == "1/2"
+    assert ensemble.annotation.hypotheses[1].scores['explained'] == "1/2"
 
     # Editing a database structure's SMILES makes a new user hypothesis (chosen, as the original was)
     monkeypatch.setattr(QtWidgets.QInputDialog, 'getText', lambda *a, **k: ("OCCC", True))
     editor._edit_smiles(0)
-    annotation = data_registry.get_annotation(analyte.uuid)
+    annotation = ensemble.annotation
     assert [h.smiles for h in annotation.hypotheses] == ['CCCO', 'CC(C)O', 'OCCC']
     assert annotation.chosen.origin == 'user' and annotation.label == 'npa2'
     editor._delete(2)
-    assert data_registry.get_annotation(analyte.uuid).chosen_idx is None
+    assert ensemble.annotation.chosen_idx is None
 
     # Re-focusing elsewhere and back restores the cached ranking
     viewer.selection_model.set_selection([])
@@ -159,7 +159,6 @@ def test_query_and_spectrum_follow_the_focused_member():
     panel.show_analyte(ctx, analyte, b)
     assert (panel.query_edit.text(), panel._adduct) == ('C7H16O5', '[M+Na]+')
     assert panel.ms2['mz'].tolist() == [60.0] and panel._precursor_mz == 183.0
-    assert panel._sample_uuid == 's2'   # recorded on accept
 
     result = RankResult([_scored('NPA1', 'CCO', 1, 0.5)], n_considered=1, adduct='[M+Na]+',
                         adduct_fallback=False, params=RankParams())

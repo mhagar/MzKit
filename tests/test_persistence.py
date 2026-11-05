@@ -112,31 +112,21 @@ def test_analyte_group_roundtrip(tmp_path):
     assert sorted(groups, key=lambda g: g.created_at) == [big, small]
 
 
-def test_analyte_annotation_roundtrip(tmp_path):
-    from core.data_structs import AnalyteAnnotation
-    from core.data_structs.analyte_annotation import Hypothesis
+def test_ensemble_structure_annotation_roundtrip(data_registry, sample, ensemble, tmp_path):
+    from core.data_structs.ensemble import EnsembleAnnotation, Hypothesis
 
-    reg = DataRegistry()
-    named = AnalyteAnnotation(
-        analyte_uuid=7, name="Psammaplin A", msi_level=2, notes="from the sponge",
+    annotation = EnsembleAnnotation(
+        name="Psammaplin A", notes="from the sponge",
         hypotheses=(
-            Hypothesis("CCO", "ethanol", origin="NPAtlas", db_id="NPA1", sample_uuid=2**100,
+            Hypothesis("CCO", "ethanol", origin="NPAtlas", db_id="NPA1",
                        scores={"explained": "7/10", "cosine": 0.61}),
             Hypothesis("CCCO"),
         ),
         chosen_idx=1,
     )
-    reg.register_annotation(named)
-    reg.register_annotation(AnalyteAnnotation(analyte_uuid=8, name="unknown 1"))
+    data_registry.update_ensemble(ensemble.uuid, annotation=annotation)
 
-    path = tmp_path / "annotations.mzk"
-    persistence.save_project(filepath=path, data_registry=reg)
-    loaded = persistence.load_project(filepath=path).annotations
-
-    assert sorted(loaded, key=lambda x: x.analyte_uuid) == [
-        named, AnalyteAnnotation(analyte_uuid=8, name="unknown 1"),
-    ]
-
+    assert _reloaded(data_registry, sample, ensemble, tmp_path).annotation == annotation
 
 def test_pre_1_4_file_has_no_groups(tmp_path):
     """Files saved before 1.4.0 have no groups/ entries; they load as []."""
@@ -152,7 +142,6 @@ def test_pre_1_4_file_has_no_groups(tmp_path):
     data = persistence.load_project(filepath=path)
     assert data.groups == []
     assert data.matrices == []
-    assert data.annotations == []
 
 
 def test_alignment_analyte_uuid_roundtrip(tmp_path):

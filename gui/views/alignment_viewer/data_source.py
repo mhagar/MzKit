@@ -1,12 +1,11 @@
 """
 Data-source contract specific to the AlignmentViewer.
 
-The viewer needs six surfaces over the same source:
+The viewer needs five surfaces over the same source:
  - Sample lookups (to resolve an analyte's member ensembles + sample names)
  - Alignment lookups (the alignments it displays)
- - Ensemble lookups (formula assignments, to show ensemble formulae)
+ - Ensemble lookups (formula assignments + annotations of the members)
  - AnalyteGroup lookups (user annotations of analyte baskets)
- - AnalyteAnnotation lookups (a single analyte's name + structure)
  - SimilarityMatrix lookups (cluster mode)
 
 This just composes them into a single type for the viewer to depend on
@@ -18,7 +17,6 @@ from core.interfaces.data_sources import (
     AlignmentDataSource,
     EnsembleDataSource,
     GroupDataSource,
-    AnnotationDataSource,
     MatrixDataSource,
 )
 
@@ -28,12 +26,11 @@ class AlignmentViewerDataSource(
     AlignmentDataSource,
     EnsembleDataSource,
     GroupDataSource,
-    AnnotationDataSource,
     MatrixDataSource,
     Protocol,
 ):
     """
     Composite of SampleDataSource + AlignmentDataSource + EnsembleDataSource
-     + GroupDataSource + AnnotationDataSource + MatrixDataSource.
+     + GroupDataSource + MatrixDataSource.
     """
     ...

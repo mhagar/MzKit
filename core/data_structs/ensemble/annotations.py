@@ -291,3 +291,61 @@ class IonPairAnnotation:
     ]
     formula_diff: str
     user_label: Optional[str] = None
+
+
+####    Structure annotation    ####
+
+USER = "user"   # Hypothesis.origin of a hand-typed structure
+
+
+@dataclass(frozen=True)
+class Hypothesis:
+    """A proposed structure for an ensemble, from the user or a tool."""
+    smiles: str
+    name: str = ""
+    origin: str = USER   # USER, or the database / tool it came from, e.g. "COCONUT"
+    # What's claimed: 'structure' (the exact structure). Room for hazier
+    # claims from classifiers / SNAP-MF ('substructure', 'class', 'analogue')
+    claim: str = 'structure'
+    db_id: str = ""
+    scores: dict = field(default_factory=dict)   # against this ensemble's MS2, e.g. {"cosine": 0.61}
+
+
+@dataclass(frozen=True)
+class EnsembleAnnotation:
+    """
+    What's known about one Ensemble's compound: hypotheses (proposed
+    structures), the one chosen as its structure, and its name and notes.
+
+    Lives on the ensemble (`Ensemble.annotation`), so it outlives any
+    alignment. Frozen: an edit replaces the whole annotation through
+    DataRegistry.update_ensemble (dataclasses.replace), which signals it.
+    """
+    name: str = ""      # e.g. "Psammaplin A"; "" goes by the chosen hypothesis's
+    notes: str = ""
+    hypotheses: tuple[Hypothesis, ...] = ()
+    chosen_idx: Optional[int] = None
+
+    @property
+    def chosen(self) -> Optional[Hypothesis]:
+        return None if self.chosen_idx is None else self.hypotheses[self.chosen_idx]
+
+    @property
+    def label(self) -> str:
+        return self.name or (self.chosen.name if self.chosen else "")
+
+    @property
+    def smiles(self) -> str:
+        """The chosen structure's SMILES ("" if none)."""
+        return self.chosen.smiles if self.chosen else ""
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.name or self.notes or self.hypotheses)
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict]) -> Optional['EnsembleAnnotation']:
+        """Inverse of dataclasses.asdict (persistence); None passes through."""
+        if d is None:
+            return None
+        return cls(**{**d, 'hypotheses': tuple(Hypothesis(**h) for h in d.get('hypotheses', ()))})

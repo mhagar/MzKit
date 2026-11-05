@@ -1,13 +1,15 @@
 """
-The Inspector's Annotation tab: the focused analyte's AnalyteAnnotation - its
-name (the chosen hypothesis's unless typed over), MSI level, notes, and one
-row per hypothesis (★ the chosen structure). The last row takes a typed /
-pasted SMILES as a new user hypothesis. A structure whose formula isn't the
-focus's is drawn red.
+The Inspector's Annotation tab: one Ensemble's EnsembleAnnotation - the
+focused member's, or the representative member's when an analyte is focused
+(the header says which, and what the other members say). Its name (the chosen
+hypothesis's unless typed over), notes, and one row per hypothesis (★ the
+chosen structure). The last row takes a typed / pasted SMILES as a new user
+hypothesis. A structure whose formula isn't that ensemble's is drawn red.
 
 Edits go out as a whole new annotation (sigAnnotationChanged) for the viewer
-to register; the registry's change signal re-shows it here. Selecting a row
-asks the viewer to mirror its GLACIER prediction (sigHypothesisSelected).
+to set on the ensemble; the registry's change signal re-shows it here.
+Selecting a row asks the viewer to mirror its GLACIER prediction
+(sigHypothesisSelected).
 """
 import dataclasses
 from functools import lru_cache
@@ -16,7 +18,7 @@ from typing import Optional, TYPE_CHECKING
 from PyQt5 import QtCore, QtGui, QtWidgets
 from rdkit import Chem
 
-from core.data_structs.analyte_annotation import MSI_LEVELS, USER, AnalyteAnnotation, Hypothesis
+from core.data_structs.ensemble import USER, EnsembleAnnotation, Hypothesis
 from core.formula.manual import canonical_formula
 from core.utils.glacier import neutral_formula
 from gui.views.alignment_viewer.annotation_panel import show_fragment
@@ -29,7 +31,7 @@ if TYPE_CHECKING:
     from gui.views.alignment_viewer.context import AlignmentContext
     from gui.widgets.StructureWidget import StructureView
 
-STRUCTURE, NAME, ORIGIN, SAMPLE = range(4)
+STRUCTURE, NAME, ORIGIN = range(3)
 ROW_HEIGHT = 48
 # On a row's Name cell: its index into `hypotheses` (None: the add row), and its bare name
 IDX_ROLE = QtCore.Qt.UserRole + 1
@@ -62,32 +64,28 @@ class _NameDelegate(QtWidgets.QStyledItemDelegate):
 
 
 class AnnotationEditor(QtCore.QObject):
-    sigAnnotationChanged = QtCore.pyqtSignal(object, object)   # AnalyteUUID, AnalyteAnnotation (None: remove)
+    sigAnnotationChanged = QtCore.pyqtSignal(object, object)   # EnsembleUUID, EnsembleAnnotation (None: clear)
     sigHypothesisSelected = QtCore.pyqtSignal(object)          # Hypothesis, or None
 
     def __init__(
         self,
         edit_name: QtWidgets.QLineEdit,
-        combo_msi: QtWidgets.QComboBox,
+        label_target: QtWidgets.QLabel,
         edit_notes: QtWidgets.QLineEdit,
         tree: QtWidgets.QTreeWidget,
         structure: 'StructureView',
     ):
         super().__init__()
-        self.edit_name, self.combo_msi, self.edit_notes = edit_name, combo_msi, edit_notes
+        self.edit_name, self.label_target, self.edit_notes = edit_name, label_target, edit_notes
         self.tree, self.structure = tree, structure
         self._ctx: Optional['AlignmentContext'] = None
-        self._uuid = None
+        self._target: Optional['Ensemble'] = None   # whose annotation this edits
         self._key = None   # (AnalyteUUID, EnsembleUUID or None): like the Search tab's
         self._formula: Optional[str] = None
-        self._sample_uuid = None
         self._selected: Optional[Hypothesis] = None   # as last announced
         self._keep: Optional[str] = None   # SMILES to select once the edit re-shows the tree
 
-        combo_msi.setToolTip("Identification confidence\n" + "\n".join(
-            f"MSI {level}: {text}" for level, text in MSI_LEVELS.items()))
         edit_name.editingFinished.connect(lambda: self._set(name=edit_name.text().strip()))
-        combo_msi.activated.connect(lambda i: self._set(msi_level=i or None))
         edit_notes.editingFinished.connect(lambda: self._set(notes=edit_notes.text().strip()))
 
         tree.setItemDelegateForColumn(STRUCTURE, StructureDelegate(tree, extend_menu=self._extend_menu))
@@ -107,35 +105,56 @@ class AnnotationEditor(QtCore.QObject):
         ctx: Optional['AlignmentContext'],
         analyte: Optional['AlignedAnalyte'],
         ensemble: Optional['Ensemble'] = None,
-        sample_uuid=None,
     ):
         """
-        Follow the focus (None clears): its analyte's annotation, checked
-        against the focus's formula; new hypotheses are `sample_uuid`'s.
-        A new focus drops the selected row.
+        Follow the focus (None clears): the annotation of `ensemble` (a
+        focused member), else of the analyte's representative member, checked
+        against that ensemble's formula. A new focus drops the selected row.
         """
-        uuid = None if analyte is None else analyte.uuid
-        key = uuid and (uuid, ensemble and ensemble.uuid)
+        key = None if analyte is None else (analyte.uuid, ensemble and ensemble.uuid)
         if key != self._key:   # the viewer redraws the MS2 plot: no mirror left to follow
             self.tree.clearSelection()
             self._selected = None
-        self._key = key
-        self._ctx, self._uuid, self._sample_uuid = ctx, uuid, sample_uuid
-        self._formula = None if analyte is None else ctx.focus_formula(analyte, ensemble)
+        self._key, self._ctx = key, ctx
+        self._target = None if analyte is None else ctx.target_ensemble(analyte, ensemble)
+        self._formula = None if self._target is None else ctx.formula(self._target).rstrip('?') or None
+        self._show_target(analyte, ensemble)
         self._refresh()
 
+    def _show_target(self, analyte, ensemble):
+        """The header: whose annotation this is, and what the analyte's members say."""
+        text = tip = ""
+        if self._target is not None:
+            ctx = self._ctx
+            members = ctx.members(analyte)
+            sample = next((s for s, e in members.items() if e.uuid == self._target.uuid), None)
+            text = ctx.sample_name(sample) if sample is not None else "This ensemble"
+            if ensemble is None:
+                text += " (representative member)"
+            if len(members) > 1 and (agreement := ctx.structure_agreement(analyte)):
+                text += f" · members: {agreement[0]} {agreement[1]}/{agreement[2]}"
+            tip = "\n".join(ctx.notes(analyte))
+        elif analyte is not None:
+            text = "No member ensemble to annotate"
+        self.label_target.setText(text)
+        self.label_target.setToolTip(tip)
+
     @property
-    def annotation(self) -> AnalyteAnnotation:
-        existing = None if self._uuid is None else self._ctx.data_source.get_annotation(self._uuid)
-        return existing or AnalyteAnnotation(self._uuid)
+    def target_uuid(self):
+        """The EnsembleUUID being edited (None: nothing focused)."""
+        return None if self._target is None else self._target.uuid
+
+    @property
+    def annotation(self) -> EnsembleAnnotation:
+        existing = None if self._target is None else self._target.annotation
+        return existing or EnsembleAnnotation()
 
     def _refresh(self):
-        ann, enabled = self.annotation, self._uuid is not None
-        for w in (self.edit_name, self.combo_msi, self.edit_notes, self.tree):
+        ann, enabled = self.annotation, self._target is not None
+        for w in (self.edit_name, self.edit_notes, self.tree):
             w.setEnabled(enabled)
         self.edit_name.setText(ann.name)
         self.edit_name.setPlaceholderText((ann.chosen.name if ann.chosen else "") or "Name...")
-        self.combo_msi.setCurrentIndex(ann.msi_level or 0)
         self.edit_notes.setText(ann.notes)
 
         keep = self._keep or (self._selected and self._selected.smiles)
@@ -157,8 +176,7 @@ class AnnotationEditor(QtCore.QObject):
         self._on_selected()
 
     def _row(self, idx: int, h: Hypothesis, chosen: bool) -> QtWidgets.QTreeWidgetItem:
-        sample = self._ctx.sample_name(h.sample_uuid) if h.sample_uuid is not None else ""
-        item = QtWidgets.QTreeWidgetItem(["", f"★ {h.name}" if chosen else h.name, h.origin, sample])
+        item = QtWidgets.QTreeWidgetItem(["", f"★ {h.name}" if chosen else h.name, h.origin])
         item.setSizeHint(STRUCTURE, QtCore.QSize(ROW_HEIGHT * 3 // 2, ROW_HEIGHT))
         item.setData(STRUCTURE, QtCore.Qt.UserRole, h.smiles)
         item.setData(STRUCTURE, NAME_ROLE, h.name)
@@ -180,12 +198,12 @@ class AnnotationEditor(QtCore.QObject):
 
     # -- edits --------------------------------------------------------------
 
-    def _emit(self, new: AnalyteAnnotation):
+    def _emit(self, new: EnsembleAnnotation):
         if new != self.annotation:
-            self.sigAnnotationChanged.emit(self._uuid, None if new.is_empty else new)
+            self.sigAnnotationChanged.emit(self._target.uuid, None if new.is_empty else new)
 
     def _set(self, **changes):
-        if self._uuid is not None:
+        if self._target is not None:
             self._emit(dataclasses.replace(self.annotation, **changes))
 
     def _with(self, hypotheses: list, chosen_idx: Optional[int]):
@@ -215,9 +233,9 @@ class AnnotationEditor(QtCore.QObject):
         ann = self.annotation
         if idx is None:   # the add row
             if text and text != ADD_TEXT and self._valid(text):
-                h = Hypothesis(text, origin=USER, sample_uuid=self._sample_uuid)
+                h = Hypothesis(text, origin=USER)
                 self._keep = text
-                # A first structure is the analyte's
+                # A first structure is the ensemble's
                 self._with([*ann.hypotheses, h], len(ann.hypotheses) if ann.chosen_idx is None else ann.chosen_idx)
                 return
         else:
@@ -254,7 +272,7 @@ class AnnotationEditor(QtCore.QObject):
             self._with(hyps, ann.chosen_idx)
         else:   # a database's structure stays as it was: the edit is the user's
             self._keep = smiles
-            hyps.append(Hypothesis(smiles, old.name, origin=USER, sample_uuid=self._sample_uuid))
+            hyps.append(Hypothesis(smiles, old.name, origin=USER))
             self._with(hyps, len(hyps) - 1 if idx == ann.chosen_idx else ann.chosen_idx)
 
     def _delete(self, idx: int):
@@ -265,14 +283,14 @@ class AnnotationEditor(QtCore.QObject):
         chosen = None if chosen == idx else chosen - 1 if chosen is not None and chosen > idx else chosen
         self._with(hyps, chosen)
 
-    def set_scores(self, analyte_uuid, smiles: str, sample_uuid, scores: dict):
-        """A user structure's GLACIER scores against its own sample's MS2, once known."""
-        if analyte_uuid != self._uuid:
+    def set_scores(self, ensemble_uuid, smiles: str, scores: dict):
+        """A user structure's GLACIER scores against its own ensemble's MS2, once known."""
+        if ensemble_uuid != self.target_uuid:
             return
         ann = self.annotation
         hyps = [
             dataclasses.replace(h, scores=scores)
-            if h.smiles == smiles and h.origin == USER and not h.scores and h.sample_uuid == sample_uuid else h
+            if h.smiles == smiles and h.origin == USER and not h.scores else h
             for h in ann.hypotheses
         ]
         self._with(hyps, ann.chosen_idx)

@@ -83,25 +83,25 @@ def test_filter_keeps_groups():
     assert reg.group_titles() == {a[2].uuid: "late eluter"}
 
 
-def test_annotations_replace_and_collect_orphans():
-    from core.data_structs import AnalyteAnnotation
+def test_ensemble_annotation_outlives_its_alignment():
+    from types import SimpleNamespace
+    from core.data_structs import Ensemble
+    from core.data_structs.ensemble import EnsembleAnnotation
 
-    a = _analytes(2)
-    alignment = _alignment(a)
+    ens = Ensemble([], [], uuid=0)
     reg = DataRegistry()
+    reg.register_sample(SimpleNamespace(
+        uuid=1, name='s', fingerprint=None,
+        injection=SimpleNamespace(ensembles={ens.uuid: ens}),
+    ))
+    alignment = _alignment(_analytes(1))   # its one analyte is ensemble 0
     reg.register_alignment(alignment)
 
-    added, updated, removed = [], [], []
-    reg.sigAnnotationAdded.connect(added.append)
-    reg.sigAnnotationUpdated.connect(updated.append)
-    reg.sigAnnotationRemoved.connect(removed.append)
+    seen = []
+    reg.sigEnsembleAnnotated.connect(seen.append)
+    annotation = EnsembleAnnotation(name="Psammaplin A", notes="sponge")
+    reg.update_ensemble(ens.uuid, annotation=annotation)
+    assert seen == [ens.uuid]
 
-    first = AnalyteAnnotation(a[0].uuid, name="Psammaplin A")
-    second = AnalyteAnnotation(a[0].uuid, name="Psammaplin A", notes="sponge")
-    reg.register_annotation(first)
-    reg.register_annotation(second)   # same analyte: replaces
-    assert (added, updated) == ([first], [second])
-    assert reg.get_annotation(a[0].uuid) == second
-
-    reg.remove_alignment(alignment.uuid)
-    assert reg.get_all_annotations() == [] and removed == [second]
+    reg.remove_alignment(alignment.uuid)   # alignments are cheap; annotations aren't
+    assert reg.get_ensemble(ens.uuid).annotation == annotation

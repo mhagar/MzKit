@@ -12,6 +12,7 @@ from core.data_structs import (
 )
 from core.data_structs.scan_array import ScanArrayParameters
 from core.data_structs.ensemble import (
+    EnsembleAnnotation,
     GenericAnnotation,
     IonAnnotation,
     IonPairAnnotation,
@@ -27,7 +28,6 @@ from core.data_structs.formula_assignment import (
     AssignedCandidate,
 )
 from core.data_structs.analyte_group import AnalyteGroup
-from core.data_structs.analyte_annotation import AnalyteAnnotation
 from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
 
 import logging
@@ -54,7 +54,6 @@ class ProjectData(NamedTuple):
     alignments: list[EnsembleAlignment]
     groups: list[AnalyteGroup]
     matrices: list[SimilarityMatrix]
-    annotations: list[AnalyteAnnotation]
 
 def save_project(
     filepath: Path,
@@ -149,13 +148,6 @@ def save_project(
             )
             for group in groups:
                 serialize_group(group, zf)
-
-        # Serialize analyte annotations (name + structure)
-        for annotation in data_registry.get_all_annotations():
-            zf.writestr(
-                f"annotations/{annotation.analyte_uuid}.json",
-                data=json.dumps(asdict(annotation), indent=2),
-            )
 
         # Serialize similarity matrices (computed and imported, raw values)
         matrices = data_registry.get_all_matrices()
@@ -429,6 +421,10 @@ def serialize_injection_ensembles(
                 asdict(ensemble.formula_assignment)
                 if ensemble.formula_assignment is not None else None
             ),
+            'annotation': (
+                asdict(ensemble.annotation)
+                if ensemble.annotation is not None else None
+            ),
             # User-editable properties
             'identity': ensemble.identity,
             'user_metadata': ensemble.user_metadata,
@@ -498,7 +494,7 @@ def load_project(
     EnsembleAlignments and AnalyteGroups.
 
     :param filepath: Path to .mzk file
-    :return: ProjectData(samples, alignments, groups, matrices, annotations)
+    :return: ProjectData(samples, alignments, groups, matrices)
     """
     _sanity_checks(filepath)
 
@@ -593,18 +589,17 @@ def load_project(
             if name.startswith('similarity/') and name.endswith('.json')
         ]
 
-        # Load analyte annotations (absent before 1.5.0)
-        annotations = [
-            AnalyteAnnotation.from_dict(json.loads(zf.read(name)))
-            for name in zf.namelist()
-            if name.startswith('annotations/') and name.endswith('.json')
-        ]
+        # Pre-2026-11 files kept analyte annotations in their own folder
+        if any(name.startswith('annotations/') for name in zf.namelist()):
+            logger.warning(
+                "This project's structure annotations were saved by an older "
+                "format version and are not loaded."
+            )
 
     logger.info(
         f"Loaded {len(samples)} samples, "
         f"{len(alignments)} alignments, "
         f"{len(groups)} groups, "
-        f"{len(annotations)} annotations, "
         f"{len(matrices)} similarity matrices."
     )
 
@@ -613,7 +608,6 @@ def load_project(
         alignments=alignments,
         groups=groups,
         matrices=matrices,
-        annotations=annotations,
     )
 
 
@@ -710,6 +704,7 @@ def deserialize_injection_ensembles(
             formula_assignment=deserialize_assignment(
                 e_dict.get('formula_assignment')
             ),
+            annotation=EnsembleAnnotation.from_dict(e_dict.get('annotation')),
             # User-editable properties (with defaults for backward compat)
             identity=e_dict.get('identity'),
             user_metadata=e_dict.get('user_metadata', {}),

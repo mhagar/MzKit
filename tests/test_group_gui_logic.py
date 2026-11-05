@@ -114,18 +114,16 @@ def test_viewer_shows_group_track_and_panel(data_registry, sample, ensemble, mon
     assert tree.item(0).child(0).isEnabled()
     assert viewer.treeCompare.isExpanded(tree.item(0).index())
 
-    # Name / MSI level / notes edits land in the registry and the editor
+    # Name / notes edits land on the focused ensemble and in the editor
     def edit(line_edit, text):
         line_edit.setText(text)
         line_edit.editingFinished.emit()
         _app.processEvents()
 
     edit(viewer.editAnalyteName, " Psammaplin A ")
-    viewer.comboMsiLevel.setCurrentIndex(3)
-    viewer.comboMsiLevel.activated.emit(3)
     edit(viewer.editAnalyteNotes, "sponge")
-    annotation = data_registry.get_annotation(analyte.uuid)
-    assert (annotation.name, annotation.msi_level, annotation.notes) == ("Psammaplin A", 3, "sponge")
+    annotation = ensemble.annotation
+    assert (annotation.name, annotation.notes) == ("Psammaplin A", "sponge")
     assert viewer.editAnalyteName.text() == "Psammaplin A"
     assert viewer.svgAnalyteStructure.isHidden()   # no structure yet
 
@@ -133,17 +131,16 @@ def test_viewer_shows_group_track_and_panel(data_registry, sample, ensemble, mon
     warnings = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *args: warnings.append(args[1]))
     viewer.treeHypotheses.topLevelItem(0).setText(1, "not a smiles")
-    assert warnings == ["Invalid SMILES"] and not data_registry.get_annotation(analyte.uuid).hypotheses
+    assert warnings == ["Invalid SMILES"] and not ensemble.annotation.hypotheses
     viewer.treeHypotheses.topLevelItem(0).setText(1, "CCO")
-    assert data_registry.get_annotation(analyte.uuid).smiles == "CCO"   # the first is chosen
+    assert ensemble.annotation.smiles == "CCO"   # the first is chosen
     assert not viewer.svgAnalyteStructure.isHidden()
 
     # Clearing everything drops the annotation
     viewer.annotation_editor._delete(0)
     edit(viewer.editAnalyteName, "")
-    viewer.comboMsiLevel.activated.emit(0)
     edit(viewer.editAnalyteNotes, "")
-    assert data_registry.get_annotation(analyte.uuid) is None
+    assert ensemble.annotation is None
     assert viewer.svgAnalyteStructure.isHidden()
 
     viewer.selection_model.set_selection([])

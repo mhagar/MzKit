@@ -202,14 +202,18 @@ the round-trip.
 
 - A `.mzk` is a **ZIP archive** of JSON (primitives, metadata, alignments) +
   pickle (numpy/scipy arrays: ScanArrays, fingerprint arrays, ensembles).
-- `load_project()` returns a `ProjectData(samples, alignments, assignments, groups, matrices, annotations)`.
+- `load_project()` returns a `ProjectData(samples, alignments, groups, matrices)`.
 - Layout inside the zip: `project_metadata.json`, `samples/<name>/…`,
-  `alignments/<uuid>.json`, `groups/<uuid>.json`,
-  `annotations/<analyte_uuid>.json` (per-analyte name, MSI level, notes, structure hypotheses + the chosen one), and
+  `alignments/<uuid>.json`, `groups/<uuid>.json`, and
   `similarity/<uuid>.npz` (raw values, no pickle) + `similarity/<uuid>.json`.
-- **Back-compat is intentional:** every deserializer uses `.get(..., default)`
-  for fields added over time, so old `.mzk` files keep loading as the model
-  grows. Preserve this when adding fields.
+- Annotations live on the Ensemble and ride along in its `ensembles.pkl`
+  record: peak-level annotations, `formula_assignment` and `annotation`
+  (structure hypotheses + the chosen one, name, notes). All are primitive-only
+  dataclasses round-tripped with `asdict` / `Cls(**d)`.
+- **Back-compat:** deserializers use `.get(..., default)` for fields added over
+  time. The 2026-11 annotation rework (docs/annotation-rework-plan.md) broke it
+  on purpose: older `assignments/` and `annotations/` folders are skipped with a
+  warning.
 
 Known trade-offs (fine for V1, flagged for later):
 

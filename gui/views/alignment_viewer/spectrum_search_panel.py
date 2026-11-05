@@ -3,7 +3,7 @@ The Inspector's spectral-library panel: search the spectral libraries
 (core/utils/spectrum_db.py) for the focused analyte's MS2, by identity
 (cosine within the precursor window) or by analogue (embedding similarity;
 core/cli/search_spectra.py, run in the background by MainController), and
-accept a hit as a Hypothesis of the analyte's AnalyteAnnotation.
+accept a hit as a Hypothesis of the focused ensemble's EnsembleAnnotation.
 
 The viewer mirrors the selected hit's library spectrum against the focus's
 MS2 in the bottom MS2 plot. Results are cached per (focus, mode) for the
@@ -15,7 +15,7 @@ from typing import Optional, TYPE_CHECKING
 from PyQt5 import QtCore, QtWidgets
 
 from core.cli.search_spectra import IDENTITY, params_from_config
-from core.data_structs.analyte_annotation import Hypothesis
+from core.data_structs.ensemble import Hypothesis
 from core.utils import spectrum_db
 from core.utils.config import load_config
 from gui.dialogues.CompoundDbDialog import NumberItem
@@ -48,7 +48,6 @@ class SpectrumSearchPanel(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         self._analyte: Optional['AlignedAnalyte'] = None
         self.ms2: Optional['SpectrumArray'] = None
         self._precursor_mz: Optional[float] = None
-        self._sample_uuid = None
         self._key: Optional[tuple] = None   # the focus: (AnalyteUUID, EnsembleUUID or None)
         self._results: dict = {}   # (focus key, mode) -> (SearchResult, status text)
         self._pending: set = set()
@@ -158,16 +157,12 @@ class SpectrumSearchPanel(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
             return
         self._analyte, self._key = analyte, key
         if analyte is None:
-            self.ms2, self._precursor_mz, self._sample_uuid = None, None, None
+            self.ms2, self._precursor_mz = None, None
         elif ensemble is not None:
             self.ms2, self._precursor_mz = ensemble.composite_spectrum.ms2, ensemble.resolved_precursor_mz
-            self._sample_uuid = next(
-                (s for s, e in ctx.members(analyte).items() if e.uuid == ensemble.uuid), None,
-            )
         else:
             rep = ctx.representative(analyte)
             self.ms2, self._precursor_mz = (None if rep is None else rep.composite.ms2), analyte.consensus_mz
-            self._sample_uuid = None if rep is None else rep.sample_uuid
         self._fill_modes()
         self._refresh_state()
 
@@ -303,7 +298,7 @@ class SpectrumSearchPanel(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         self.sigAccepted.emit(analyte.uuid, Hypothesis(
             h.smiles, h.name, origin=h.library,
             claim='structure' if result.mode == IDENTITY else 'analogue',
-            db_id=h.spectrum_id, sample_uuid=self._sample_uuid,
+            db_id=h.spectrum_id,
             scores={
                 'cosine' if result.mode == IDENTITY else result.mode: round(h.score, 4),
                 'mod_cosine': round(h.mod_cosine, 4),

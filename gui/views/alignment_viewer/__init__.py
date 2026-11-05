@@ -53,7 +53,7 @@ from core.cli.cluster_samples import (
     sample_cluster_params_from_config,
 )
 from core.cli.rank_candidates import ScoredCandidate
-from core.data_structs.analyte_annotation import Hypothesis
+from core.data_structs.ensemble import Hypothesis
 from core.data_structs.similarity_matrix import SimilarityMatrix
 from core.utils.config import load_config
 from gui.resources.AlignmentViewerWindow import Ui_Form
@@ -160,7 +160,7 @@ class AlignmentViewer(
         )
         self.annotation_editor = AnnotationEditor(
             edit_name=self.editAnalyteName,
-            combo_msi=self.comboMsiLevel,
+            label_target=self.labelAnnotationTarget,
             edit_notes=self.editAnalyteNotes,
             tree=self.treeHypotheses,
             structure=self.svgAnalyteStructure,
@@ -348,12 +348,6 @@ class AlignmentViewer(
             removal_callback=self._on_groups_changed,
             update_callback=self._on_groups_changed,
             change_type='Group',
-        )
-        self.data_source.subscribe_to_changes(
-            addition_callback=self._refresh_inspector,
-            removal_callback=self._refresh_inspector,
-            update_callback=self._refresh_inspector,
-            change_type='Annotation',
         )
         self.data_source.subscribe_to_changes(
             addition_callback=lambda _: None,
@@ -802,9 +796,7 @@ class AlignmentViewer(
         ensemble = focus.ensemble if focus.kind == 'ensemble' else None
         self.annotation_panel.show_analyte(self._ctx, focus.analyte, ensemble)
         self.spectrum_panel.show_analyte(self._ctx, focus.analyte, ensemble)
-        self.annotation_editor.show_analyte(
-            self._ctx, focus.analyte, ensemble, self.annotation_panel.sample_uuid,
-        )
+        self.annotation_editor.show_analyte(self._ctx, focus.analyte, ensemble)
 
     def _refresh_inspector(self, *_):
         """Re-show the tree and analyte panel (e.g. a formula or annotation changed)."""
@@ -866,14 +858,15 @@ class AlignmentViewer(
         """Re-show the tree (e.g. so Similarity picks up a new clustering)."""
         self._show_tree()
 
-    def _on_annotation_changed(self, analyte_uuid, annotation):
-        if annotation is None:
-            self.data_source.remove_annotation(analyte_uuid)
-        else:
-            self.data_source.register_annotation(annotation)
+    def _on_annotation_changed(self, ensemble_uuid, annotation):
+        self.data_source.update_ensemble(ensemble_uuid, annotation=annotation)
 
     def _on_accepted(self, analyte_uuid, hypothesis: Hypothesis):
-        """A search candidate / library hit becomes the analyte's chosen hypothesis, shown in its tab."""
+        """
+        A search candidate / library hit becomes the chosen hypothesis of the
+        focused ensemble (the representative member's, for an analyte),
+        shown in its tab.
+        """
         if self.tabsAnnotation.currentWidget() is self.annotation_panel and (shown := self.annotation_panel.shown) is not None:
             self._hypothesis_scores[(self.annotation_panel.focus_key, hypothesis.smiles)] = shown
         self.annotation_editor.add_hypothesis(hypothesis)
@@ -884,12 +877,12 @@ class AlignmentViewer(
         if key[0] != 'hypothesis':
             self.annotation_panel.set_ranking(key, result)
             return
-        _, focus_key, smiles, sample_uuid = key
+        _, focus_key, smiles, ensemble_uuid = key
         if result is None or not result.scored:
             return
         scored = result.scored[0]
         self._hypothesis_scores[(focus_key, smiles)] = scored
-        self.annotation_editor.set_scores(focus_key[0], smiles, sample_uuid, scores_of(scored, result))
+        self.annotation_editor.set_scores(ensemble_uuid, smiles, scores_of(scored, result))
         selected = self.annotation_editor.selected()
         if (self.tabsAnnotation.currentWidget() is self.tabAnnotation and selected is not None
                 and selected.smiles == smiles and self.annotation_panel.focus_key == focus_key):
@@ -912,7 +905,7 @@ class AlignmentViewer(
         kwargs = self.annotation_panel.score_kwargs(hypothesis.smiles, hypothesis.name)
         if kwargs is not None:
             self.sigRankCandidatesRequested.emit(
-                ('hypothesis', focus_key, hypothesis.smiles, self.annotation_panel.sample_uuid), kwargs,
+                ('hypothesis', focus_key, hypothesis.smiles, self.annotation_editor.target_uuid), kwargs,
             )
 
     def _show_candidate(self, scored):

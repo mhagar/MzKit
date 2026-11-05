@@ -3,6 +3,9 @@ Resolution helpers for the AlignmentViewer: turns plot targets (ensemble /
 analyte HoverTargets) into the domain data the panels display - member
 ensembles, representative spectra, formulae and pairwise scores.
 
+Annotations live on the member Ensembles; an analyte's are display-only
+aggregates over them (e.g. "Psammaplin A 5/6"), never stored.
+
 No widgets here; one AlignmentContext exists per displayed alignment.
 """
 from collections import Counter
@@ -106,11 +109,49 @@ class AlignmentContext:
         agreement = self.formula_agreement(analyte)
         return agreement[0] if agreement else None
 
+    def target_ensemble(
+        self,
+        analyte: 'AlignedAnalyte',
+        ensemble: Optional['Ensemble'] = None,
+    ) -> Optional['Ensemble']:
+        """
+        The ensemble a focus's annotation edits go to: `ensemble` (a focused
+        member), else the analyte's representative member.
+        """
+        if ensemble is not None:
+            return ensemble
+        rep = self.representative(analyte)
+        return None if rep is None else self.members(analyte).get(rep.sample_uuid)
+
+    def structure_agreement(
+        self,
+        analyte: 'AlignedAnalyte',
+    ) -> Optional[tuple[str, int, int]]:
+        """
+        Most common member label (name, else the chosen structure's name, else
+        its SMILES) as (label, count, n_members); None if no member has one.
+        """
+        members = self.members(analyte)
+        labels = [
+            a.label or a.smiles
+            for a in (e.annotation for e in members.values()) if a is not None
+        ]
+        labels = [label for label in labels if label]
+        if not labels:
+            return None
+        label, count = Counter(labels).most_common(1)[0]
+        return label, count, len(members)
+
+    def notes(self, analyte: 'AlignedAnalyte') -> list[str]:
+        """Every member's notes, deduplicated, in member order."""
+        notes = (e.annotation.notes for e in self.members(analyte).values() if e.annotation)
+        return list(dict.fromkeys(n for n in notes if n))
+
     def analyte_label(self, analyte: 'AlignedAnalyte') -> str:
-        """"m/z @ RT", followed by the analyte's annotated name, if any."""
+        """"m/z @ RT", followed by its members' most common name, if any."""
         label = f"{analyte.consensus_mz:.4f} @ {analyte.consensus_rt:.1f}s"
-        annotation = self.data_source.get_annotation(analyte.uuid)
-        return f"{label} ({annotation.label})" if annotation and annotation.label else label
+        agreement = self.structure_agreement(analyte)
+        return f"{label} ({agreement[0]})" if agreement else label
 
     def formula_label(self, analyte: 'AlignedAnalyte') -> str:
         """`formula_agreement` as "C10H12O (3/4)"; empty if no formula."""

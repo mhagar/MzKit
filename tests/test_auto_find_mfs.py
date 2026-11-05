@@ -1,7 +1,7 @@
 """
 Tests for core/cli/auto_find_mfs — the DIA auto-annotation glue.
 
-find-mfs itself is mocked (a synthetic AnalyteAnnotation): these exercise OUR
+find-mfs itself is mocked (synthetic search results): these exercise OUR
 integration — result conversion, top-hit auto-pick, adduct-label attachment,
 re-run replacement, and the DDA precursor pin — without loading MistNet or depending on
 its output. A real DIA `Ensemble` (composite spectrum + cofeature validation)

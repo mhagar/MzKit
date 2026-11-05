@@ -70,8 +70,8 @@ def test_search_select_mirror_accept(data_registry, sample, ensemble):
     assert viewer._mirrored is panel.shown and viewer.plotMS2.is_mirror()
 
     panel.btnAccept.click()
-    annotation = data_registry.get_annotation(analyte.uuid)
+    annotation = ensemble.annotation
     h = annotation.chosen
     assert (h.smiles, h.origin, h.db_id, h.claim) == ('CCCO', 'GNPS', 'CCMS2', 'structure')
-    assert h.scores['cosine'] == 0.95 and h.sample_uuid == sample.uuid
+    assert h.scores['cosine'] == 0.95
     assert viewer.tabsAnnotation.currentWidget() is viewer.tabAnnotation
