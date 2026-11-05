@@ -133,8 +133,8 @@ class AlignedAnalyte:
             by sample uuid (members that can't be resolved may be omitted).
         :return: None when no member ensemble is given.
 
-        Cached; the analyte's membership is immutable, so the cache never
-        goes stale.
+        Cached (membership is immutable); DataRegistry resets it when a DDA
+        member's representative MS2 moves to another precursor.
         """
         if self._representative is not None:
             return self._representative

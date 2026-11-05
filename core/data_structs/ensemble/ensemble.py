@@ -274,16 +274,18 @@ class Ensemble(EnsembleMS2Mixin, EnsembleAnnotationMixin):
 
         MS1: the most intense unsaturated scan (see `composite_ms1_scan_num`)
         MS2: DIA / MS1-only uses the tallest MS2 scan; DDA uses the
-        (normalized) MS2 of the tallest precursor, and takes its precursor
-        m/z + charge from that precursor (see `_dda_tallest_precursor_ms2`)
+        (normalized) MS2 of the best-fragmenting precursor ([M+H]+-like over
+        metal adducts), and takes its precursor m/z + charge from that
+        precursor (see `_dda_representative_ms2`)
 
         Computed lazily
         """
         if self._composite is None:
             precursor_mz = self.resolved_precursor_mz
             charge = self.resolved_charge
+            ms1 = self.get_spectrum(ms_level=1, scan_num=self.composite_ms1_scan_num())
             if self.is_dda:
-                dda_ms2 = self._dda_tallest_precursor_ms2()
+                dda_ms2 = self._dda_representative_ms2(ms1)
                 ms2 = None
                 if dda_ms2 is not None:
                     # Single scans are raw, consensus spectra 0-1: same scale
@@ -295,9 +297,7 @@ class Ensemble(EnsembleMS2Mixin, EnsembleAnnotationMixin):
                 ms2 = ms2_spectra[0].spectrum if ms2_spectra else None
 
             self._composite = CompositeSpectrum(
-                ms1=self.get_spectrum(
-                    ms_level=1, scan_num=self.composite_ms1_scan_num()
-                ),
+                ms1=ms1,
                 ms2=ms2,
                 precursor_mz=precursor_mz,
                 charge=charge,

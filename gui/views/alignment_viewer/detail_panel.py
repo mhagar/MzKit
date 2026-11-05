@@ -104,6 +104,7 @@ class DetailPanel:
         self._draw_chroms(None, [], [], "")
 
     def _clear_spectra(self):
+        self.ms1_plot.clear_signal_markers()
         for plot in (self.ms1_plot, self.ms2_plot):
             plot.setSpectrumArray(_empty_spectrum())
             _set_label(plot, "")
@@ -129,7 +130,8 @@ class DetailPanel:
     ):
         """One ensemble's composite spectra, or an analyte's representative's."""
         if target.kind == 'ensemble':
-            composite = target.ensemble.composite_spectrum
+            ensemble = target.ensemble
+            composite = ensemble.composite_spectrum
             titles = [
                 f"Composite {level} · {ctx.sample_name(target.sample_uuid)}"
                 for level in ("MS1", "MS2")
@@ -140,13 +142,23 @@ class DetailPanel:
                 self._clear_spectra()
                 return
             composite = rep.composite
+            ensemble = ctx.members(target.analyte).get(rep.sample_uuid)
             titles = [
                 f"Representative {level} - {ctx.sample_name(rep.sample_uuid)}"
                 for level in ("MS1", "MS2")
             ]
         ms_x = self._ms_x_range
+        # DDA: the MS2 is one precursor's; mark it on the MS1
+        dda = ensemble is not None and ensemble.is_dda and composite.ms2 is not None
+        if dda:
+            titles[0] += f" · precursor m/z {composite.precursor_mz:.4f}"
+        self.ms1_plot.clear_signal_markers()
         self._show_single(self.ms1_plot, composite.ms1, titles[0])
         self._show_single(self.ms2_plot, composite.ms2, titles[1], composite.precursor_mz)
+        if dda and composite.ms1 is not None and len(composite.ms1):
+            idx = int(np.argmin(np.abs(composite.ms1['mz'] - composite.precursor_mz)))
+            if abs(composite.ms1['mz'][idx] - composite.precursor_mz) <= 0.02:
+                self.ms1_plot.add_signal_marker(idx, symbol='d', pen='r', brush='r')
         self._frame_ms([composite.ms1, composite.ms2], ms_x)
 
     def show_mirror(
@@ -156,6 +168,7 @@ class DetailPanel:
         score: 'PairScore',
     ):
         ms_x = self._ms_x_range
+        self.ms1_plot.clear_signal_markers()
         self.ms1_plot.set_mirror_spectra(
             top.ms1, bottom.ms1, top.label, bottom.label,
             matched=score.ms1_matches,

@@ -378,6 +378,7 @@ class MSPlotWidget(pg.PlotWidget):
     def add_signal_marker(
         self,
         spec_idx: int,
+        **style,
     ):
         """
         Adds a signal marker to the plot, based on the currently
@@ -396,6 +397,7 @@ class MSPlotWidget(pg.PlotWidget):
         signal_marker = pg.TargetItem(
             pos=(mz, intsy),
             movable=False,
+            **style,   # pg.TargetItem's symbol / size / pen / brush
         )
 
         self.signal_markers[spec_idx] = signal_marker

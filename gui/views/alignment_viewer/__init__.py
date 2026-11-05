@@ -1134,6 +1134,12 @@ class AlignmentViewer(
                 self.btnClusterMode.setChecked(False)
             self._render(preserve_selection=True)
             self._refresh_compare()
+        # Sample clustering's MS2 grouping cut that matrix's clustering: redo it
+        grouping = self._sample_inputs[2]
+        if grouping is not None and grouping.params.matrix_uuid == matrix.uuid:
+            self._sample_clustering = None
+            if self.btnSampleClusterMode.isChecked():
+                self._on_sample_cluster_mode_toggled(True)
 
     # -- ensemble groups ----------------------------------------------------
 

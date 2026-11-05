@@ -966,8 +966,9 @@ class PrecursorSeedProvider(SeedProvider):
             [pf.apex_scan for pf in self.pfs], dtype=int
         ) if self.pfs else np.empty(0, dtype=int)
         self.assigned = np.zeros(len(self.pfs), dtype=bool)
+        # Precursor features are built at cofeature_threshold; seeds need parent_threshold
         self._order = sorted(
-            range(len(self.pfs)),
+            (k for k, pf in enumerate(self.pfs) if pf.apex_intsy >= config.parent_threshold),
             key=lambda k: self.pfs[k].apex_intsy,
             reverse=True,
         )

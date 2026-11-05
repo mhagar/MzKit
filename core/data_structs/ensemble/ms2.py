@@ -40,12 +40,16 @@ class EnsembleMS2Mixin:
     Ensemble's MS2 production methods. Mixed into `Ensemble` only.
     """
 
-    def _dda_tallest_precursor_ms2(self) -> Optional[MS2Spectrum]:
+    def _dda_representative_ms2(self, ms1) -> Optional[MS2Spectrum]:
         """
-        DDA composite MS2: the MS2 of the precursor that was most intense
-        in MS1 (each scan's precursor intensity is read in the MS1 scan
-        nearest to it). If that precursor was fragmented several times, its
-        scans are merged into one consensus (see `reduce_ms2_spectra`).
+        DDA composite MS2: the MS2 of the fragmented precursor whose ion
+        fragments best (`core.formula.network.ion_tier`: non-metal monomers
+        first, metal adducts last), the most intense in MS1 among equals
+        (each scan's precursor intensity is read in the MS1 scan nearest to
+        it). A precursor's ion is its envelope's in `ms1` (the composite MS1),
+        from the ensemble's AdductNetwork if it has one, else find-mfs's
+        network (`envelope_ions`). If that precursor was fragmented several
+        times, its scans are merged into one consensus (see `reduce_ms2_spectra`).
 
         Each scan's precursor is matched to the closest MS1 cofeature lane
         (by m/z); falls back to the tallest MS2 scan when no MS1 cofeature
@@ -85,7 +89,12 @@ class EnsembleMS2Mixin:
         if max(group_intsys) == -np.inf:
             return max(scan_specs, key=_max_intsy)
 
-        i = int(np.argmax(group_intsys))
+        from core.formula.network import envelope_ions, ion_tier
+        ions = envelope_ions(ms1, self.adduct_network)
+        i = min(
+            (k for k, intsy in enumerate(group_intsys) if intsy > -np.inf),
+            key=lambda k: (ion_tier(ions.get(precursor_lane(group_tallest[k]))), -group_intsys[k]),
+        )
         best = groups[i]
         ms2 = best[0] if len(best) == 1 else reduce_ms2_spectra(
             best, 'consensus', group_by_precursor=False,

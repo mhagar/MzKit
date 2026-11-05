@@ -441,9 +441,34 @@ class DataRegistry(
         unknown = set(changes) - {f.name for f in fields(ensemble)}
         if unknown:
             raise AttributeError(f"Ensemble has no field(s) {sorted(unknown)}")
+        # A DDA ensemble's representative MS2 follows its network's ions
+        refresh = 'adduct_network' in changes and ensemble.is_dda
+        before = ensemble.composite_spectrum.precursor_mz if refresh else None
         for name, value in changes.items():
             setattr(ensemble, name, value)
+        if refresh:
+            ensemble._composite = None
+            if ensemble.composite_spectrum.precursor_mz != before:
+                self._invalidate_ms2_of(uuid)
         self.sigEnsembleAnnotated.emit(uuid)
+
+    def _invalidate_ms2_of(self, uuid: 'EnsembleUUID'):
+        """
+        An ensemble's representative MS2 changed: its analytes' cached
+        representatives are reset, and the computed (not imported)
+        similarity matrices covering them removed.
+        """
+        from core.data_structs.similarity_matrix import IMPORTED
+
+        analytes = [
+            a for alignment in self._alignments.values() for a in alignment.analytes
+            if uuid in a.ensemble_map.values()
+        ]
+        for analyte in analytes:
+            analyte._representative = None
+        for matrix in self.matrices_for_analytes(a.uuid for a in analytes):
+            if matrix.provenance.get('source') != IMPORTED:
+                self.remove_matrix(matrix.uuid)
 
     def remove_ensembles(
         self,
