@@ -82,9 +82,8 @@ def results_to_assigned_candidates(
 
 def to_formula_candidate(c: AssignedCandidate):
     """
-    An AssignedCandidate as a find-mfs FormulaCandidate, for the signal-level
-    annotations (IonAnnotation / MzDiffAnnotation) that store one. Same
-    reconstruction persistence uses when loading those annotations.
+    An AssignedCandidate as a find-mfs FormulaCandidate, for the formula
+    finder's sigFormulaAssigned (FormulaCandidate payload).
     """
     from find_mfs import FormulaCandidate
     from molmass import Formula

@@ -1107,7 +1107,7 @@ class EnsembleViewer(
         if target is None:
             return
 
-        target.formula = formula
+        target.formula = str(formula.formula)
 
         # The bracket was already drawn with the plain Δ label; clear
         # and redraw so the new two-line label takes effect.
@@ -1125,7 +1125,7 @@ class EnsembleViewer(
         # prominence and demote the \u0394 m/z to a small subtitle line.
         if annotation.formula is not None:
             formula_html = format_formula_obj_to_html(
-                annotation.formula.formula
+                Formula(annotation.formula)
             )
             label = (
                 f'<div style="text-align:center;">'
@@ -1383,7 +1383,7 @@ class EnsembleViewer(
 
         # Only 'mz_diff' and 'ion' annotations can carry a formula
         # (GenericAnnotation has no formula field).
-        annot_formula: Optional['FormulaCandidate'] = None
+        annot_formula: Optional[str] = None
         if kind == 'mz_diff':
             match = next(
                 (a for a in self.ensemble.mz_diffs if a.uuid == annot_uuid), None
@@ -1404,7 +1404,7 @@ class EnsembleViewer(
 
         if chosen is set_min_action or chosen is set_max_action:
             formula_finder = self.tool_controllers[ToolType.FINDFORMULA].formula_finder_menu
-            formula_str = str(annot_formula.formula)
+            formula_str = annot_formula
 
             if chosen is set_min_action:
                 formula_finder.lineMinCounts.setText(formula_str)
