@@ -4,7 +4,7 @@ Ensemble annotation types and the Ensemble mixin that adds them.
 Annotation types are primitive-only, so persistence round-trips them with
 plain `asdict` / `Cls(**d)`.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import uuid
 from typing import Literal, Optional, TYPE_CHECKING
 
@@ -347,6 +347,23 @@ class EnsembleAnnotation:
     @property
     def is_empty(self) -> bool:
         return not (self.name or self.notes or self.hypotheses)
+
+    def with_hypothesis(self, h: Hypothesis) -> 'EnsembleAnnotation':
+        """`h` added (or found already there, by smiles / origin / db_id) and chosen."""
+        hyps = list(self.hypotheses)
+        idx = next((i for i, o in enumerate(hyps)
+                    if (o.smiles, o.origin, o.db_id) == (h.smiles, h.origin, h.db_id)), None)
+        if idx is None:
+            hyps.append(h)
+            idx = len(hyps) - 1
+        return replace(self, hypotheses=tuple(hyps), chosen_idx=idx)
+
+    def with_scores(self, smiles: str, scores: dict) -> 'EnsembleAnnotation':
+        """Unscored hypotheses of `smiles` get `scores` (against this ensemble's own MS2)."""
+        return replace(self, hypotheses=tuple(
+            replace(h, scores=scores) if h.smiles == smiles and not h.scores else h
+            for h in self.hypotheses
+        ))
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> Optional['EnsembleAnnotation']:

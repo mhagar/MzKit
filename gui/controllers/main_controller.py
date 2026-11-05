@@ -303,6 +303,9 @@ class MainController:
         alignment_viewer.sigAutoFindMfsRequested.connect(
             self._handle_auto_find_mf_batch_request
         )
+        alignment_viewer.sigApplyFormulaRequested.connect(
+            self._handle_apply_formula_request
+        )
         alignment_viewer.sigClusterRequested.connect(
             self._handle_cluster_analytes_request
         )
@@ -1193,6 +1196,38 @@ class MainController:
                 "keep": self.data_registry.user_chosen_sources(),
             },
             on_completion_func=self._on_auto_find_mf_complete,
+        )
+
+    def _handle_apply_formula_request(self, source, members: list, tol_da: float):
+        """
+        An ensemble's formula + ion, searched for again on its aligned
+        members (Alignment Viewer); each result is set on its member.
+        """
+        from core.formula.params import FindMfsParams
+
+        def done(result):
+            if result is None:
+                self.main_view.statusbar.showMessage(
+                    "Applying the formula failed; see the Process Monitor for details"
+                )
+                return
+            for uuid, assignment, network in result.updates:
+                if self.data_registry.get_ensemble(uuid) is not None:  # not removed meanwhile
+                    self.data_registry.update_ensemble(
+                        uuid, formula_assignment=assignment, adduct_network=network,
+                    )
+            self.main_view.statusbar.showMessage(result.summary())
+
+        self.process_controller.start_process(
+            module_path="core.formula.bulk",
+            function_name="apply_formula_to_members",
+            parameters={
+                "source": source,
+                "members": members,
+                "tol_da": tol_da,
+                "params": FindMfsParams.from_config(self.config),
+            },
+            on_completion_func=done,
         )
 
     def _handle_formula_batch_request(

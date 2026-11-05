@@ -39,6 +39,7 @@ The status bar shows a hover readout.
 Actions into the Ensemble / Sample viewers go out via signals the
 MainController wires up.
 """
+import dataclasses
 from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtWidgets, QtCore, QtGui
@@ -53,7 +54,7 @@ from core.cli.cluster_samples import (
     sample_cluster_params_from_config,
 )
 from core.cli.rank_candidates import ScoredCandidate
-from core.data_structs.ensemble import Hypothesis
+from core.data_structs.ensemble import EnsembleAnnotation, Hypothesis
 from core.data_structs.similarity_matrix import SimilarityMatrix
 from core.utils.config import load_config
 from gui.resources.AlignmentViewerWindow import Ui_Form
@@ -97,6 +98,8 @@ class AlignmentViewer(
     sigViewEnsembleRequested = QtCore.pyqtSignal(object)  # Ensemble
     sigAddSamplesRequested = QtCore.pyqtSignal(object)     # list[SampleUUID]
     sigAutoFindMfsRequested = QtCore.pyqtSignal(object)    # list[Ensemble]
+    # Source Ensemble, list[Ensemble] members, m/z tolerance (Da): core.formula.bulk
+    sigApplyFormulaRequested = QtCore.pyqtSignal(object, object, float)
     # EnsembleAlignment, ClusterParams (compute) | SimilarityMatrix, linkage
     sigClusterRequested = QtCore.pyqtSignal(object, object, str)
     # Annotation panel focus key, rank_candidates kwargs; the result comes back via set_ranking
@@ -296,6 +299,7 @@ class AlignmentViewer(
             self.sigViewEnsembleRequested
         )
         self.annotation_editor.sigAnnotationChanged.connect(self._on_annotation_changed)
+        self.annotation_editor.sigApplyToAllRequested.connect(self._on_apply_hypothesis_to_all)
         self.annotation_editor.sigHypothesisSelected.connect(
             lambda h: self.tabsAnnotation.currentWidget() is self.tabAnnotation and self._on_hypothesis_selected(h)
         )
@@ -881,12 +885,59 @@ class AlignmentViewer(
         if result is None or not result.scored:
             return
         scored = result.scored[0]
-        self._hypothesis_scores[(focus_key, smiles)] = scored
-        self.annotation_editor.set_scores(ensemble_uuid, smiles, scores_of(scored, result))
+        if focus_key is not None:
+            self._hypothesis_scores[(focus_key, smiles)] = scored
+        # Straight onto the ensemble scored, wherever the focus has moved since
+        ensemble = self.data_source.get_ensemble(ensemble_uuid)
+        if ensemble is not None and ensemble.annotation is not None:
+            self.data_source.update_ensemble(ensemble_uuid, annotation=ensemble.annotation.with_scores(
+                smiles, scores_of(scored, result),
+            ))
         selected = self.annotation_editor.selected()
         if (self.tabsAnnotation.currentWidget() is self.tabAnnotation and selected is not None
                 and selected.smiles == smiles and self.annotation_panel.focus_key == focus_key):
             self._show_candidate(scored)
+
+    def _on_apply_hypothesis_to_all(self, hypothesis: Hypothesis):
+        """
+        The focused analyte's every member gets `hypothesis` as its chosen
+        structure, scored against its own MS2 (never another member's scores).
+        """
+        focus, ctx = self.selection_model.focus, self._ctx
+        if ctx is None or focus is None or focus.analyte is None:
+            return
+        members = list(ctx.members(focus.analyte).values())
+        n_other = sum(
+            1 for e in members
+            if e.annotation is not None and e.annotation.chosen is not None
+            and e.annotation.smiles != hypothesis.smiles
+        )
+        if QtWidgets.QMessageBox.question(
+            self, "Apply structure to all aligned ensembles",
+            f"Choose {hypothesis.name or hypothesis.smiles} as the structure of "
+            f"{len(members)} member{'' if len(members) == 1 else 's'}; "
+            f"{n_other} of them have a different structure chosen.",
+        ) != QtWidgets.QMessageBox.Yes:
+            return
+
+        copy = dataclasses.replace(hypothesis, scores={})
+        n_unscored = 0
+        for ensemble in members:
+            ann = (ensemble.annotation or EnsembleAnnotation()).with_hypothesis(copy)
+            self.data_source.update_ensemble(ensemble.uuid, annotation=ann)
+            if ann.chosen.scores:   # already scored there
+                continue
+            kwargs = self.annotation_panel.score_kwargs(hypothesis.smiles, hypothesis.name, ensemble)
+            if kwargs is None:
+                n_unscored += 1
+                continue
+            self.sigRankCandidatesRequested.emit(
+                ('hypothesis', None, hypothesis.smiles, ensemble.uuid), kwargs,
+            )
+        self.status_bar.showMessage(
+            f"Structure applied to {len(members)} member(s)"
+            + (f"; {n_unscored} can't be scored (no MS2 or GLACIER model)" if n_unscored else "")
+        )
 
     def set_spectral_result(self, slot, result):
         """A finished spectral-library search (None: failed / cancelled), from MainController."""
@@ -1177,6 +1228,8 @@ class AlignmentViewer(
 
         if target is not None:
             self._add_find_mfs_action(menu, target)
+            if len(self._menu_targets(target)) == 1 and target.kind in ('ensemble', 'analyte'):
+                self._add_apply_formula_action(menu, target)
 
             targets = self._menu_targets(target)
             if selection_ensemble_uuids(targets):
@@ -1251,6 +1304,48 @@ class AlignmentViewer(
         )
         action.triggered.connect(
             lambda: self.sigAutoFindMfsRequested.emit(ensembles)
+        )
+
+    def _add_apply_formula_action(self, menu: QtWidgets.QMenu, target: HoverTarget):
+        """
+        'Apply its formula to all aligned members': the right-clicked
+        ensemble's (the representative member's, for an analyte) formula and
+        ion, searched for again on every other member (core/formula/bulk.py).
+        """
+        from core.formula.bulk import source_ion
+
+        ctx, analyte = self._ctx, target.analyte
+        if ctx is None or analyte is None:
+            return
+        source = ctx.target_ensemble(analyte, target.ensemble if target.kind == 'ensemble' else None)
+        assignment = source and source.formula_assignment
+        others = [e for e in ctx.members(analyte).values() if source is not None and e.uuid != source.uuid]
+        if not others or assignment is None or assignment.chosen is None or not assignment.envelope:
+            return
+        ion = source_ion(source)
+        action = menu.addAction(
+            f"Apply {assignment.chosen.formula_str} as {ion.label if ion else '?'} "
+            f"to {len(others)} other aligned member{'' if len(others) == 1 else 's'}"
+        )
+        if ion is None:
+            action.setEnabled(False)
+            action.setToolTip("Its ion is unknown: pick one in the formula finder first")
+            return
+        action.triggered.connect(lambda: self._apply_formula(source, others))
+
+    def _apply_formula(self, source: 'Ensemble', others: list['Ensemble']):
+        n_manual = sum(
+            1 for e in others
+            if e.formula_assignment is not None and e.formula_assignment.chosen_by == 'user'
+        )
+        if QtWidgets.QMessageBox.question(
+            self, "Apply formula to all aligned members",
+            f"Re-search {len(others)} member{'' if len(others) == 1 else 's'}, "
+            f"{n_manual} of them were manually assigned.",
+        ) != QtWidgets.QMessageBox.Yes:
+            return
+        self.sigApplyFormulaRequested.emit(
+            source, others, float(self._alignment.parameters.mz_tolerance),
         )
 
     def _ensembles_for(

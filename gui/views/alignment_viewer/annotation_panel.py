@@ -239,11 +239,24 @@ class AnnotationPanel(
         """The selected candidate."""
         return self._shown
 
-    def score_kwargs(self, smiles: str, name: str = "") -> Optional[dict]:
-        """rank_candidates kwargs scoring one structure against the focus's MS2; None if it can't be."""
-        if self._key is None or self.ms2 is None or not self.ms2.size or not glacier.model_available():
+    def score_kwargs(self, smiles: str, name: str = "", ensemble: Optional['Ensemble'] = None) -> Optional[dict]:
+        """
+        rank_candidates kwargs scoring one structure against the focus's MS2
+        (or `ensemble`'s own MS2, precursor and adduct); None if it can't be.
+        """
+        if ensemble is not None:
+            ms2 = ensemble.composite_spectrum.ms2
+        elif self._key is not None:
+            ms2 = self.ms2
+        else:
             return None
-        return self._rank_kwargs([DbCandidate(USER, "", name, smiles, "")], rank_params_from_config(load_config()))
+        if ms2 is None or not ms2.size or not glacier.model_available():
+            return None
+        kwargs = self._rank_kwargs([DbCandidate(USER, "", name, smiles, "")], rank_params_from_config(load_config()))
+        if ensemble is not None:
+            kwargs.update(ms2=ms2, precursor_mz=ensemble.resolved_precursor_mz,
+                          adduct=self._adduct_of(self._ctx, [ensemble]))
+        return kwargs
 
     def set_ranking(self, key: tuple, result: Optional['RankResult']):
         """A finished (None: failed / cancelled) ranking for focus `key` (see sigRankRequested)."""

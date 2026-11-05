@@ -66,6 +66,7 @@ class _NameDelegate(QtWidgets.QStyledItemDelegate):
 class AnnotationEditor(QtCore.QObject):
     sigAnnotationChanged = QtCore.pyqtSignal(object, object)   # EnsembleUUID, EnsembleAnnotation (None: clear)
     sigHypothesisSelected = QtCore.pyqtSignal(object)          # Hypothesis, or None
+    sigApplyToAllRequested = QtCore.pyqtSignal(object)         # Hypothesis
 
     def __init__(
         self,
@@ -217,14 +218,9 @@ class AnnotationEditor(QtCore.QObject):
 
     def add_hypothesis(self, h: Hypothesis):
         """Add `h` (or find it already there), choose it and select it."""
-        ann = self.annotation
-        hyps = list(ann.hypotheses)
-        idx = next((i for i, o in enumerate(hyps) if (o.smiles, o.origin, o.db_id) == (h.smiles, h.origin, h.db_id)), None)
-        if idx is None:
-            hyps.append(h)
-            idx = len(hyps) - 1
-        self._keep = h.smiles
-        self._with(hyps, idx)
+        if self._target is not None:
+            self._keep = h.smiles
+            self._emit(self.annotation.with_hypothesis(h))
 
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, col: int):
         if col != NAME:
@@ -254,6 +250,9 @@ class AnnotationEditor(QtCore.QObject):
         menu.addAction("Unchoose" if chosen else "Choose as structure", lambda: self._choose(None if chosen else idx))
         menu.addAction("Edit SMILES…", lambda: self._edit_smiles(idx))
         menu.addAction("Delete", lambda: self._delete(idx))
+        menu.addSeparator()
+        menu.addAction("Apply to all aligned ensembles",
+                       lambda: self.sigApplyToAllRequested.emit(self.annotation.hypotheses[idx]))
 
     def _choose(self, idx: Optional[int]):
         self._with(list(self.annotation.hypotheses), idx)
@@ -282,18 +281,6 @@ class AnnotationEditor(QtCore.QObject):
         chosen = ann.chosen_idx
         chosen = None if chosen == idx else chosen - 1 if chosen is not None and chosen > idx else chosen
         self._with(hyps, chosen)
-
-    def set_scores(self, ensemble_uuid, smiles: str, scores: dict):
-        """A user structure's GLACIER scores against its own ensemble's MS2, once known."""
-        if ensemble_uuid != self.target_uuid:
-            return
-        ann = self.annotation
-        hyps = [
-            dataclasses.replace(h, scores=scores)
-            if h.smiles == smiles and h.origin == USER and not h.scores else h
-            for h in ann.hypotheses
-        ]
-        self._with(hyps, ann.chosen_idx)
 
     # -- selection ----------------------------------------------------------
 
