@@ -1,6 +1,6 @@
 """
-Analyte-group GUI logic: the dialog's exact / overlapping / new decision,
-plot selection -> AnalyteUUIDs, "n of m" counting, provenance dicts, and an
+Ensemble-group GUI logic: the dialog's exact / overlapping / new decision,
+plot selection -> EnsembleUUIDs, "n of m" counting, provenance dicts, and an
 offscreen smoke test of the AlignmentViewer's group track + panel.
 """
 import json
@@ -17,43 +17,45 @@ _app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 import gui.controllers.main_controller  # noqa: E402,F401
 
 from core.cli.cluster_analytes import ClusterKey  # noqa: E402
-from core.data_structs.analyte_group import AnalyteGroup  # noqa: E402
+from core.data_structs.ensemble_group import EnsembleGroup  # noqa: E402
 from core.data_structs.similarity_matrix import ImportParams  # noqa: E402
 from gui.views.alignment_viewer.group_dialog import jsonable, match_groups  # noqa: E402
 from gui.views.alignment_viewer.groups_panel import (  # noqa: E402
-    members_in_view, selection_analyte_uuids,
+    members_in_view, selection_ensemble_uuids,
 )
 from gui.widgets.alignment_plot.layout import HoverTarget  # noqa: E402
 
 
 def test_exact_match_wins_regardless_of_order():
-    a, b = AnalyteGroup([1, 2, 3]), AnalyteGroup([3, 2, 1])
-    other = AnalyteGroup([3, 4])
+    a, b = EnsembleGroup([1, 2, 3]), EnsembleGroup([3, 2, 1])
+    other = EnsembleGroup([3, 4])
     exact, overlapping = match_groups([2, 3, 1, 1], [other, b, a])
     assert exact is b and overlapping == []
 
 
 def test_partial_overlaps_listed_disjoint_excluded():
-    a, b, c = AnalyteGroup([1, 2, 3]), AnalyteGroup([3, 9]), AnalyteGroup([7])
+    a, b, c = EnsembleGroup([1, 2, 3]), EnsembleGroup([3, 9]), EnsembleGroup([7])
     exact, overlapping = match_groups([1, 2], [a, b, c])
     assert exact is None and overlapping == [a]
     assert match_groups([5], [a, b, c]) == (None, [])
 
 
-def test_selection_to_analyte_uuids():
-    an1, an2 = SimpleNamespace(uuid=11), SimpleNamespace(uuid=22)
+def test_selection_to_ensemble_uuids():
+    """An ensemble -> itself, an analyte -> all its members; deduped, in order."""
+    an1 = SimpleNamespace(uuid=11, ensemble_map={1: 101, 2: 102})
+    an2 = SimpleNamespace(uuid=22, ensemble_map={1: 201, 2: 202})
     targets = [
-        HoverTarget('ensemble', 0, sample_uuid=1, analyte=an2),
+        HoverTarget('ensemble', 0, sample_uuid=2, analyte=an2),
         HoverTarget('sample', sample_uuid=1),
         HoverTarget('analyte', 1, analyte=an1),
         HoverTarget('ensemble', 1, sample_uuid=2, analyte=an1),
         HoverTarget('ensemble', 2, sample_uuid=2, analyte=None),
     ]
-    assert selection_analyte_uuids(targets) == [22, 11]
+    assert selection_ensemble_uuids(targets) == [202, 101, 102]
 
 
 def test_members_in_view():
-    assert members_in_view(AnalyteGroup([1, 2, 3]), {1, 3, 8}) == "2 of 3"
+    assert members_in_view(EnsembleGroup([1, 2, 3]), {1, 3, 8}) == "2 of 3"
 
 
 def test_clustering_provenance_is_json_safe():
@@ -83,7 +85,7 @@ def test_viewer_shows_group_track_and_panel(data_registry, sample, ensemble, mon
     viewer.set_alignment(alignment)
     assert viewer.plotGroupTrack.isHidden()
 
-    group = AnalyteGroup([analyte.uuid, 999], title="Psammaplins", notes="a\nb")
+    group = EnsembleGroup([ensemble.uuid, 999], title="Psammaplins", notes="a\nb")
     data_registry.register_group(group)
     assert not viewer.plotGroupTrack.isHidden()
 
@@ -102,7 +104,7 @@ def test_viewer_shows_group_track_and_panel(data_registry, sample, ensemble, mon
 
     # Removing the last in-view member via the panel keeps the group (999 remains)
     viewer.groups_panel._remove()
-    assert group.analyte_uuids == [999]
+    assert group.ensemble_uuids == [999]
     assert viewer.plotGroupTrack.isHidden()
     assert combo.count() == 0
 
@@ -235,13 +237,13 @@ def test_viewer_selection_focus_and_anchor(data_registry, sample, ensemble):
 
 def test_dialog_overlap_choice_and_create():
     from core.data_structs.data_registry import DataRegistry
-    from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog
+    from gui.views.alignment_viewer.group_dialog import EnsembleGroupDialog
 
     reg = DataRegistry()
-    existing = AnalyteGroup([1, 2, 3], title="Old")
+    existing = EnsembleGroup([1, 2, 3], title="Old")
     reg.register_group(existing)
 
-    dialog = AnalyteGroupDialog(reg, [2, 4, 4], {'alignment_uuid': 7, 'clustering': None})
+    dialog = EnsembleGroupDialog(reg, [2, 4, 4], {'alignment_uuid': 7, 'clustering': None})
     assert not dialog.listOverlapping.isHidden()
     dialog.listOverlapping.setCurrentRow(0)          # picks "Edit existing"
     assert dialog.radioEditExisting.isChecked()
@@ -255,13 +257,13 @@ def test_dialog_overlap_choice_and_create():
     dialog.accept()
 
     new = [g for g in reg.get_all_groups() if g is not existing]
-    assert len(new) == 1 and new[0].analyte_uuids == [2, 4]
+    assert len(new) == 1 and new[0].ensemble_uuids == [2, 4]
     assert new[0].title == "New" and new[0].smiles == "CCO"
     assert new[0].provenance == {'alignment_uuid': 7, 'clustering': None}
     assert existing.title == "Old"
 
     # Exact match opens the existing group, overlap widgets hidden
-    dialog = AnalyteGroupDialog(reg, [3, 2, 1])
+    dialog = EnsembleGroupDialog(reg, [3, 2, 1])
     assert dialog.listOverlapping.isHidden() and dialog.editTitle.text() == "Old"
     dialog.editTitle.setText("Renamed")
     dialog.accept()

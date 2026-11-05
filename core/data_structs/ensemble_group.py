@@ -1,12 +1,11 @@
 """
-AnalyteGroup: a user annotation (title, notes, SMILES) of a basket of
-AlignedAnalytes, e.g. a named cluster ("Psammaplins") or a single-analyte note.
+EnsembleGroup: a user annotation (title, notes, SMILES) of a basket of
+Ensembles, e.g. a named cluster ("Psammaplins").
 
-Standalone sidecar keyed by AnalyteUUIDs, meaning groups stay mutable even if
-alignments are immutable.
-
-Filtered child alignments share their parent's analyte UUIDs, so a
-group shows in any alignment containing at least one of its members.
+Keyed by EnsembleUUIDs, so a group is independent of any alignment: it shows
+in every alignment containing one of its members (an analyte is in it when any
+of its member ensembles is), and survives re-aligning. A group that looks odd
+against another sample's members is useful signal.
 """
 from __future__ import annotations
 
@@ -16,12 +15,12 @@ from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.data_structs.uuid_types import AnalyteUUID, GroupUUID
+    from core.data_structs.uuid_types import EnsembleUUID, GroupUUID
 
 
 @dataclass
-class AnalyteGroup:
-    analyte_uuids: list['AnalyteUUID']          # ordered, no duplicates
+class EnsembleGroup:
+    ensemble_uuids: list['EnsembleUUID']        # ordered, no duplicates
     title: str = ""                             # short name, e.g. "Psammaplins"
     notes: str = ""                             # free text
     smiles: str = ""                            # optional structure

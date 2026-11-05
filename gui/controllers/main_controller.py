@@ -684,7 +684,7 @@ class MainController:
                 "output": path,
                 "separator": separator,
                 "formulas": self.data_registry.chosen_formulas(),
-                "groups": self.data_registry.group_titles(),
+                "groups": self.data_registry.group_titles(alignment),
                 "network_params": network_params,
                 "matrix": matrix,
                 "analyte_linkage": analyte_linkage,

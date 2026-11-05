@@ -455,7 +455,7 @@ def cmd_auto_extract(args: argparse.Namespace) -> None:
             logger.info(f"Skipping '{sample.name}' (no MS1 data)")
             continue
         if args.replace:
-            injection.remove_all_ensembles()
+            registry.remove_ensembles(list(injection.ensembles))
         ensembles = auto_generate_ensembles(injection, params)
         processed += 1
         total += len(ensembles)
@@ -637,7 +637,7 @@ def cmd_export_table(args: argparse.Namespace) -> None:
         write_mgf=args.mgf,
         mgf_mode='per_sample' if args.mgf_mode == 'per-sample' else 'consensus',
         formulas=registry.chosen_formulas(),
-        groups=registry.group_titles(),
+        groups=registry.group_titles(alignment),
         write_graphml=args.graphml,
         min_edge_score=args.min_edge_cosine,
         network_params=network_params,

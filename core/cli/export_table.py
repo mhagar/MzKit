@@ -5,7 +5,7 @@ Export an EnsembleAlignment as feature tables (CSV/TSV), with a companion
 From an output path like `features.tsv`, this writes:
 - `features_abundance.tsv`:
     rows = analytes
-    cols = `group` (titles of the analyte's AnalyteGroups, ';'-joined), samples
+    cols = `group` (titles of the groups of the analyte's members, ';'-joined), samples
     vals = base intensity
         ('0' = not detected; empty = detected, but its ensemble
                 couldn't be resolved).
@@ -82,7 +82,7 @@ def export_abundance_table(
     :param sample_names: Mapping of SampleUUID -> display name
     :param separator: Column separator (tab or comma)
     :param groups: group titles per analyte, for the `group` column
-        (e.g. DataRegistry.group_titles()).
+        (e.g. DataRegistry.group_titles(alignment)).
     """
     groups = groups or {}
     ordered_uuids, ordered_names = _ordered_samples(alignment, sample_names)
@@ -244,7 +244,7 @@ def export_feature_table_to_file(
     :param mgf_mode: ``'consensus'`` (RepresentativeSpectrum per analyte)
         or ``'per_sample'`` (every aligned ensemble).
     :param normalize: normalize MGF spectra to 0-100.
-    :param groups: group titles per analyte (DataRegistry.group_titles()),
+    :param groups: group titles per analyte (DataRegistry.group_titles(alignment)),
         for the abundance table and network nodes.
     :param write_graphml: also write the MS2 similarity network.
     :param network_params: how to compute the analyte similarity matrix

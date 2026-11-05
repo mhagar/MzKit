@@ -22,7 +22,7 @@ imported lineage (e.g. a taxonomy). Parameters: the sample cluster
 button's menu (sample_cluster_params_dialog.py). Exports
 (MainController) use both modes' applied settings (`export_settings`).
 
-User AnalyteGroups (core/data_structs/analyte_group.py) are drawn on the
+User EnsembleGroups (core/data_structs/ensemble_group.py) are drawn on the
 group track above the map in either layout (gui/widgets/AlignmentGroupTrackWidget.py)
 and edited from the Inspector's groups panel (groups_panel.py, group_dialog.py).
 
@@ -62,9 +62,9 @@ from gui.views.alignment_viewer.annotation_panel import AnnotationPanel, scores_
 from gui.views.alignment_viewer.cluster_params_dialog import ClusterParamsDialog
 from gui.views.alignment_viewer.context import AlignmentContext
 from gui.views.alignment_viewer.detail_panel import DetailPanel, XIC_COLOR
-from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog, jsonable
+from gui.views.alignment_viewer.group_dialog import EnsembleGroupDialog, jsonable
 from gui.views.alignment_viewer.groups_panel import (
-    GroupsPanel, selection_analyte_uuids,
+    GroupsPanel, selection_ensemble_uuids,
 )
 from gui.views.alignment_viewer.inspector import Inspector
 from gui.views.alignment_viewer.render_params_dialog import RenderParamsDialog
@@ -1084,19 +1084,28 @@ class AlignmentViewer(
             self._render(preserve_selection=True)
             self._refresh_compare()
 
-    # -- analyte groups -----------------------------------------------------
+    # -- ensemble groups ----------------------------------------------------
 
     def _on_groups_changed(self, _group):
         self._refresh_groups()
+
+    def _analyte_of(self) -> dict:
+        """EnsembleUUID -> AnalyteUUID over the shown alignment's members."""
+        if self._alignment is None:
+            return {}
+        return {
+            e: a.uuid for a in self._alignment.analytes for e in a.ensemble_map.values()
+        }
 
     def _refresh_groups(self):
         """Redraw the group track and the Inspector's groups panel."""
         if self._alignment is None:
             self.plotGroupTrack.clear_groups()
         else:
+            analyte_of = self._analyte_of()
             self.plotGroupTrack.set_groups(
-                self.data_source.groups_for_analytes(self._x_of_analyte),
-                self._x_of_analyte,
+                self.data_source.groups_for_ensembles(analyte_of),
+                self._x_of_analyte, analyte_of,
             )
         self.plotGroupTrack.setVisible(
             self._alignment is not None and self.plotGroupTrack.has_visible_groups()
@@ -1104,27 +1113,24 @@ class AlignmentViewer(
         self._refresh_groups_panel()
 
     def _refresh_groups_panel(self):
-        selected = selection_analyte_uuids(self.selection_model.selection)
+        selected = selection_ensemble_uuids(self.selection_model.selection)
         self.btnGroupSelected.setEnabled(bool(selected))
-        in_view = (
-            {a.uuid for a in self._alignment.analytes} if self._alignment else set()
-        )
-        self.groups_panel.refresh(in_view, selected)
+        self.groups_panel.refresh(set(self._analyte_of()), selected)
 
     def _group_analytes(self, targets: Optional[list[HoverTarget]] = None):
         """Open the group dialog for `targets` (default: the selection)."""
-        analyte_uuids = selection_analyte_uuids(
+        ensemble_uuids = selection_ensemble_uuids(
             self.selection_model.selection if targets is None else targets
         )
-        if self._alignment is None or not analyte_uuids:
+        if self._alignment is None or not ensemble_uuids:
             return
         clustering = self._active_clustering()
         provenance = {
             'alignment_uuid': self._alignment.uuid,
             'clustering': None if clustering is None else jsonable(clustering.params),
         }
-        AnalyteGroupDialog(
-            self.data_source, analyte_uuids, provenance, parent=self,
+        EnsembleGroupDialog(
+            self.data_source, ensemble_uuids, provenance, parent=self,
         ).exec_()
 
     # -- context menu -------------------------------------------------------
@@ -1173,10 +1179,10 @@ class AlignmentViewer(
             self._add_find_mfs_action(menu, target)
 
             targets = self._menu_targets(target)
-            if selection_analyte_uuids(targets):
+            if selection_ensemble_uuids(targets):
                 if not menu.isEmpty():
                     menu.addSeparator()
-                menu.addAction("Group selected analytes…").triggered.connect(
+                menu.addAction("Group selection…").triggered.connect(
                     lambda: self._group_analytes(targets)
                 )
 

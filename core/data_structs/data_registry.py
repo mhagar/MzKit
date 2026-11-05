@@ -25,7 +25,7 @@ if TYPE_CHECKING:
         GroupUUID,
     )
     from core.data_structs.alignment import EnsembleAlignment
-    from core.data_structs.analyte_group import AnalyteGroup
+    from core.data_structs.ensemble_group import EnsembleGroup
     from core.data_structs.similarity_matrix import SimilarityMatrix
 
 class DataRegistry(
@@ -60,13 +60,13 @@ class DataRegistry(
         object  # EnsembleUUID (its formula_assignment / annotation changed)
     )
     sigGroupAdded = QtCore.pyqtSignal(
-        object  # AnalyteGroup
+        object  # EnsembleGroup
     )
     sigGroupRemoved = QtCore.pyqtSignal(
-        object  # AnalyteGroup
+        object  # EnsembleGroup
     )
     sigGroupUpdated = QtCore.pyqtSignal(
-        object  # AnalyteGroup (edited in place: title, notes, membership)
+        object  # EnsembleGroup (edited in place: title, notes, membership)
     )
     sigMatrixAdded = QtCore.pyqtSignal(
         object  # SimilarityMatrix
@@ -79,9 +79,9 @@ class DataRegistry(
         self._samples: dict['SampleUUID', 'Sample'] = {}
         self._sample_name_to_uuid: dict[str, 'SampleUUID'] = {}
         self._alignments: dict['AlignmentUUID', 'EnsembleAlignment'] = {}
-        self._groups: dict['GroupUUID', 'AnalyteGroup'] = {}
-        # Reverse index for groups_for_analytes; rebuilt on every group change
-        self._groups_by_analyte: dict['AnalyteUUID', set['GroupUUID']] = {}
+        self._groups: dict['GroupUUID', 'EnsembleGroup'] = {}
+        # Reverse index for groups_for_ensembles; rebuilt on every group change
+        self._groups_by_ensemble: dict['EnsembleUUID', set['GroupUUID']] = {}
         self._matrices: dict[int, 'SimilarityMatrix'] = {}
         super().__init__()
 
@@ -205,6 +205,8 @@ class DataRegistry(
             )
             del self._samples[uuid]
             del self._sample_name_to_uuid[sample_to_remove.name]
+            if sample_to_remove.injection is not None:
+                self._prune_groups(set(sample_to_remove.injection.ensembles))
 
             return
 
@@ -312,14 +314,13 @@ class DataRegistry(
         connections held by controllers, models and views remain valid.
 
         Alignments are removed first, since they reference Samples (via
-        ensemble UUIDs). Removing the last alignment orphans every group, so
-        groups go with it. Formula assignments and annotations live on the
+        ensemble UUIDs). Formula assignments and annotations live on the
         ensembles and go with their samples.
         """
         for uuid in self.get_all_alignment_uuids():
             self.remove_alignment(uuid)
 
-        # Groups/matrices not caught by orphan collection (e.g. no alignments)
+        # Groups / matrices not caught by pruning (e.g. dangling members)
         for group in self.get_all_groups():
             self.remove_group(group.uuid)
         for matrix in self.get_all_matrices():
@@ -380,18 +381,15 @@ class DataRegistry(
 
     def _collect_orphans(self):
         """
-        Drop every group / similarity matrix none of whose analytes appear in
-        any remaining alignment (run after an alignment is removed).
-        Annotations live on ensembles, so they outlive alignments.
+        Drop every similarity matrix none of whose analytes appear in any
+        remaining alignment (run after an alignment is removed). Annotations
+        and groups belong to ensembles, so they outlive alignments.
         """
         live = {
             analyte.uuid
             for alignment in self._alignments.values()
             for analyte in alignment.analytes
         }
-        for group in self.get_all_groups():
-            if live.isdisjoint(group.analyte_uuids):
-                self.remove_group(group.uuid)
         live_ids = {str(uuid) for uuid in live}
         for matrix in self.get_all_matrices():
             if live_ids.isdisjoint(matrix.ids):
@@ -447,6 +445,32 @@ class DataRegistry(
             setattr(ensemble, name, value)
         self.sigEnsembleAnnotated.emit(uuid)
 
+    def remove_ensembles(
+        self,
+        uuids: Iterable['EnsembleUUID'],
+    ):
+        """
+        Delete ensembles from their injections, dropping them from groups
+        (a group left empty goes too). Alignments referencing them aren't
+        touched: their members just stop resolving.
+        """
+        gone = set(uuids)
+        for sample in self._samples.values():
+            if sample.injection is not None:
+                for uuid in gone & set(sample.injection.ensembles):
+                    sample.injection.remove_ensemble(uuid)
+        self._prune_groups(gone)
+
+    def _prune_groups(self, gone: set['EnsembleUUID']):
+        for group in self.get_all_groups():
+            if gone.isdisjoint(group.ensemble_uuids):
+                continue
+            group.ensemble_uuids = [u for u in group.ensemble_uuids if u not in gone]
+            if group.ensemble_uuids:
+                self.notify_group_updated(group)
+            else:
+                self.remove_group(group.uuid)
+
     def set_chosen_candidate(
         self,
         uuid: 'EnsembleUUID',
@@ -491,7 +515,7 @@ class DataRegistry(
 
     def register_group(
         self,
-        group: 'AnalyteGroup',
+        group: 'EnsembleGroup',
     ):
         self._groups[group.uuid] = group
         self._rebuild_group_index()
@@ -509,15 +533,15 @@ class DataRegistry(
     def get_group(
         self,
         uuid: 'GroupUUID',
-    ) -> Optional['AnalyteGroup']:
+    ) -> Optional['EnsembleGroup']:
         return self._groups.get(uuid)
 
-    def get_all_groups(self) -> list['AnalyteGroup']:
+    def get_all_groups(self) -> list['EnsembleGroup']:
         return list(self._groups.values())
 
     def notify_group_updated(
         self,
-        group: 'AnalyteGroup',
+        group: 'EnsembleGroup',
     ):
         """
         Groups are edited in place; every edit path must call this so the
@@ -526,28 +550,35 @@ class DataRegistry(
         self._rebuild_group_index()
         self.sigGroupUpdated.emit(group)
 
-    def groups_for_analytes(
+    def groups_for_ensembles(
         self,
-        analyte_uuids: Iterable['AnalyteUUID'],
-    ) -> list['AnalyteGroup']:
-        """Groups with any member in `analyte_uuids`, in registration order."""
+        ensemble_uuids: Iterable['EnsembleUUID'],
+    ) -> list['EnsembleGroup']:
+        """Groups with any member in `ensemble_uuids`, in registration order."""
         hits = set()
-        for uuid in analyte_uuids:
-            hits |= self._groups_by_analyte.get(uuid, set())
+        for uuid in ensemble_uuids:
+            hits |= self._groups_by_ensemble.get(uuid, set())
         return [g for u, g in self._groups.items() if u in hits]
 
-    def group_titles(self) -> dict['AnalyteUUID', str]:
+    def group_titles(
+        self,
+        alignment: 'EnsembleAlignment',
+    ) -> dict['AnalyteUUID', str]:
         """
-        Titles of every group each analyte belongs to (oldest group first,
-        joined by ';'), for exports. Untitled groups are skipped.
+        Per analyte of `alignment`: the titles of every group any of its
+        member ensembles belongs to (oldest group first, joined by ';'), for
+        exports. Untitled groups are skipped.
         """
-        titles: dict['AnalyteUUID', list[str]] = {}
-        for group in sorted(self._groups.values(), key=lambda g: g.created_at):
-            if not group.title:
-                continue
-            for uuid in group.analyte_uuids:
-                titles.setdefault(uuid, []).append(group.title)
-        return {uuid: ';'.join(t) for uuid, t in titles.items()}
+        titled = sorted(
+            (g for g in self._groups.values() if g.title), key=lambda g: g.created_at,
+        )
+        titles: dict['AnalyteUUID', str] = {}
+        for analyte in alignment.analytes:
+            members = set(analyte.ensemble_map.values())
+            hits = [g.title for g in titled if not members.isdisjoint(g.ensemble_uuids)]
+            if hits:
+                titles[analyte.uuid] = ';'.join(dict.fromkeys(hits))
+        return titles
 
     # --- Similarity matrix methods ---
 
@@ -604,10 +635,10 @@ class DataRegistry(
         return None
 
     def _rebuild_group_index(self):
-        self._groups_by_analyte = {}
+        self._groups_by_ensemble = {}
         for group in self._groups.values():
-            for uuid in group.analyte_uuids:
-                self._groups_by_analyte.setdefault(uuid, set()).add(group.uuid)
+            for uuid in group.ensemble_uuids:
+                self._groups_by_ensemble.setdefault(uuid, set()).add(group.uuid)
 
 def _merge_is_valid(
     source: 'Sample',

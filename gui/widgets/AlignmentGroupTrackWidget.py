@@ -1,8 +1,9 @@
 """
 Group track for the Alignment Viewer: a thin strip above the feature map,
-x-linked to it, drawing each `AnalyteGroup` (core/data_structs/analyte_group.py)
-as a tick at every member's x joined by a line from the leftmost to the
-rightmost tick, title at the left. Contiguous groups read as bars, broken
+x-linked to it, drawing each `EnsembleGroup` (core/data_structs/ensemble_group.py)
+as a tick at every member analyte's x (an analyte is in a group when any of its
+member ensembles is) joined by a line from the leftmost to the rightmost tick,
+title at the left. Contiguous groups read as bars, broken
 groups as combs. Overlapping groups are packed into separate lanes.
 
 Works with any analyte -> x mapping (consensus RT, cluster leaf slot), so
@@ -22,8 +23,8 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPicture, QPolygonF
 from gui.widgets.alignment_plot.indicators import BandIndicator, OutlineIndicator
 
 if TYPE_CHECKING:
-    from core.data_structs.analyte_group import AnalyteGroup
-    from core.data_structs.uuid_types import AnalyteUUID
+    from core.data_structs.ensemble_group import EnsembleGroup
+    from core.data_structs.uuid_types import AnalyteUUID, EnsembleUUID
 
 
 # Must match the feature map's lane-axis width so the x axes line up
@@ -65,10 +66,10 @@ def pack_lanes(spans: list[tuple[float, float]], gap: float = 0.0) -> list[int]:
 
 
 class _Row(NamedTuple):
-    group: object                 # AnalyteGroup
+    group: object                 # EnsembleGroup
     uuids: list                   # visible member AnalyteUUIDs
     xs: list[float]               # their x, same order
-    n_hidden: int
+    n_hidden: int                 # member ensembles not in view
     lane: int
 
     @property
@@ -208,23 +209,31 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
 
     def set_groups(
         self,
-        groups: list['AnalyteGroup'],
+        groups: list['EnsembleGroup'],
         x_of_analyte: dict['AnalyteUUID', float],
+        analyte_of: dict['EnsembleUUID', 'AnalyteUUID'],
     ):
-        """Draw `groups`; members missing from `x_of_analyte` are skipped."""
+        """
+        Draw `groups` at their members' analytes (`analyte_of`); members
+        whose analyte is missing from `x_of_analyte` are skipped.
+        """
         self.clear_groups()
         visible = []
         for group in groups:
-            uuids = [u for u in group.analyte_uuids if u in x_of_analyte]
+            shown = [u for u in group.ensemble_uuids if analyte_of.get(u) in x_of_analyte]
+            uuids = list(dict.fromkeys(analyte_of[u] for u in shown))
             if uuids:
-                visible.append((group, uuids, [float(x_of_analyte[u]) for u in uuids]))
+                visible.append((
+                    group, uuids, [float(x_of_analyte[u]) for u in uuids],
+                    len(group.ensemble_uuids) - len(shown),
+                ))
         if not visible:
             return
 
-        lanes = pack_lanes([(min(xs), max(xs)) for _, _, xs in visible])
+        lanes = pack_lanes([(min(xs), max(xs)) for _, _, xs, _ in visible])
         self._rows = [
-            _Row(group, uuids, xs, len(group.analyte_uuids) - len(uuids), lane)
-            for (group, uuids, xs), lane in zip(visible, lanes)
+            _Row(group, uuids, xs, n_hidden, lane)
+            for (group, uuids, xs, n_hidden), lane in zip(visible, lanes)
         ]
         self._item = GroupTrackItem(self._rows)
         self._item.sigRowHovered.connect(self._on_row_hovered)
@@ -285,7 +294,7 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
         self._highlight.set_shapes(r.shapes(), [])
         tip = f"{r.group.title} ({len(r.uuids)} analytes)"
         if r.n_hidden:
-            tip += f"\n{r.n_hidden} members not shown"
+            tip += f"\n{r.n_hidden} member ensembles not in this alignment"
         self.setToolTip(tip)
         self.sigGroupHovered.emit(list(r.uuids))
 

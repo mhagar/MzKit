@@ -91,17 +91,17 @@ def test_formula_assignment_roundtrip(data_registry, sample, ensemble, tmp_path)
     assert c.chem_logprior == -3.3
 
 
-def test_analyte_group_roundtrip(tmp_path):
-    """AnalyteGroups (incl. overlapping ones) survive save/load field by field."""
-    from core.data_structs import AnalyteGroup
+def test_ensemble_group_roundtrip(tmp_path):
+    """EnsembleGroups (incl. overlapping ones) survive save/load field by field."""
+    from core.data_structs import EnsembleGroup
 
     reg = DataRegistry()
-    big = AnalyteGroup(
-        analyte_uuids=[3, 1, 2], title="Psammaplins", notes="bromotyrosines",
+    big = EnsembleGroup(
+        ensemble_uuids=[3, 2**120, 2], title="Psammaplins", notes="bromotyrosines",
         smiles="C1=CC=CC=C1", created_at=1760000000.0,
         provenance={"alignment_uuid": 42, "params": {"linkage_method": "average"}},
     )
-    small = AnalyteGroup(analyte_uuids=[2], notes="overlaps big")
+    small = EnsembleGroup(ensemble_uuids=[2], notes="overlaps big")
     reg.register_group(big)
     reg.register_group(small)
 

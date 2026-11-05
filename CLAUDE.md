@@ -34,15 +34,16 @@ tests/
 - **Sample**: top-level container. Has an optional Injection (MS data) and/or Fingerprint (bioactivity).
 - **Injection**: raw LC/MS data. Contains ScanArrays (MS1, optionally MS2) and Ensembles.
 - **ScanArray**: structured numpy array of (mz, intensity, scan_num) across scans.
-- **Ensemble**: a group of coeluting ions (cofeatures) extracted from a ScanArray. The central analytical unit.
-- **EnsembleAlignment**: cross-sample alignment of Ensembles. Contains AlignedAnalytes mapping SampleUUID -> EnsembleUUID. Immutable after creation.
-- **DataRegistry**: central in-memory store. Holds Samples and EnsembleAlignments. Uses Qt signals for change notification.
+- **Ensemble**: a group of coeluting ions (cofeatures) extracted from a ScanArray. The central analytical unit. All annotations live on it (`formula_assignment`, `annotation`, peak-level annotations); edit them via `DataRegistry.update_ensemble` (emits `sigEnsembleAnnotated`).
+- **EnsembleAlignment**: cross-sample alignment of Ensembles (MS1 + RT only). Contains AlignedAnalytes mapping SampleUUID -> EnsembleUUID. Immutable after creation. An analyte's annotations are display-only aggregates over its members.
+- **EnsembleGroup**: a user basket of EnsembleUUIDs (title, notes, SMILES), independent of alignments.
+- **DataRegistry**: central in-memory store. Holds Samples, EnsembleAlignments, EnsembleGroups and SimilarityMatrices. Uses Qt signals for change notification.
 
 ## Persistence (.mzk files)
 
 - `.mzk` files are ZIP archives containing JSON + pickle.
 - `save_project()` / `load_project()` in `core/utils/persistence.py`.
-- `load_project()` returns `(samples, alignments, assignments)` tuple.
+- `load_project()` returns `ProjectData(samples, alignments, groups, matrices)`; ensembles carry their own annotations.
 - Alignment JSON I/O (standalone, outside .mzk): `save_alignment_json()` / `load_alignment_json()` in `core/cli/main.py`.
 
 ## CLI tools (core/cli/)
@@ -50,7 +51,7 @@ tests/
 All processing logic lives here as plain functions — no Qt dependency. The GUI calls these via ProcessController (threaded).
 
 - `generate_ensemble.py` - Extract Ensembles from an Injection at given m/z coordinates
-- `align_ensembles.py` - Cross-sample alignment by spectral cosine similarity
+- `align_ensembles.py` - Cross-sample alignment by MS1 cosine similarity within an RT window
 - `filter_alignment.py` - Filter an EnsembleAlignment by Python expression
 - `import_feature_table.py` - Import external feature coordinates (MZmine CSV) and generate Ensembles + alignment
 - `export_table.py` - Export an EnsembleAlignment as abundance + formula tables (CSV/TSV), plus companion .mgf, .graphml and sample similarity (GUI: following the Alignment Viewer's applied clustering settings)

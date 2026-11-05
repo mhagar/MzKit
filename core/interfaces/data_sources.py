@@ -11,7 +11,7 @@ if TYPE_CHECKING:
         GroupUUID,
     )
     from core.data_structs.alignment import EnsembleAlignment
-    from core.data_structs.analyte_group import AnalyteGroup
+    from core.data_structs.ensemble_group import EnsembleGroup
     from core.data_structs.similarity_matrix import SimilarityMatrix
 
 class SampleDataSource(Protocol):
@@ -127,6 +127,13 @@ class EnsembleDataSource(Protocol):
     ):
         ...
 
+    def remove_ensembles(
+        self,
+        uuids: Iterable['EnsembleUUID'],
+    ):
+        """Delete ensembles from their injections (and from groups)"""
+        ...
+
     def set_chosen_candidate(
         self,
         uuid: 'EnsembleUUID',
@@ -142,27 +149,27 @@ class EnsembleDataSource(Protocol):
 
 class GroupDataSource(Protocol):
     """
-    Structural contract for the read/subscribe surface over AnalyteGroups.
+    Structural contract for the read/subscribe surface over EnsembleGroups.
     """
     def get_group(
         self,
         uuid: 'GroupUUID',
-    ) -> Optional['AnalyteGroup']:
+    ) -> Optional['EnsembleGroup']:
         ...
 
-    def get_all_groups(self) -> list['AnalyteGroup']:
+    def get_all_groups(self) -> list['EnsembleGroup']:
         ...
 
-    def groups_for_analytes(
+    def groups_for_ensembles(
         self,
-        analyte_uuids: Iterable['AnalyteUUID'],
-    ) -> list['AnalyteGroup']:
-        """Groups with any member in `analyte_uuids`."""
+        ensemble_uuids: Iterable['EnsembleUUID'],
+    ) -> list['EnsembleGroup']:
+        """Groups with any member in `ensemble_uuids`."""
         ...
 
     def register_group(
         self,
-        group: 'AnalyteGroup',
+        group: 'EnsembleGroup',
     ):
         ...
 
@@ -174,7 +181,7 @@ class GroupDataSource(Protocol):
 
     def notify_group_updated(
         self,
-        group: 'AnalyteGroup',
+        group: 'EnsembleGroup',
     ):
         """
         Groups are edited in place; call this after every edit so

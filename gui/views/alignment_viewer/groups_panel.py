@@ -1,34 +1,47 @@
 """
-The Inspector's groups area: a combo of every `AnalyteGroup` the selected
-analytes belong to, and edit / delete / membership
-buttons. Every edit goes through the registry (`notify_group_updated`).
+The Inspector's groups area: a combo of every `EnsembleGroup` the selection
+belongs to, and edit / delete / membership buttons. A selected analyte stands
+for all of its member ensembles. Every edit goes through the registry
+(`notify_group_updated`).
 """
 from typing import Iterable, Optional, TYPE_CHECKING
 
 from PyQt5 import QtCore, QtWidgets
 
-from gui.views.alignment_viewer.group_dialog import AnalyteGroupDialog
+from gui.views.alignment_viewer.group_dialog import EnsembleGroupDialog
 
 if TYPE_CHECKING:
-    from core.data_structs.analyte_group import AnalyteGroup
-    from core.data_structs.uuid_types import AnalyteUUID
+    from core.data_structs.ensemble_group import EnsembleGroup
+    from core.data_structs.uuid_types import EnsembleUUID
     from gui.views.alignment_viewer.data_source import AlignmentViewerDataSource
     from gui.widgets.alignment_plot.layout import HoverTarget
 
 
-def selection_analyte_uuids(targets: Iterable['HoverTarget']) -> list['AnalyteUUID']:
-    """AnalyteUUIDs behind plot targets (ensembles -> their analyte), deduped, in order."""
+def selection_ensemble_uuids(targets: Iterable['HoverTarget']) -> list['EnsembleUUID']:
+    """
+    EnsembleUUIDs behind plot targets (an analyte -> all its members, an
+    ensemble -> itself), deduped, in order.
+    """
     found = {}
     for t in targets:
-        if t.kind in ('ensemble', 'analyte') and t.analyte is not None:
-            found.setdefault(t.analyte.uuid, None)
+        if t.analyte is None:
+            continue
+        if t.kind == 'analyte':
+            uuids = t.analyte.ensemble_map.values()
+        elif t.kind == 'ensemble':
+            uuids = [t.analyte.ensemble_map.get(t.sample_uuid)]
+        else:
+            continue
+        for u in uuids:
+            if u is not None:
+                found.setdefault(u, None)
     return list(found)
 
 
-def members_in_view(group: 'AnalyteGroup', in_view: set) -> str:
-    """'n of m': members present in the shown alignment / all members."""
-    n = sum(1 for u in group.analyte_uuids if u in in_view)
-    return f"{n} of {len(group.analyte_uuids)}"
+def members_in_view(group: 'EnsembleGroup', in_view: set) -> str:
+    """'n of m': member ensembles in the shown alignment / all members."""
+    n = sum(1 for u in group.ensemble_uuids if u in in_view)
+    return f"{n} of {len(group.ensemble_uuids)}"
 
 
 class GroupsPanel(QtCore.QObject):
@@ -47,7 +60,7 @@ class GroupsPanel(QtCore.QObject):
         self.combo = combo
         self.btn_edit, self.btn_delete = btn_edit, btn_delete
         self.btn_add, self.btn_remove = btn_add, btn_remove
-        self._selection: list['AnalyteUUID'] = []
+        self._selection: list['EnsembleUUID'] = []
         self._in_view: set = set()
 
         combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -59,9 +72,9 @@ class GroupsPanel(QtCore.QObject):
         for button, text, tip, slot in (
             (btn_edit, "Edit", "Edit the group's title, notes and structure", self._edit),
             (btn_delete, "Del", "Delete the group", self._delete),
-            (btn_add, "Add", "Add the selected analytes to the group", self._add),
+            (btn_add, "Add", "Add the selection (an analyte: all its members) to the group", self._add),
             (btn_remove, "Remove",
-             "Remove the selected analytes from the group "
+             "Remove the selection (an analyte: all its members) from the group "
              "(removing the last member deletes it)", self._remove),
         ):
             button.setText(text)
@@ -69,14 +82,14 @@ class GroupsPanel(QtCore.QObject):
             button.clicked.connect(slot)
         self.refresh(set(), [])
 
-    def refresh(self, in_view: set, selection: list['AnalyteUUID']):
+    def refresh(self, in_view: set, selection: list['EnsembleUUID']):
         """
-        :param in_view: the shown alignment's AnalyteUUIDs.
-        :param selection: the selected AnalyteUUIDs.
+        :param in_view: the shown alignment's member EnsembleUUIDs.
+        :param selection: the selected EnsembleUUIDs (see selection_ensemble_uuids).
         """
         current = self.current_group()
         self._in_view, self._selection = in_view, selection
-        groups = self.data_source.groups_for_analytes(selection) if selection else []
+        groups = self.data_source.groups_for_ensembles(selection) if selection else []
         with QtCore.QSignalBlocker(self.combo):
             self.combo.clear()
             for g in groups:
@@ -94,14 +107,14 @@ class GroupsPanel(QtCore.QObject):
         self.combo.setEnabled(bool(groups))
         self._update_current()
 
-    def current_group(self) -> Optional['AnalyteGroup']:
+    def current_group(self) -> Optional['EnsembleGroup']:
         return self.combo.currentData()
 
     def _update_current(self, *_):
         group = self.current_group()
         self.btn_edit.setEnabled(group is not None)
         self.btn_delete.setEnabled(group is not None)
-        members = set(group.analyte_uuids) if group else set()
+        members = set(group.ensemble_uuids) if group else set()
         self.btn_add.setEnabled(group is not None and not members.issuperset(self._selection))
         self.btn_remove.setEnabled(not members.isdisjoint(self._selection))
 
@@ -110,7 +123,7 @@ class GroupsPanel(QtCore.QObject):
     def _edit(self, *_):
         group = self.current_group()
         if group is not None:
-            AnalyteGroupDialog(
+            EnsembleGroupDialog(
                 self.data_source, [], group=group, parent=self.combo.window(),
             ).exec_()
 
@@ -121,7 +134,7 @@ class GroupsPanel(QtCore.QObject):
         answer = QtWidgets.QMessageBox.question(
             self.combo.window(), "Delete group",
             f"Delete the group '{group.title or '(untitled)'}' "
-            f"({len(group.analyte_uuids)} members)?",
+            f"({len(group.ensemble_uuids)} members)?",
         )
         if answer == QtWidgets.QMessageBox.Yes:
             self.data_source.remove_group(group.uuid)
@@ -130,7 +143,7 @@ class GroupsPanel(QtCore.QObject):
         group = self.current_group()
         if group is None:
             return
-        group.analyte_uuids = list(dict.fromkeys(group.analyte_uuids + self._selection))
+        group.ensemble_uuids = list(dict.fromkeys(group.ensemble_uuids + self._selection))
         self.data_source.notify_group_updated(group)
 
     def _remove(self):
@@ -138,8 +151,8 @@ class GroupsPanel(QtCore.QObject):
         if group is None:
             return
         drop = set(self._selection)
-        group.analyte_uuids = [u for u in group.analyte_uuids if u not in drop]
-        if group.analyte_uuids:
+        group.ensemble_uuids = [u for u in group.ensemble_uuids if u not in drop]
+        if group.ensemble_uuids:
             self.data_source.notify_group_updated(group)
         else:
             self.data_source.remove_group(group.uuid)

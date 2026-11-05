@@ -51,13 +51,15 @@ def test_widget_packs_overlapping_groups(qapp):
         AlignmentGroupTrackWidget, LANE_PX,
     )
     track = AlignmentGroupTrackWidget()
-    x_of = {1: 0.0, 2: 5.0, 3: 3.0, 4: 8.0}
+    x_of = {1: 0.0, 2: 5.0, 3: 3.0, 4: 8.0}            # analyte -> x
+    analyte_of = {101: 1, 102: 2, 103: 3, 104: 4, 204: 4}   # member ensemble -> analyte
     groups = [
-        SimpleNamespace(uuid=10, title="A", analyte_uuids=[1, 2]),
-        SimpleNamespace(uuid=11, title="B", analyte_uuids=[3, 4, 99]),
-        SimpleNamespace(uuid=12, title="hidden", analyte_uuids=[98]),
+        SimpleNamespace(uuid=10, title="A", ensemble_uuids=[101, 102]),
+        # two members of analyte 4: one tick; 999 is in no shown analyte
+        SimpleNamespace(uuid=11, title="B", ensemble_uuids=[103, 104, 204, 999]),
+        SimpleNamespace(uuid=12, title="hidden", ensemble_uuids=[998]),
     ]
-    track.set_groups(groups, x_of)
+    track.set_groups(groups, x_of, analyte_of)
     assert track.has_visible_groups()
     assert [r.lane for r in track._rows] == [0, 1]
     assert track._rows[1].n_hidden == 1
@@ -67,9 +69,9 @@ def test_widget_packs_overlapping_groups(qapp):
     track.sigGroupHovered.connect(hovered.append)
     track._on_row_hovered(1)
     assert hovered == [[3, 4]]
-    assert "1 members not shown" in track.toolTip()
+    assert "1 member ensembles not in this alignment" in track.toolTip()
 
     track.clear_groups()
     assert not track.has_visible_groups()
-    track.set_groups(groups[2:], x_of)
+    track.set_groups(groups[2:], x_of, analyte_of)
     assert not track.has_visible_groups()

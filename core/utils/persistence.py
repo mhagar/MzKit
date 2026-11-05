@@ -27,7 +27,7 @@ from core.data_structs.formula_assignment import (
     FormulaAssignment,
     AssignedCandidate,
 )
-from core.data_structs.analyte_group import AnalyteGroup
+from core.data_structs.ensemble_group import EnsembleGroup
 from core.data_structs.similarity_matrix import ImportParams, SimilarityMatrix
 
 import logging
@@ -44,7 +44,7 @@ from typing import NamedTuple, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-__version__ = "1.5.0"
+__version__ = "2.0.0"
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +52,7 @@ class ProjectData(NamedTuple):
     """Everything load_project() reconstitutes from an .mzk file."""
     samples: list[Sample]
     alignments: list[EnsembleAlignment]
-    groups: list[AnalyteGroup]
+    groups: list[EnsembleGroup]
     matrices: list[SimilarityMatrix]
 
 def save_project(
@@ -233,41 +233,25 @@ def deserialize_assignment(data: Optional[dict]) -> Optional['FormulaAssignment'
 
 
 def serialize_group(
-    group: 'AnalyteGroup',
+    group: 'EnsembleGroup',
     zf: 'zipfile.ZipFile',
 ):
-    group_dict = {
-        'uuid': group.uuid,
-        'analyte_uuids': list(group.analyte_uuids),
-        'title': group.title,
-        'notes': group.notes,
-        'smiles': group.smiles,
-        'created_at': group.created_at,
-        'provenance': group.provenance,
-    }
+    # Primitive-only, so asdict round-trips it
     zf.writestr(
         f"groups/{group.uuid}.json",
-        data=json.dumps(group_dict, indent=2),
+        data=json.dumps(asdict(group), indent=2),
     )
 
 
 def deserialize_group(
     group_path: str,
     zf: 'zipfile.ZipFile',
-) -> 'AnalyteGroup':
+) -> Optional['EnsembleGroup']:
+    """None for a pre-2026-11 group of analytes (not migrated)."""
     data = json.loads(zf.read(group_path))
-    # .get() defaults keep later field additions backward compatible
-    group = AnalyteGroup(
-        analyte_uuids=data['analyte_uuids'],
-        uuid=data['uuid'],
-        title=data.get('title', ''),
-        notes=data.get('notes', ''),
-        smiles=data.get('smiles', ''),
-        provenance=data.get('provenance'),
-    )
-    if 'created_at' in data:
-        group.created_at = data['created_at']
-    return group
+    if 'ensemble_uuids' not in data:
+        return None
+    return EnsembleGroup(**data)
 
 
 def serialize_matrix(
@@ -491,7 +475,7 @@ def load_project(
     """
     Given a path to an .mzk file generated using save_project(),
     reconstitutes Samples (their ensembles carrying formula assignments),
-    EnsembleAlignments and AnalyteGroups.
+    EnsembleAlignments and EnsembleGroups.
 
     :param filepath: Path to .mzk file
     :return: ProjectData(samples, alignments, groups, matrices)
@@ -500,7 +484,7 @@ def load_project(
 
     samples: list[Sample] = []
     alignments: list[EnsembleAlignment] = []
-    groups: list[AnalyteGroup] = []
+    groups: list[EnsembleGroup] = []
     matrices: list[SimilarityMatrix] = []
 
     with zipfile.ZipFile(
@@ -574,14 +558,21 @@ def load_project(
                 "format version and are not loaded; please re-run find-mfs."
             )
 
-        # Load analyte groups (absent before 1.4.0)
+        # Load ensemble groups (absent before 1.4.0)
         group_paths = [
             name for name in zf.namelist()
             if name.startswith('groups/')
             and name.endswith('.json')
         ]
         for group_path in group_paths:
-            groups.append(deserialize_group(group_path, zf))
+            group = deserialize_group(group_path, zf)
+            if group is None:
+                logger.warning(
+                    f"Skipping group {group_path}: a group of analytes saved by "
+                    f"an older format version; please re-create it."
+                )
+                continue
+            groups.append(group)
 
         # Load similarity matrices (absent before 1.4.0)
         matrices = [

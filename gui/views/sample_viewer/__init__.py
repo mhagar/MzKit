@@ -875,8 +875,7 @@ class SampleViewer(
         )
 
         if reply == QtWidgets.QMessageBox.Yes:
-            injection = self.model.getInjection(sample_uuid)
-            injection.remove_ensemble(ensemble_uuid)
+            self.data_source.remove_ensembles([ensemble_uuid])
 
             # Remove from UI
             widget = self.viewSampleStack.sample_wdgt_mgr.get_widget(sample_uuid)
@@ -1281,7 +1280,7 @@ class SampleViewer(
             return
 
         for uuid, injection in injections:
-            injection.remove_all_ensembles()
+            self.data_source.remove_ensembles(list(injection.ensembles))
 
             # Drop any dangling ensemble selection belonging to this sample.
             if (

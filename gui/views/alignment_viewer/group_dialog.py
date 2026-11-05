@@ -1,6 +1,7 @@
 """
-Dialog creating or editing an `AnalyteGroup` (title, notes, SMILES with a
-live structure preview) for the Alignment Viewer.
+Dialog creating or editing an `EnsembleGroup` (title, notes, SMILES with a
+live structure preview) for the Alignment Viewer. A selected analyte stands
+for all of its member ensembles.
 
 Exact-match rule (`match_groups`): grouping a selection whose membership
 equals an existing group's edits that group instead; if groups merely
@@ -11,29 +12,29 @@ from typing import Iterable, Optional, TYPE_CHECKING
 
 from PyQt5 import QtCore, QtWidgets
 
-from core.data_structs.analyte_group import AnalyteGroup
+from core.data_structs.ensemble_group import EnsembleGroup
 from core.utils.render_molecule import smiles_to_svg
 from gui.resources.AnalyteGroupDialog import Ui_Dialog
 
 if TYPE_CHECKING:
-    from core.data_structs.uuid_types import AnalyteUUID
+    from core.data_structs.uuid_types import EnsembleUUID
     from gui.views.alignment_viewer.data_source import AlignmentViewerDataSource
 
 
 def match_groups(
-    analyte_uuids: Iterable['AnalyteUUID'],
-    groups: Iterable[AnalyteGroup],
-) -> tuple[Optional[AnalyteGroup], list[AnalyteGroup]]:
+    ensemble_uuids: Iterable['EnsembleUUID'],
+    groups: Iterable[EnsembleGroup],
+) -> tuple[Optional[EnsembleGroup], list[EnsembleGroup]]:
     """
     (the group whose membership equals the selection, or None;
     the groups sharing members with it - empty when there is an exact match).
     """
-    selection = set(analyte_uuids)
+    selection = set(ensemble_uuids)
     groups = list(groups)
     for group in groups:
-        if set(group.analyte_uuids) == selection:
+        if set(group.ensemble_uuids) == selection:
             return group, []
-    return None, [g for g in groups if not selection.isdisjoint(g.analyte_uuids)]
+    return None, [g for g in groups if not selection.isdisjoint(g.ensemble_uuids)]
 
 
 def jsonable(value):
@@ -71,9 +72,9 @@ def show_smiles(svg_widget, smiles: str) -> list[str]:
     return warnings
 
 
-class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
+class EnsembleGroupDialog(QtWidgets.QDialog, Ui_Dialog):
     """
-    :param analyte_uuids: the selection to group (ignored when `group` is given).
+    :param ensemble_uuids: the selection to group (ignored when `group` is given).
     :param provenance: stored on a newly created group.
     :param group: edit this group directly (no matching).
     """
@@ -81,30 +82,30 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
     def __init__(
         self,
         data_source: 'AlignmentViewerDataSource',
-        analyte_uuids: list['AnalyteUUID'],
+        ensemble_uuids: list['EnsembleUUID'],
         provenance: Optional[dict] = None,
-        group: Optional[AnalyteGroup] = None,
+        group: Optional[EnsembleGroup] = None,
         parent=None,
     ):
         super().__init__(parent)
         self.setupUi(self)
         self.data_source = data_source
-        self._analyte_uuids = list(dict.fromkeys(analyte_uuids))
+        self._ensemble_uuids = list(dict.fromkeys(ensemble_uuids))
         self._provenance = provenance
 
-        overlapping: list[AnalyteGroup] = []
+        overlapping: list[EnsembleGroup] = []
         if group is None:
             group, overlapping = match_groups(
-                self._analyte_uuids,
-                data_source.groups_for_analytes(self._analyte_uuids),
+                self._ensemble_uuids,
+                data_source.groups_for_ensembles(self._ensemble_uuids),
             )
         self._group = group     # edited in place on accept, else None
         self._overlapping = overlapping
 
-        n = len(self._analyte_uuids) if group is None else len(group.analyte_uuids)
+        n = len(self._ensemble_uuids) if group is None else len(group.ensemble_uuids)
         self.setWindowTitle(
-            f"{'Edit' if group is not None else 'New'} Analyte Group "
-            f"({n} analyte{'' if n == 1 else 's'})"
+            f"{'Edit' if group is not None else 'New'} Group "
+            f"({n} ensemble{'' if n == 1 else 's'})"
         )
         self.labelSmilesWarning.setWordWrap(True)
         self.labelSmilesWarning.setStyleSheet("color: #c33")
@@ -114,7 +115,7 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
             widget.setVisible(bool(overlapping))
         for g in overlapping:
             self.listOverlapping.addItem(
-                f"{g.title or '(untitled)'} - {len(g.analyte_uuids)} members"
+                f"{g.title or '(untitled)'} - {len(g.ensemble_uuids)} members"
             )
         self.radioCreateNew.setChecked(True)
 
@@ -134,13 +135,13 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
 
         self._load(group)
 
-    def _load(self, group: Optional[AnalyteGroup]):
+    def _load(self, group: Optional[EnsembleGroup]):
         self.editTitle.setText(group.title if group else "")
         self.editNotes.setPlainText(group.notes if group else "")
         self.editSmiles.setText(group.smiles if group else "")
         self._update_preview()
 
-    def _picked(self) -> Optional[AnalyteGroup]:
+    def _picked(self) -> Optional[EnsembleGroup]:
         row = self.listOverlapping.currentRow()
         return self._overlapping[row] if 0 <= row < len(self._overlapping) else None
 
@@ -161,23 +162,18 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         self.labelSmilesWarning.setVisible(bool(warnings))
 
     def _member_formulas(self) -> list[str]:
-        """Each member analyte's consensus formula, as the viewer shows it."""
-        from gui.views.alignment_viewer.context import AlignmentContext
+        """The member ensembles' formulae (accepted, else top candidate), deduplicated."""
+        from core.utils.formula_formatting import format_assignment_formula_text
         group = self._group or (
             self._picked() if self.radioEditExisting.isChecked() else None
         )
-        uuids = group.analyte_uuids if group is not None else self._analyte_uuids
-        formulas: dict['AnalyteUUID', str] = {}
-        for alignment_uuid in self.data_source.get_all_alignment_uuids():
-            ctx = AlignmentContext(
-                self.data_source.get_alignment(alignment_uuid), self.data_source,
-            )
-            for uuid in uuids:
-                analyte = ctx.alignment.get_analyte(uuid)
-                if uuid not in formulas and analyte is not None:
-                    if agreement := ctx.formula_agreement(analyte):
-                        formulas[uuid] = agreement[0]
-        return list(formulas.values())
+        uuids = group.ensemble_uuids if group is not None else self._ensemble_uuids
+        ensembles = (self.data_source.get_ensemble(u) for u in uuids)
+        formulas = (
+            format_assignment_formula_text(e.formula_assignment).rstrip('?')
+            for e in ensembles if e is not None
+        )
+        return list(dict.fromkeys(f for f in formulas if f))
 
     def _run_snap_mfs(self):
         """Testing hook: run SNAP-MFs on the members' formulae, print to stdout (blocks)."""
@@ -194,7 +190,7 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         min_size = self.spinSnapMfsMinSize.value()
         source = self.comboDatabase.currentText()
         formulas = self._member_formulas()
-        print(f"SNAP-MFs on {len(formulas)} analyte formulae: {sorted(set(formulas))}")
+        print(f"SNAP-MFs on {len(formulas)} member formulae: {sorted(formulas)}")
         if not formulas:
             return
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
@@ -222,8 +218,8 @@ class AnalyteGroupDialog(QtWidgets.QDialog, Ui_Dialog):
         title = self.editTitle.text().strip()
         notes = self.editNotes.toPlainText().strip()
         if group is None:
-            self.data_source.register_group(AnalyteGroup(
-                analyte_uuids=self._analyte_uuids, title=title, notes=notes,
+            self.data_source.register_group(EnsembleGroup(
+                ensemble_uuids=self._ensemble_uuids, title=title, notes=notes,
                 smiles=smiles, provenance=self._provenance,
             ))
         else:

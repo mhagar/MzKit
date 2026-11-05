@@ -1,9 +1,12 @@
 """
-Tests for the AnalyteGroup surface of DataRegistry: the analyte index,
-orphan collection on alignment removal, and groups surviving a filter.
+Tests for the EnsembleGroup surface of DataRegistry: the ensemble index,
+groups outliving alignments, pruning with their ensembles, and per-analyte
+titles for exports.
 """
+from types import SimpleNamespace
+
 from core.cli.filter_alignment import filter_alignment
-from core.data_structs import AnalyteGroup, DataRegistry
+from core.data_structs import DataRegistry, Ensemble, EnsembleGroup
 from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
 
 
@@ -12,66 +15,89 @@ def _alignment(analytes):
 
 
 def _analytes(n):
+    """Analyte i's one member is ensemble i of sample 1."""
     return [
         AlignedAnalyte(ensemble_map={1: i}, consensus_rt=10.0 * i, consensus_mz=100.0 + i)
         for i in range(n)
     ]
 
 
-def test_groups_for_analytes():
-    a = _analytes(4)
+def _registry(n_ensembles):
+    """A registry holding sample 1 with bare ensembles 0..n-1."""
+    injection = SimpleNamespace(ensembles={i: Ensemble([], [], uuid=i) for i in range(n_ensembles)})
+    injection.remove_ensemble = injection.ensembles.pop
     reg = DataRegistry()
-    g1 = AnalyteGroup([a[0].uuid, a[1].uuid])
-    g2 = AnalyteGroup([a[1].uuid, a[2].uuid])
+    reg.register_sample(SimpleNamespace(uuid=1, name='s', fingerprint=None, injection=injection))
+    return reg
+
+
+def test_groups_for_ensembles():
+    reg = DataRegistry()
+    g1 = EnsembleGroup([0, 1])
+    g2 = EnsembleGroup([1, 2])
     reg.register_group(g1)
     reg.register_group(g2)
 
-    assert reg.groups_for_analytes([a[0].uuid]) == [g1]
-    assert reg.groups_for_analytes([a[1].uuid]) == [g1, g2]
-    assert reg.groups_for_analytes([a[3].uuid]) == []
+    assert reg.groups_for_ensembles([0]) == [g1]
+    assert reg.groups_for_ensembles([1]) == [g1, g2]
+    assert reg.groups_for_ensembles([3]) == []
 
     # In-place edit + notify re-indexes
-    g1.analyte_uuids.append(a[3].uuid)
+    g1.ensemble_uuids.append(3)
     reg.notify_group_updated(g1)
-    assert reg.groups_for_analytes([a[3].uuid]) == [g1]
+    assert reg.groups_for_ensembles([3]) == [g1]
 
     reg.remove_group(g1.uuid)
-    assert reg.groups_for_analytes([a[0].uuid, a[3].uuid]) == []
+    assert reg.groups_for_ensembles([0, 3]) == []
     assert reg.get_all_groups() == [g2]
 
 
-def test_remove_alignment_collects_orphan_groups():
-    a = _analytes(3)
-    first = _alignment(a[:2])
-    second = _alignment(a[1:])   # shares a[1]
-    reg = DataRegistry()
-    reg.register_alignment(first)
-    reg.register_alignment(second)
+def test_groups_outlive_alignments_and_go_with_their_ensembles():
+    reg = _registry(3)
+    alignment = _alignment(_analytes(3))
+    reg.register_alignment(alignment)
+    pair, single = EnsembleGroup([0, 1]), EnsembleGroup([2])
+    reg.register_group(pair)
+    reg.register_group(single)
 
-    survives = AnalyteGroup([a[0].uuid, a[1].uuid])   # a[1] lives on in `second`
-    orphaned = AnalyteGroup([a[0].uuid])
-    reg.register_group(survives)
-    reg.register_group(orphaned)
+    reg.remove_alignment(alignment.uuid)   # alignments are cheap; groups aren't
+    assert reg.get_all_groups() == [pair, single]
 
-    removed = []
+    updated, removed = [], []
+    reg.sigGroupUpdated.connect(updated.append)
     reg.sigGroupRemoved.connect(removed.append)
-    reg.remove_alignment(first.uuid)
+    reg.remove_ensembles([1, 2])
+    assert reg.get_ensemble(1) is None and reg.get_ensemble(0) is not None
+    assert pair.ensemble_uuids == [0] and updated == [pair]
+    assert removed == [single]          # left empty
 
-    assert reg.get_all_groups() == [survives]
-    assert removed == [orphaned]
-
-    reg.clear()
+    reg.remove_sample(1)                # takes ensemble 0, and so `pair`
     assert reg.get_all_groups() == []
+
+
+def test_group_titles_are_per_analyte_over_its_members():
+    analytes = [
+        AlignedAnalyte(ensemble_map={1: 10, 2: 20}),
+        AlignedAnalyte(ensemble_map={1: 11}),
+        AlignedAnalyte(ensemble_map={1: 12}),
+    ]
+    reg = DataRegistry()
+    reg.register_group(EnsembleGroup([20, 11], title="Sugars", created_at=1.0))
+    reg.register_group(EnsembleGroup([10], title="Glucose", created_at=2.0))
+    reg.register_group(EnsembleGroup([10], title="Sugars", created_at=3.0))   # same title: once
+    reg.register_group(EnsembleGroup([12], title="", created_at=4.0))         # untitled: skipped
+    titles = reg.group_titles(_alignment(analytes))
+    assert titles == {analytes[0].uuid: "Sugars;Glucose", analytes[1].uuid: "Sugars"}
 
 
 def test_filter_keeps_groups():
     """Mirrors `mzkit filter`: register the filtered child, then remove the
-    parent. Children share the parent's analytes, so groups carry over."""
+    parent. Groups are on ensembles, so they carry over."""
     a = _analytes(3)
     parent = _alignment(a)
     reg = DataRegistry()
     reg.register_alignment(parent)
-    group = AnalyteGroup([a[2].uuid], title="late eluter")
+    group = EnsembleGroup([2], title="late eluter")
     reg.register_group(group)
 
     child = filter_alignment(parent, "rt > 15", sample_names={1: "S1"}).alignment
@@ -80,7 +106,7 @@ def test_filter_keeps_groups():
     reg.register_alignment(child)
     reg.remove_alignment(parent.uuid)
     assert reg.get_all_groups() == [group]
-    assert reg.group_titles() == {a[2].uuid: "late eluter"}
+    assert reg.group_titles(child) == {a[2].uuid: "late eluter"}
 
 
 def test_ensemble_annotation_outlives_its_alignment():

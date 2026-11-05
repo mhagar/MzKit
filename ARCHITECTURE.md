@@ -62,11 +62,14 @@ DataRegistry                       core/data_structs/data_registry.py
 │   │        └── Ensemble          ensemble/    — THE analytical unit (+ ms2.py, annotations.py)
 │   │             ├── ms1_cofeatures: [FeaturePointer]   feature_pointer.py
 │   │             ├── ms2_cofeatures: [FeaturePointer]
-│   │             └── annotations: IonAnnotation / MzDiffAnnotation /
-│   │                              IonPairAnnotation / GenericAnnotation
+│   │             ├── peak annotations: IonAnnotation / MzDiffAnnotation /
+│   │             │                     IonPairAnnotation / GenericAnnotation
+│   │             ├── formula_assignment: FormulaAssignment   formula_assignment.py
+│   │             └── annotation: EnsembleAnnotation (structure hypotheses, name, notes)
 │   └── Fingerprint    [optional]  fingerprint.py — bioassay data, "stapled" on
 ├── EnsembleAlignment(s)           alignment.py — cross-sample grouping (immutable)
 │    └── AlignedAnalyte            — maps {SampleUUID -> EnsembleUUID} per sample
+├── EnsembleGroup(s)               ensemble_group.py — user baskets of ensembles
 └── SimilarityMatrix(es)           similarity_matrix.py — analyte x analyte scores
 ```
 
@@ -104,9 +107,15 @@ Key types (all in `core/data_structs/`):
   than copies of the data.
 - **Ensemble** — a group of coeluting ions (cofeatures) at one RT. The unit the
   user actually inspects and annotates. Caches base peak / RT / m/z on
-  `set_injection`. Carries user annotations and user-editable identity/formula.
-- **EnsembleAlignment / AlignedAnalyte** — cross-sample grouping. The alignment
-  *is* the grouping (there is no separate "analyte table" abstraction); it is
+  `set_injection`. **Every annotation lives on the Ensemble** (peak-level
+  annotations, formula assignment, structure annotation) and is edited through
+  `DataRegistry.update_ensemble`, which emits `sigEnsembleAnnotated`.
+  Annotations are expensive user work; alignments are cheap and get redone.
+- **EnsembleAlignment / AlignedAnalyte** — cross-sample grouping, by MS1 + RT
+  only. The alignment *is* the grouping (there is no separate "analyte table"
+  abstraction) and only claims which Ensembles are the same compound: an
+  analyte's formula / structure / groups are display-time aggregates of its
+  members' (gui/views/alignment_viewer/context.py), never stored. It is
   **immutable** — adding a sample means re-aligning. Produced by the algorithm in
   `core/cli/align_ensembles.py`, but the data types live in
   `core/data_structs/alignment.py` (so `data_registry` and `persistence` can
@@ -211,9 +220,9 @@ the round-trip.
   (structure hypotheses + the chosen one, name, notes). All are primitive-only
   dataclasses round-tripped with `asdict` / `Cls(**d)`.
 - **Back-compat:** deserializers use `.get(..., default)` for fields added over
-  time. The 2026-11 annotation rework (docs/annotation-rework-plan.md) broke it
-  on purpose: older `assignments/` and `annotations/` folders are skipped with a
-  warning.
+  time. The 2026-11 annotation rework (format 2.0.0) broke it on purpose: older
+  `assignments/` and `annotations/` folders and analyte-keyed groups are
+  skipped with a warning.
 
 Known trade-offs (fine for V1, flagged for later):
 

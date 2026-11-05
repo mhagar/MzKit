@@ -5,7 +5,7 @@ The viewer needs five surfaces over the same source:
  - Sample lookups (to resolve an analyte's member ensembles + sample names)
  - Alignment lookups (the alignments it displays)
  - Ensemble lookups (formula assignments + annotations of the members)
- - AnalyteGroup lookups (user annotations of analyte baskets)
+ - EnsembleGroup lookups (user annotations of baskets of ensembles)
  - SimilarityMatrix lookups (cluster mode)
 
 This just composes them into a single type for the viewer to depend on

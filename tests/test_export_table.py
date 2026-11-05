@@ -116,17 +116,18 @@ def test_abundance_table(stubbed):
 
 
 def test_abundance_table_group_column(stubbed):
-    """Group titles from DataRegistry.group_titles() fill the group column
-    and the GraphML node attribute."""
-    from core.data_structs import AnalyteGroup, DataRegistry
+    """Group titles from DataRegistry.group_titles(alignment) fill the group
+    column and the GraphML node attribute."""
+    from core.data_structs import EnsembleGroup, DataRegistry
 
     alignment, samples, names, _ = stubbed
     a0, a1, _a2 = alignment.analytes
+    e0, e1 = (next(iter(a.ensemble_map.values())) for a in (a0, a1))
     registry = DataRegistry()
-    registry.register_group(AnalyteGroup([a0.uuid, a1.uuid], title='Sugars', created_at=1.0))
-    registry.register_group(AnalyteGroup([a0.uuid], title='Glucose', created_at=2.0))
-    registry.register_group(AnalyteGroup([a1.uuid], title='', created_at=3.0))
-    titles = registry.group_titles()
+    registry.register_group(EnsembleGroup([e0, e1], title='Sugars', created_at=1.0))
+    registry.register_group(EnsembleGroup([e0], title='Glucose', created_at=2.0))
+    registry.register_group(EnsembleGroup([e1], title='', created_at=3.0))
+    titles = registry.group_titles(alignment)
 
     _header, r0, r1, r2 = _rows(
         export_abundance_table(alignment, samples, names, groups=titles)
