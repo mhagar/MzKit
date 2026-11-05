@@ -40,7 +40,7 @@ from dataclasses import asdict
 
 import numpy as np
 
-from typing import NamedTuple, TYPE_CHECKING
+from typing import NamedTuple, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
@@ -52,7 +52,6 @@ class ProjectData(NamedTuple):
     """Everything load_project() reconstitutes from an .mzk file."""
     samples: list[Sample]
     alignments: list[EnsembleAlignment]
-    assignments: list[FormulaAssignment]
     groups: list[AnalyteGroup]
     matrices: list[SimilarityMatrix]
     annotations: list[AnalyteAnnotation]
@@ -142,18 +141,6 @@ def save_project(
             for alignment in alignments:
                 serialize_alignment(alignment, zf)
 
-        # Serialize formula assignments
-        assignments = [
-            data_registry.get_assignment_for_source(source_uuid)
-            for source_uuid in data_registry.get_all_assignment_source_uuids()
-        ]
-        if assignments:
-            logger.info(
-                f"Packaging {len(assignments)} formula assignments"
-            )
-            for assignment in assignments:
-                serialize_assignment(assignment, zf)
-
         # Serialize analyte groups
         groups = data_registry.get_all_groups()
         if groups:
@@ -241,23 +228,14 @@ def deserialize_alignment(
     )
 
 
-def serialize_assignment(
-    assignment: 'FormulaAssignment',
-    zf: 'zipfile.ZipFile',
-):
-    # FormulaAssignment is primitive-only (AssignedCandidate included), so asdict
-    # captures every score term losslessly.
-    zf.writestr(
-        f"assignments/{assignment.uuid}.json",
-        data=json.dumps(asdict(assignment), indent=2),
-    )
-
-
-def deserialize_assignment(
-    assignment_path: str,
-    zf: 'zipfile.ZipFile',
-) -> 'FormulaAssignment':
-    data = json.loads(zf.read(assignment_path))
+def deserialize_assignment(data: Optional[dict]) -> Optional['FormulaAssignment']:
+    """
+    Inverse of asdict(FormulaAssignment): it's primitive-only
+    (AssignedCandidate included), so asdict captures every score term losslessly
+    """
+    if data is None:
+        return None
+    data = dict(data)  # don't mutate the source
     candidates = [AssignedCandidate(**c) for c in data.pop('candidates')]
     return FormulaAssignment(candidates=candidates, **data)
 
@@ -447,6 +425,10 @@ def serialize_injection_ensembles(
             'generic_annots': {
                 k: asdict(a) for k, a in ensemble.generic_annots.items()
             },
+            'formula_assignment': (
+                asdict(ensemble.formula_assignment)
+                if ensemble.formula_assignment is not None else None
+            ),
             # User-editable properties
             'identity': ensemble.identity,
             'user_metadata': ensemble.user_metadata,
@@ -512,18 +494,16 @@ def load_project(
 ) -> ProjectData:
     """
     Given a path to an .mzk file generated using save_project(),
-    reconstitutes Samples, EnsembleAlignments, FormulaAssignments and
-    AnalyteGroups.
+    reconstitutes Samples (their ensembles carrying formula assignments),
+    EnsembleAlignments and AnalyteGroups.
 
     :param filepath: Path to .mzk file
-    :return: ProjectData(samples, alignments, assignments, groups, matrices,
-        annotations)
+    :return: ProjectData(samples, alignments, groups, matrices, annotations)
     """
     _sanity_checks(filepath)
 
     samples: list[Sample] = []
     alignments: list[EnsembleAlignment] = []
-    assignments: list[FormulaAssignment] = []
     groups: list[AnalyteGroup] = []
     matrices: list[SimilarityMatrix] = []
 
@@ -591,24 +571,12 @@ def load_project(
                 continue
             alignments.append(alignment)
 
-        # Load formula assignments
-        assignment_paths = [
-            name for name in zf.namelist()
-            if name.startswith('assignments/')
-            and name.endswith('.json')
-        ]
-        for assignment_path in assignment_paths:
-            try:
-                assignment = deserialize_assignment(assignment_path, zf)
-            except TypeError:
-                # Pre-1.2.0 assignments carry the old element-set provenance
-                # fields; these are deliberately not migrated (re-assign instead)
-                logger.warning(
-                    f"Skipping formula assignment {assignment_path}: saved by "
-                    f"an older format version; please re-run formula assignment."
-                )
-                continue
-            assignments.append(assignment)
+        # Pre-2026-11 files kept assignments in their own folder; not migrated
+        if any(name.startswith('assignments/') for name in zf.namelist()):
+            logger.warning(
+                "This project's formula assignments were saved by an older "
+                "format version and are not loaded; please re-run find-mfs."
+            )
 
         # Load analyte groups (absent before 1.4.0)
         group_paths = [
@@ -635,7 +603,6 @@ def load_project(
     logger.info(
         f"Loaded {len(samples)} samples, "
         f"{len(alignments)} alignments, "
-        f"{len(assignments)} assignments, "
         f"{len(groups)} groups, "
         f"{len(annotations)} annotations, "
         f"{len(matrices)} similarity matrices."
@@ -644,7 +611,6 @@ def load_project(
     return ProjectData(
         samples=samples,
         alignments=alignments,
-        assignments=assignments,
         groups=groups,
         matrices=matrices,
         annotations=annotations,
@@ -741,6 +707,9 @@ def deserialize_injection_ensembles(
                 k: GenericAnnotation(**d)
                 for k, d in e_dict['generic_annots'].items()
             },
+            formula_assignment=deserialize_assignment(
+                e_dict.get('formula_assignment')
+            ),
             # User-editable properties (with defaults for backward compat)
             identity=e_dict.get('identity'),
             user_metadata=e_dict.get('user_metadata', {}),

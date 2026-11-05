@@ -337,12 +337,7 @@ class AlignmentViewer(
         # Formula assignments landing (from EnsembleViewer, auto find-mfs,
         # ...) and annotations change what the Inspector shows; the plots
         # (and their zoom) are left alone
-        self.data_source.subscribe_to_changes(
-            addition_callback=self._refresh_inspector,
-            removal_callback=self._refresh_inspector,
-            update_callback=self._refresh_inspector,
-            change_type='Assignment',
-        )
+        self.data_source.sigEnsembleAnnotated.connect(self._refresh_inspector)
         self.data_source.subscribe_to_changes(
             addition_callback=lambda _: None,
             removal_callback=self._on_alignment_removed,

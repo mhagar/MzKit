@@ -31,7 +31,6 @@ if TYPE_CHECKING:
         EnsembleUUID, Ensemble,
     )
     from gui.views.sample_viewer.data_source import SampleViewerDataSource
-    from core.data_structs.formula_assignment import FormulaAssignment
     from configparser import ConfigParser
 
 class SampleViewer(
@@ -88,12 +87,7 @@ class SampleViewer(
         # Subscribe to mf assignments being made in data registry, so an
         # ensemble's peak overlay label reflects its assignment as soon as
         # one is accepted (or cleared).
-        self.data_source.subscribe_to_changes(
-            addition_callback=self._on_assignment_changed,
-            removal_callback=self._on_assignment_changed,
-            update_callback=self._on_assignment_changed,
-            change_type='Assignment',
-        )
+        self.data_source.sigEnsembleAnnotated.connect(self._on_assignment_changed)
 
         # Model for keeping track of which samples are loaded in viewer
         self.model = SampleViewerItemModel(
@@ -615,16 +609,14 @@ class SampleViewer(
 
     def _on_assignment_changed(
         self,
-        assignment: 'FormulaAssignment',
+        ensemble_uuid: 'EnsembleUUID',
     ):
         """
-        Called whenever a FormulaAssignment is added or removed. Refreshes the
-        affected ensemble's peak overlay label so it reflects the (new) chosen
-        formula, without redrawing the whole plot stack.
+        Called whenever an ensemble's formula assignment (or annotation)
+        changes. Refreshes its peak overlay label so it reflects the (new)
+        chosen formula, without redrawing the whole plot stack.
         """
-        self.viewSampleStack.refresh_ensemble_label(
-            assignment.source_uuid
-        )
+        self.viewSampleStack.refresh_ensemble_label(ensemble_uuid)
 
     # ***CHROMATOGRAM SCANNING***
     def on_chromatogram_hovered(
@@ -792,7 +784,7 @@ class SampleViewer(
         )
         action_review = menu.addAction("Review Formula Assignment...")
         action_review.setEnabled(
-            self.data_source.get_assignment_for_source(ensemble_uuid) is not None
+            ensemble is not None and ensemble.formula_assignment is not None
         )
         action_find_mfs = menu.addAction("Auto find-mfs")
         if ensemble is not None and ensemble.is_dda:

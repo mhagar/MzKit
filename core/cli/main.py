@@ -54,8 +54,6 @@ def _load_registry(*mzk_paths: Path) -> DataRegistry:
         registry.register_samples(data.samples)
         for alignment in data.alignments:
             registry.register_alignment(alignment)
-        for assignment in data.assignments:
-            registry.register_assignment(assignment)
         for group in data.groups:
             registry.register_group(group)
         for matrix in data.matrices:
@@ -528,7 +526,7 @@ def cmd_auto_find_mfs(args: argparse.Namespace) -> None:
         attach_adduct_labels=not args.no_adduct_labels,
     )
     for assignment in result.assignments:
-        registry.register_assignment(assignment)
+        registry.update_ensemble(assignment.source_uuid, formula_assignment=assignment)
 
     output = _resolve_output(args, mzk_path)
     save_project(output, registry)

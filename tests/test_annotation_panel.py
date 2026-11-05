@@ -137,10 +137,11 @@ def test_query_and_spectrum_follow_the_focused_member():
     def member(uuid, mz):
         ms2 = to_spec_arr(np.array([mz]), np.array([1.0]))
         return SimpleNamespace(uuid=uuid, resolved_precursor_mz=181.0 + uuid,
-                               composite_spectrum=SimpleNamespace(ms2=ms2))
+                               composite_spectrum=SimpleNamespace(ms2=ms2),
+                               formula_assignment=assignments[uuid])
 
-    a, b = member(1, 50.0), member(2, 60.0)
     assignments = {1: assignment('C6H12O6', 'H'), 2: assignment('C7H16O5', 'Na')}
+    a, b = member(1, 50.0), member(2, 60.0)
     ms2 = to_spec_arr(np.array([70.0]), np.array([1.0]))
     ctx = SimpleNamespace(
         representative=lambda analyte: SimpleNamespace(sample_uuid='s1', composite=SimpleNamespace(ms2=ms2)),
@@ -148,7 +149,6 @@ def test_query_and_spectrum_follow_the_focused_member():
         formula=lambda e: assignments[e.uuid].candidates[0].formula_str,
         formula_agreement=lambda analyte: ('C6H12O6', 1, 2),
         focus_formula=lambda analyte, e=None: assignments[e.uuid].candidates[0].formula_str if e else 'C6H12O6',
-        data_source=SimpleNamespace(get_assignment_for_source=assignments.get),
     )
     analyte = SimpleNamespace(uuid=99, consensus_mz=181.07)
     panel = AnnotationPanel()

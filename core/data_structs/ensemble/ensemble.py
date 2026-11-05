@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     )
 
     from core.utils.array_types import ChromArray, EnsembleArray, SpectrumArray
+    from core.data_structs.formula_assignment import FormulaAssignment
     from .annotations import (
         MzDiffAnnotation, IonAnnotation, IonPairAnnotation, GenericAnnotation,
     )
@@ -81,7 +82,13 @@ class Ensemble(EnsembleMS2Mixin, EnsembleAnnotationMixin):
         default_factory=dict, repr=False
     )
 
-    # User-editable properties. (Except formula, see FormulaAssignment)
+    # Ranked formula candidates + the accepted one. Set through
+    # DataRegistry.update_ensemble so views hear about it
+    formula_assignment: Optional['FormulaAssignment'] = field(
+        default=None, repr=False,
+    )
+
+    # User-editable properties
     identity: Optional[str] = None
     user_metadata: dict[str, str] = field(
         default_factory=dict, repr=False

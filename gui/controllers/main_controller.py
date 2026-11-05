@@ -926,8 +926,6 @@ class MainController:
         self.data_registry.register_samples(result.samples)
         for alignment in result.alignments:
             self.data_registry.register_alignment(alignment)
-        for assignment in result.assignments:
-            self.data_registry.register_assignment(assignment)
         for group in result.groups:
             self.data_registry.register_group(group)
         for matrix in result.matrices:
@@ -1231,8 +1229,7 @@ class MainController:
             return
 
         assigned = [
-            u for u in ensembles
-            if self.data_registry.get_assignment_for_source(u) is not None
+            u for u, e in ensembles.items() if e.formula_assignment is not None
         ]
         if not assigned:
             self.main_view.statusbar.showMessage("No formula assignments to remove")
@@ -1247,7 +1244,7 @@ class MainController:
         if answer != QMessageBox.Yes:
             return
         for uuid in assigned:
-            self.data_registry.remove_assignment(uuid)
+            self.data_registry.update_ensemble(uuid, formula_assignment=None)
         self.main_view.statusbar.showMessage(
             f"Removed {n} formula assignment{'' if n == 1 else 's'}"
         )
@@ -1258,7 +1255,7 @@ class MainController:
         protect_user_choices: bool = True,
     ):
         """
-        Register each assignment. sigAssignmentAdded then drives the Ensemble
+        Set each assignment on its ensemble. sigEnsembleAnnotated then drives the Ensemble
         Viewer's title-strip + adduct-label refresh and the Sample Viewer's
         overlay label. (Adduct annotations were already attached to the
         ensemble in the worker.) The run's summary, including what was skipped
@@ -1275,13 +1272,16 @@ class MainController:
             return
         registered = []
         for assignment in result.assignments:
-            existing = self.data_registry.get_assignment_for_source(
-                assignment.source_uuid
-            )
+            ensemble = self.data_registry.get_ensemble(assignment.source_uuid)
+            if ensemble is None:  # its sample was removed during the run
+                continue
+            existing = ensemble.formula_assignment
             if protect_user_choices and existing is not None and existing.user_chosen:
                 result.n_user_chosen += 1
                 continue
-            self.data_registry.register_assignment(assignment)
+            self.data_registry.update_ensemble(
+                ensemble.uuid, formula_assignment=assignment,
+            )
             registered.append(assignment)
         result.assignments = registered
         self.main_view.statusbar.showMessage(f"find-mfs: {result.summary()}")

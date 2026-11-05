@@ -4,7 +4,7 @@ Data-source contract specific to the AlignmentViewer.
 The viewer needs six surfaces over the same source:
  - Sample lookups (to resolve an analyte's member ensembles + sample names)
  - Alignment lookups (the alignments it displays)
- - FormulaAssignment lookups (to show ensemble formulae)
+ - Ensemble lookups (formula assignments, to show ensemble formulae)
  - AnalyteGroup lookups (user annotations of analyte baskets)
  - AnalyteAnnotation lookups (a single analyte's name + structure)
  - SimilarityMatrix lookups (cluster mode)
@@ -16,7 +16,7 @@ from typing import Protocol
 from core.interfaces.data_sources import (
     SampleDataSource,
     AlignmentDataSource,
-    AssignmentDataSource,
+    EnsembleDataSource,
     GroupDataSource,
     AnnotationDataSource,
     MatrixDataSource,
@@ -26,14 +26,14 @@ from core.interfaces.data_sources import (
 class AlignmentViewerDataSource(
     SampleDataSource,
     AlignmentDataSource,
-    AssignmentDataSource,
+    EnsembleDataSource,
     GroupDataSource,
     AnnotationDataSource,
     MatrixDataSource,
     Protocol,
 ):
     """
-    Composite of SampleDataSource + AlignmentDataSource + AssignmentDataSource
+    Composite of SampleDataSource + AlignmentDataSource + EnsembleDataSource
      + GroupDataSource + AnnotationDataSource + MatrixDataSource.
     """
     ...

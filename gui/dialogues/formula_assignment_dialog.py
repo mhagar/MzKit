@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from core.data_structs import Ensemble
     from core.data_structs.uuid_types import EnsembleUUID
     from core.data_structs.formula_assignment import FormulaAssignment
-    from core.interfaces.data_sources import AssignmentDataSource
+    from core.interfaces.data_sources import EnsembleDataSource
 
 
 def ensemble_title(ensemble: 'Ensemble') -> str:
@@ -32,7 +32,7 @@ def ensemble_title(ensemble: 'Ensemble') -> str:
 class FormulaAssignmentDialog(QtWidgets.QDialog):
     def __init__(
         self,
-        data_source: 'AssignmentDataSource',
+        data_source: 'EnsembleDataSource',
         source_uuid: 'EnsembleUUID',
         *,
         title: Optional[str] = None,
@@ -58,17 +58,13 @@ class FormulaAssignmentDialog(QtWidgets.QDialog):
         self.results.sigClearRequested.connect(self._on_clear)
 
         # Follow the registry: e.g. auto find-mfs re-run while this is open
-        data_source.subscribe_to_changes(
-            addition_callback=self._on_assignment_changed,
-            removal_callback=self._on_assignment_removed,
-            update_callback=self._on_assignment_changed,
-            change_type='Assignment',
-        )
+        data_source.sigEnsembleAnnotated.connect(self._on_ensemble_annotated)
 
         self._refresh()
 
     def _assignment(self) -> Optional['FormulaAssignment']:
-        return self.data_source.get_assignment_for_source(self.source_uuid)
+        ensemble = self.data_source.get_ensemble(self.source_uuid)
+        return ensemble.formula_assignment if ensemble is not None else None
 
     def _refresh(self) -> None:
         assignment = self._assignment()
@@ -85,10 +81,6 @@ class FormulaAssignmentDialog(QtWidgets.QDialog):
         # Stay open: the user may want to pick another candidate instead
         self.data_source.set_chosen_candidate(self.source_uuid, None)
 
-    def _on_assignment_changed(self, assignment: 'FormulaAssignment') -> None:
-        if assignment.source_uuid == self.source_uuid:
+    def _on_ensemble_annotated(self, ensemble_uuid: 'EnsembleUUID') -> None:
+        if ensemble_uuid == self.source_uuid:
             self._refresh()
-
-    def _on_assignment_removed(self, assignment: 'FormulaAssignment') -> None:
-        if assignment.source_uuid == self.source_uuid:
-            self.results.clear("This assignment was removed")

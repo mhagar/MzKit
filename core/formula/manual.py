@@ -27,7 +27,7 @@ from core.data_structs.formula_assignment import (
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
-    from core.interfaces.data_sources import AssignmentDataSource
+    from core.interfaces.data_sources import EnsembleDataSource
 
 # How far off the precursor a typed formula may be and still get an adduct +
 # mass error; beyond this it's recorded without them.
@@ -101,7 +101,7 @@ def manual_candidate(
 
 
 def assign_manual_formula(
-    data_source: 'AssignmentDataSource',
+    data_source: 'EnsembleDataSource',
     ensemble: 'Ensemble',
     formula_str: Optional[str],
 ) -> None:
@@ -112,13 +112,13 @@ def assign_manual_formula(
 
     :raises ValueError: if `formula_str` isn't a valid formula.
     """
-    assignment = data_source.get_assignment_for_source(ensemble.uuid)
+    assignment = ensemble.formula_assignment
 
     if not formula_str or not formula_str.strip():
         if assignment is None:
             return
         if all(c.manual for c in assignment.candidates):
-            data_source.remove_assignment(ensemble.uuid)
+            data_source.update_ensemble(ensemble.uuid, formula_assignment=None)
         else:
             data_source.set_chosen_candidate(ensemble.uuid, None)
         return
@@ -136,7 +136,7 @@ def assign_manual_formula(
     )
 
     if assignment is None:
-        data_source.register_assignment(FormulaAssignment(
+        data_source.update_ensemble(ensemble.uuid, formula_assignment=FormulaAssignment(
             source_uuid=ensemble.uuid,
             candidates=[candidate],
             chosen_idx=0,

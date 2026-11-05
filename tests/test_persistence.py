@@ -28,16 +28,25 @@ def test_save_load_project(
     assert sample_uuids_loaded == sample_uuids_original
 
 
-def test_formula_assignment_roundtrip(tmp_path):
-    """A FormulaAssignment must survive save/load with every score term intact
-    (unlike the lossy FormulaCandidate annotation format)."""
+def _reloaded(data_registry, sample, ensemble, tmp_path):
+    """`ensemble` as it comes back from a save/load of `data_registry`."""
+    path = tmp_path / 'reloaded.mzk'
+    persistence.save_project(filepath=path, data_registry=data_registry)
+    return next(
+        s for s in persistence.load_project(filepath=path).samples
+        if s.uuid == sample.uuid
+    ).injection.ensembles[ensemble.uuid]
+
+
+def test_formula_assignment_roundtrip(data_registry, sample, ensemble, tmp_path):
+    """An ensemble's FormulaAssignment must survive save/load with every score
+    term intact."""
     from core.data_structs.formula_assignment import (
         FormulaAssignment, AssignedCandidate,
     )
 
-    reg = DataRegistry()
     assignment = FormulaAssignment(
-        source_uuid=999,
+        source_uuid=ensemble.uuid,
         candidates=[
             AssignedCandidate(
                 formula_str="C12H15Cl2NO5S", adduct="H",
@@ -59,16 +68,11 @@ def test_formula_assignment_roundtrip(tmp_path):
         halogen_detected=True,
         params={"max_counts": "C*H*N*O*P0S2", "halogen_cap": "Cl4Br4"},
     )
-    reg.register_assignment(assignment)
+    data_registry.update_ensemble(ensemble.uuid, formula_assignment=assignment)
 
-    path = tmp_path / "roundtrip.mzk"
-    persistence.save_project(filepath=path, data_registry=reg)
-    assignments = persistence.load_project(filepath=path).assignments
-
-    assert len(assignments) == 1
-    loaded = assignments[0]
-    assert loaded.uuid == assignment.uuid
-    assert loaded.source_uuid == 999
+    loaded = _reloaded(data_registry, sample, ensemble, tmp_path).formula_assignment
+    assert loaded == assignment
+    assert loaded.source_uuid == ensemble.uuid
     assert loaded.chosen_idx == 0
     assert loaded.chosen_by == "user" and loaded.user_chosen
     assert loaded.halogen_detected is True
@@ -151,28 +155,6 @@ def test_pre_1_4_file_has_no_groups(tmp_path):
     assert data.annotations == []
 
 
-def test_pre_1_2_assignment_is_skipped_not_fatal(tmp_path, caplog):
-    """Assignments saved before 1.2.0 (element-set provenance fields) aren't
-    migrated; loading skips them with a warning and keeps the rest."""
-    import json
-    import zipfile
-
-    path = tmp_path / "old.mzk"
-    persistence.save_project(filepath=path, data_registry=DataRegistry())
-    old = {
-        "source_uuid": 1, "candidates": [], "uuid": 2, "chosen_idx": None,
-        "elements": "CHNOPS", "autodetect_cl_br": True, "error_ppm": 5.0,
-    }
-    with zipfile.ZipFile(path, mode="a") as zf:
-        zf.writestr("assignments/2.json", json.dumps(old))
-
-    with caplog.at_level(logging.WARNING):
-        assignments = persistence.load_project(filepath=path).assignments
-
-    assert assignments == []
-    assert "older format version" in caplog.text
-
-
 def test_alignment_analyte_uuid_roundtrip(tmp_path):
     """Analyte uuids must survive save/load (analyte metadata keys on them)."""
     from core.data_structs.alignment import EnsembleAlignment, AlignedAnalyte
@@ -210,12 +192,7 @@ def test_ensemble_annotation_roundtrip(data_registry, sample, ensemble, tmp_path
     assert ens.ion_pair_annots[0].formula_diff == 'H2O'
     assert a.isotope_envelope.size  # adduct path still builds an ion formula
 
-    path = tmp_path / 'ensemble_annots.mzk'
-    persistence.save_project(filepath=path, data_registry=data_registry)
-    loaded = next(
-        s for s in persistence.load_project(filepath=path).samples
-        if s.uuid == sample.uuid
-    ).injection.ensembles[ens.uuid]
+    loaded = _reloaded(data_registry, sample, ens, tmp_path)
 
     for field in ('mz_diffs', 'ion_annots', 'ion_pair_annots', 'generic_annots'):
         assert getattr(loaded, field) == getattr(ens, field)

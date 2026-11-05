@@ -27,10 +27,6 @@ AlignmentUUID = NewType(
     'AlignmentUUID',
     int,
 )
-AssignmentUUID = NewType(
-    'AssignmentUUID',
-    int,
-)
 AnalyteUUID = NewType(
     'AnalyteUUID',
     int,

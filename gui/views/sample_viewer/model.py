@@ -60,10 +60,11 @@ class SampleViewerItemModel(
         source_uuid: 'EnsembleUUID',
     ) -> Optional['FormulaAssignment']:
         """
-        The accepted/ranked formula assignment for an ensemble (keyed by the
-        ensemble's uuid), or None if none has been registered.
+        The accepted/ranked formula assignment for an ensemble, or None if it
+        has none.
         """
-        return self.sample_data_source.get_assignment_for_source(source_uuid)
+        ensemble = self.sample_data_source.get_ensemble(source_uuid)
+        return ensemble.formula_assignment if ensemble is not None else None
 
     def addSample(
         self,

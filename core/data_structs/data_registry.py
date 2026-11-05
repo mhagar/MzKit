@@ -5,6 +5,8 @@ Dependent on PyQt5 for signals/slots, but should not otherwise involve
 any Qt.
 """
 
+from dataclasses import fields
+
 from PyQt5 import QtCore
 
 from core.interfaces.data_sources import SampleDataSource
@@ -12,6 +14,7 @@ from core.interfaces.data_sources import SampleDataSource
 from typing import Iterable, Optional, TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from core.data_structs import (
+        Ensemble,
         Sample,
         SampleUUID,
         InjectionUUID,
@@ -24,7 +27,6 @@ if TYPE_CHECKING:
     from core.data_structs.alignment import EnsembleAlignment
     from core.data_structs.analyte_group import AnalyteGroup
     from core.data_structs.analyte_annotation import AnalyteAnnotation
-    from core.data_structs.formula_assignment import FormulaAssignment
     from core.data_structs.similarity_matrix import SimilarityMatrix
 
 class DataRegistry(
@@ -55,14 +57,8 @@ class DataRegistry(
     sigAlignmentRemoved = QtCore.pyqtSignal(
         object  # EnsembleAlignment
     )
-    sigAssignmentAdded = QtCore.pyqtSignal(
-        object  # FormulaAssignment
-    )
-    sigAssignmentRemoved = QtCore.pyqtSignal(
-        object  # FormulaAssignment
-    )
-    sigAssignmentUpdated = QtCore.pyqtSignal(
-        object  # FormulaAssignment (e.g. its chosen candidate changed)
+    sigEnsembleAnnotated = QtCore.pyqtSignal(
+        object  # EnsembleUUID (its formula_assignment / annotation changed)
     )
     sigGroupAdded = QtCore.pyqtSignal(
         object  # AnalyteGroup
@@ -93,8 +89,6 @@ class DataRegistry(
         self._samples: dict['SampleUUID', 'Sample'] = {}
         self._sample_name_to_uuid: dict[str, 'SampleUUID'] = {}
         self._alignments: dict['AlignmentUUID', 'EnsembleAlignment'] = {}
-        # Keyed by SOURCE uuid (an EnsembleUUID today); latest assignment wins.
-        self._assignments: dict['EnsembleUUID', 'FormulaAssignment'] = {}
         self._groups: dict['GroupUUID', 'AnalyteGroup'] = {}
         # Reverse index for groups_for_analytes; rebuilt on every group change
         self._groups_by_analyte: dict['AnalyteUUID', set['GroupUUID']] = {}
@@ -108,7 +102,7 @@ class DataRegistry(
         removal_callback,
         update_callback=None,
         change_type: Literal[
-            'Sample', 'Alignment', 'Assignment', 'Group', 'Annotation', 'Matrix'
+            'Sample', 'Alignment', 'Group', 'Annotation', 'Matrix'
         ] = 'Sample',
     ):
         match change_type:
@@ -134,20 +128,6 @@ class DataRegistry(
                 self.sigAlignmentRemoved.connect(
                     removal_callback
                 )
-
-            case 'Assignment':
-                self.sigAssignmentAdded.connect(
-                    addition_callback
-                )
-
-                self.sigAssignmentRemoved.connect(
-                    removal_callback
-                )
-
-                if update_callback:
-                    self.sigAssignmentUpdated.connect(
-                        update_callback
-                    )
 
             case 'Group':
                 self.sigGroupAdded.connect(
@@ -356,13 +336,11 @@ class DataRegistry(
         are dropped), so all existing references and signal/slot
         connections held by controllers, models and views remain valid.
 
-        Assignments and alignments are removed first, since they reference
-        Samples (via source/ensemble UUIDs). Removing the last alignment
-        orphans every group, so groups go with it.
+        Alignments are removed first, since they reference Samples (via
+        ensemble UUIDs). Removing the last alignment orphans every group, so
+        groups go with it. Formula assignments live on the ensembles and go
+        with their samples.
         """
-        for source_uuid in self.get_all_assignment_source_uuids():
-            self.remove_assignment(source_uuid)
-
         for uuid in self.get_all_alignment_uuids():
             self.remove_alignment(uuid)
 
@@ -462,47 +440,56 @@ class DataRegistry(
     def alignment_count(self) -> int:
         return len(self._alignments)
 
-    # --- Formula assignment methods ---
+    # --- Ensemble methods ---
 
-    def register_assignment(
+    def _ensembles(self) -> Iterable['Ensemble']:
+        for sample in self._samples.values():
+            if sample.injection is not None:
+                yield from sample.injection.ensembles.values()
+
+    def get_ensemble(
         self,
-        assignment: 'FormulaAssignment',
+        uuid: 'EnsembleUUID',
+    ) -> Optional['Ensemble']:
+        for sample in self._samples.values():
+            if sample.injection is not None and uuid in sample.injection.ensembles:
+                return sample.injection.ensembles[uuid]
+        return None
+
+    def update_ensemble(
+        self,
+        uuid: 'EnsembleUUID',
+        **changes,
     ):
         """
-        Registers a FormulaAssignment, keyed by its source UUID. Replaces any
-        existing assignment for the same source (latest wins).
+        Set an ensemble's annotation fields (e.g. `formula_assignment=...`)
+        and emit one sigEnsembleAnnotated, so every view showing them
+        refreshes. Every edit of those fields must come through here.
         """
-        self._assignments[assignment.source_uuid] = assignment
-        self.sigAssignmentAdded.emit(assignment)
-
-    def remove_assignment(
-        self,
-        source_uuid: 'EnsembleUUID',
-    ):
-        if source_uuid in self._assignments:
-            assignment = self._assignments[source_uuid]
-            self.sigAssignmentRemoved.emit(assignment)
-            del self._assignments[source_uuid]
-
-    def get_assignment_for_source(
-        self,
-        source_uuid: 'EnsembleUUID',
-    ) -> Optional['FormulaAssignment']:
-        return self._assignments.get(source_uuid)
+        ensemble = self.get_ensemble(uuid)
+        if ensemble is None:
+            raise KeyError(f"No ensemble {uuid} registered")
+        unknown = set(changes) - {f.name for f in fields(ensemble)}
+        if unknown:
+            raise AttributeError(f"Ensemble has no field(s) {sorted(unknown)}")
+        for name, value in changes.items():
+            setattr(ensemble, name, value)
+        self.sigEnsembleAnnotated.emit(uuid)
 
     def set_chosen_candidate(
         self,
-        source_uuid: 'EnsembleUUID',
+        uuid: 'EnsembleUUID',
         chosen_idx: Optional[int],
         chosen_by: str = 'user',
     ):
         """
-        Accept a different candidate of a registered assignment (None clears
-        the choice), recording who chose it.
+        Accept a different candidate of an ensemble's formula assignment
+        (None clears the choice), recording who chose it.
         """
-        assignment = self._assignments.get(source_uuid)
+        ensemble = self.get_ensemble(uuid)
+        assignment = ensemble.formula_assignment if ensemble is not None else None
         if assignment is None:
-            raise KeyError(f"No formula assignment for source {source_uuid}")
+            raise KeyError(f"No formula assignment for ensemble {uuid}")
         if chosen_idx is not None and not 0 <= chosen_idx < len(assignment.candidates):
             raise IndexError(
                 f"Candidate {chosen_idx} out of range "
@@ -511,29 +498,23 @@ class DataRegistry(
 
         assignment.chosen_idx = chosen_idx
         assignment.chosen_by = chosen_by if chosen_idx is not None else None
-        self.sigAssignmentUpdated.emit(assignment)
+        self.sigEnsembleAnnotated.emit(uuid)
 
     def user_chosen_sources(self) -> set['EnsembleUUID']:
-        """Sources whose formula the user chose (auto runs must keep them)."""
+        """Ensembles whose formula the user chose (auto runs must keep them)."""
         return {
-            uuid for uuid, a in self._assignments.items() if a.user_chosen
+            e.uuid for e in self._ensembles()
+            if e.formula_assignment is not None and e.formula_assignment.user_chosen
         }
 
     def chosen_formulas(self) -> dict['EnsembleUUID', str]:
-        """Accepted formula per source, for exports."""
+        """Accepted formula per ensemble, for exports."""
         return {
-            uuid: a.chosen.formula_str
-            for uuid, a in self._assignments.items()
-            if a.chosen is not None
+            e.uuid: e.formula_assignment.chosen.formula_str
+            for e in self._ensembles()
+            if e.formula_assignment is not None
+            and e.formula_assignment.chosen is not None
         }
-
-    def get_all_assignment_source_uuids(
-        self,
-    ) -> list['EnsembleUUID']:
-        return list(self._assignments.keys())
-
-    def assignment_count(self) -> int:
-        return len(self._assignments)
 
     # --- Analyte annotation methods ---
 

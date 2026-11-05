@@ -124,12 +124,7 @@ class EnsembleViewer(
         # React to formula assignments (from the manual tool, the auto button,
         # or a headless batch) landing for whatever ensemble is on screen, so
         # the title strip + adduct labels refresh without a bespoke callback.
-        self.data_source.subscribe_to_changes(
-            addition_callback=self._on_assignment_changed,
-            removal_callback=self._on_assignment_changed,
-            update_callback=self._on_assignment_changed,
-            change_type='Assignment',
-        )
+        self.data_source.sigEnsembleAnnotated.connect(self._on_assignment_changed)
 
     def _add_status_bar(self):
         """
@@ -498,8 +493,7 @@ class EnsembleViewer(
 
         self.actionReviewFormula.setEnabled(
             self.ensemble is not None
-            and self.data_source.get_assignment_for_source(self.ensemble.uuid)
-            is not None
+            and self.ensemble.formula_assignment is not None
         )
 
     def _on_review_formula_triggered(self):
@@ -519,10 +513,7 @@ class EnsembleViewer(
 
     def _assignment_label_html(self) -> Optional[str]:
         # Shared with the sample-viewer overlays (single label source of truth).
-        assignment = self.data_source.get_assignment_for_source(
-            self.ensemble.uuid
-        )
-        return format_assignment_label_html(assignment)
+        return format_assignment_label_html(self.ensemble.formula_assignment)
 
     def _on_auto_find_mf_triggered(self):
         """
@@ -532,16 +523,13 @@ class EnsembleViewer(
         if self.ensemble:
             self.sigAutoFindMfRequested.emit(self.ensemble)
 
-    def _on_assignment_changed(self, assignment):
+    def _on_assignment_changed(self, ensemble_uuid):
         """
-        A FormulaAssignment was added/removed. If it's for the ensemble on
+        An ensemble's formula assignment changed. If it's the ensemble on
         screen, refresh the formula title strip and redraw annotations (the
         auto pass may have attached adduct labels to the ensemble).
         """
-        if (
-            not self.ensemble
-            or getattr(assignment, 'source_uuid', None) != self.ensemble.uuid
-        ):
+        if not self.ensemble or ensemble_uuid != self.ensemble.uuid:
             return
         self.refresh_assignment_display()
         self._redraw_annotations_for_current_scan()
@@ -1479,7 +1467,7 @@ class EnsembleViewer(
         if not out_dir:
             return
 
-        assignment = self.data_source.get_assignment_for_source(self.ensemble.uuid)
+        assignment = self.ensemble.formula_assignment
         chosen = assignment.chosen if assignment is not None else None
         export = build_ensemble_export(
             self.ensemble,

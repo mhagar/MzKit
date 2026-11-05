@@ -74,9 +74,7 @@ class AlignmentContext:
         """
         Plain-text formula for an ensemble (see format_assignment_formula_text)
         """
-        return format_assignment_formula_text(
-            self.data_source.get_assignment_for_source(ensemble.uuid)
-        )
+        return format_assignment_formula_text(ensemble.formula_assignment)
 
     def formula_agreement(
         self,

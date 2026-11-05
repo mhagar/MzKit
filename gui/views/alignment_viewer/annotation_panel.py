@@ -187,7 +187,7 @@ class AnnotationPanel(
     def _adduct_of(ctx, ensembles) -> Optional[str]:
         """The first of `ensembles` whose formula assignment has an adduct."""
         for ensemble in ensembles:
-            assignment = ctx.data_source.get_assignment_for_source(ensemble.uuid)
+            assignment = ensemble.formula_assignment
             candidate = assignment and (assignment.chosen or assignment.top)
             if candidate and candidate.adduct:
                 return ion_name(candidate.adduct, assignment.charge)

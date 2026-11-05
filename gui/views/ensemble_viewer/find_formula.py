@@ -213,11 +213,11 @@ class FindFormulaController(BaseToolController):
             assignment
     ):
         """
-        Register the accepted compound assignment in the DataRegistry
-        (the EnsembleViewer's data_source)
+        Set the accepted compound assignment on its ensemble, through the
+        DataRegistry (the EnsembleViewer's data_source)
         """
         registry = self.viewer.data_source
-        registry.register_assignment(assignment)
+        registry.update_ensemble(assignment.source_uuid, formula_assignment=assignment)
 
         chosen = assignment.chosen
         if self.viewer.ensemble is not None and chosen is not None:

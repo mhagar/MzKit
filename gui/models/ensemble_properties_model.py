@@ -15,7 +15,7 @@ from core.formula.manual import assign_manual_formula
 
 if TYPE_CHECKING:
     from core.data_structs import Ensemble
-    from core.interfaces.data_sources import AssignmentDataSource
+    from core.interfaces.data_sources import EnsembleDataSource
 
 
 class RowType(Enum):
@@ -58,7 +58,7 @@ class EnsemblePropertiesModel(QAbstractTableModel):
         self,
         ensemble: 'Ensemble',
         sample_name: str,
-        data_source: 'AssignmentDataSource',
+        data_source: 'EnsembleDataSource',
         parent=None,
     ):
         super().__init__(parent)
@@ -148,9 +148,7 @@ class EnsemblePropertiesModel(QAbstractTableModel):
         """
         match row:
             case self.FORMULA_ROW:
-                assignment = self._data_source.get_assignment_for_source(
-                    self._ensemble.uuid
-                )
+                assignment = self._ensemble.formula_assignment
                 chosen = assignment.chosen if assignment is not None else None
                 return chosen.formula_str if chosen is not None else ""
             case 7:  # Identity

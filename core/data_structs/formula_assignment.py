@@ -1,10 +1,11 @@
 """
-FormulaAssignment: a molecular-formula assignment for a single MS source
-(currently an Ensemble), produced by core/formula/assign_formula.py.
+FormulaAssignment: a molecular-formula assignment for a single MS source,
+produced by core/formula/assign_formula.py.
 
-Standalone entity keyed by source UUID (NOT embedded on the already-mega
-Ensemble), so the same machinery can serve non-Ensemble MS data and
-AlignedAnalytes can reconcile per-sample assignments without owning them.
+An ensemble's assignment lives on it (`Ensemble.formula_assignment`), so it
+outlives any alignment. `source_uuid` still says which source a search ran for:
+batch runs route results by it, and the formula finder makes 'signal'
+assignments that belong to no ensemble.
 
 `AssignedCandidate` is deliberately primitive-only (no find-mfs types), so the
 whole ranked result — including every score term — round-trips losslessly
@@ -13,12 +14,11 @@ through the .mzk format.
 from __future__ import annotations
 
 import time
-import uuid as uuid_module
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.data_structs.uuid_types import AssignmentUUID, EnsembleUUID
+    from core.data_structs.uuid_types import EnsembleUUID
 
 
 @dataclass
@@ -49,7 +49,6 @@ class FormulaAssignment:
     source_uuid: 'EnsembleUUID'
     candidates: list[AssignedCandidate]
 
-    uuid: 'AssignmentUUID' = field(default_factory=lambda: uuid_module.uuid4().int)
     source_kind: str = 'ensemble'
     chosen_idx: Optional[int] = None
     # Who made the current choice: 'auto' (find-mfs's top hit, picked by an
