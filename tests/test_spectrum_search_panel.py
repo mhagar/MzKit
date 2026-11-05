@@ -24,7 +24,7 @@ def _hit(spectrum_id, name, smiles, score):
                       score, 0.8, 2, 0.001, [(0, 0), (1, 1)])
 
 
-def test_search_select_mirror_accept(data_registry, sample, ensemble):
+def test_search_select_mirror_accept(data_registry, sample, ensemble, monkeypatch):
     from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
     from gui.views.alignment_viewer import AlignmentViewer
 
@@ -76,3 +76,21 @@ def test_search_select_mirror_accept(data_registry, sample, ensemble):
     assert (h.smiles, h.origin, h.db_id, h.claim) == ('CCCO', 'GNPS', 'CCMS2', 'structure')
     assert h.scores['cosine'] == 0.95
     assert viewer.tabsAnnotation.currentWidget() is tabs.editor_page
+
+    # Selecting the accepted hypothesis mirrors its library spectrum, not a GLACIER prediction
+    requests = []
+    viewer.sigRankCandidatesRequested.connect(lambda *a: requests.append(a))
+    accepted = panel.shown
+    tree = tabs.editor.tree
+    tree.clearSelection()
+    tree.topLevelItem(0).setSelected(True)
+    assert tabs.mirrored is accepted and viewer.plotMS2.is_mirror() and not requests
+
+    # Not cached (e.g. a reopened project): re-read from the index by library + spectrum id
+    tabs._library_hits.clear()
+    found = []
+    monkeypatch.setattr('core.cli.search_spectra.library_hit',
+                        lambda ms2, mz, library, spectrum_id, params: found.append((library, spectrum_id)) or accepted)
+    tree.clearSelection()
+    tree.topLevelItem(0).setSelected(True)
+    assert found == [('GNPS', 'CCMS2')] and tabs.mirrored is accepted and not requests

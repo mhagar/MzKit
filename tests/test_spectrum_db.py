@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from core.cli.search_spectra import IDENTITY, SpectralSearchParams, search_spectra
+from core.cli.search_spectra import IDENTITY, SpectralSearchParams, library_hit, search_spectra
 from core.utils import ms2deepscore, spectrum_db
 from core.utils.array_types import to_spec_arr
 
@@ -84,6 +84,13 @@ def test_identity_search_finds_itself(db):
     # Outside the precursor window / other library: nothing
     assert not search_spectra(_spec(PEAKS_A), 190.0, ['GNPS'], IDENTITY, db_path=db).hits
     assert not search_spectra(_spec(PEAKS_A), 183.07, ['inhouse'], IDENTITY, db_path=db).hits
+
+
+def test_library_hit_rebuilds_an_accepted_hit(db):
+    [searched] = search_spectra(_spec(PEAKS_A), 183.075, ['GNPS'], IDENTITY, db_path=db).hits
+    hit = library_hit(_spec(PEAKS_A), 183.075, 'GNPS', 'CCMSLIB1', db_path=db)
+    assert (hit.spectrum_id, hit.score, hit.matches) == (searched.spectrum_id, searched.score, searched.matches)
+    assert library_hit(_spec(PEAKS_A), 183.075, 'GNPS', 'nope', db_path=db) is None
 
 
 def test_external_embeddings_map_by_id(db):

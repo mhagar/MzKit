@@ -133,6 +133,36 @@ def search_spectra(
             for i in top
         ]
 
+    hits = _hits(ms2, precursor_mz, scored, rows, params)
+    if progress_callback is not None:
+        progress_callback(100.0, f"{len(hits)} hits of {n_searched} searched")
+    return SearchResult(hits, mode, n_searched, params)
+
+
+def library_hit(
+    ms2: 'SpectrumArray',
+    precursor_mz: float,
+    library: str,
+    spectrum_id: str,
+    params: SpectralSearchParams = SpectralSearchParams(),
+    db_path=spectrum_db.DEFAULT_DB,
+) -> Optional[LibraryHit]:
+    """
+    One library spectrum as a LibraryHit against `ms2` (identity cosine), e.g.
+    to mirror an accepted hypothesis again; None if it isn't in the index.
+    """
+    rowid = spectrum_db.find_rowid(library, spectrum_id, db_path)
+    if rowid is None:
+        return None
+    rows = spectrum_db.rows([rowid], db_path)
+    score, matches = _cosine_with_matches(
+        CosineGreedy(tolerance=params.mz_tolerance), ms2, rows[rowid][-1], precursor_mz, rows[rowid][-2],
+    )
+    return _hits(ms2, precursor_mz, [(score, rowid, matches)], rows, params)[0]
+
+
+def _hits(ms2, precursor_mz, scored, rows, params) -> list[LibraryHit]:
+    """LibraryHits for (score, rowid, matches) of `rows`, with modified cosine for display."""
     modified = ModifiedCosine(tolerance=params.mz_tolerance)
     query = _spectrum_from(ms2['mz'], ms2['intsy'], precursor_mz)
     query.set('precursor_mz', float(precursor_mz))
@@ -146,9 +176,7 @@ def search_spectra(
             rowid, library, spectrum_id, name, smiles, inchikey, adduct, lib_mz, peaks,
             score, float(mod['score']), int(mod['matches']), lib_mz - float(precursor_mz), matches,
         ))
-    if progress_callback is not None:
-        progress_callback(100.0, f"{len(hits)} hits of {n_searched} searched")
-    return SearchResult(hits, mode, n_searched, params)
+    return hits
 
 
 def _embedding_scores(embeddings, query, rowids, cancel_event) -> tuple[Optional[np.ndarray], int]:

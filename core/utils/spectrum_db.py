@@ -263,6 +263,15 @@ def rowids(libraries: list[str], db_path: Path = DEFAULT_DB) -> np.ndarray:
         )], dtype=np.int64)
 
 
+def find_rowid(library: str, spectrum_id: str, db_path: Path = DEFAULT_DB) -> Optional[int]:
+    """The rowid of `library`'s spectrum `spectrum_id` (None: not in the index)."""
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as con:
+        row = con.execute(
+            "SELECT rowid FROM spectra WHERE library = ? AND spectrum_id = ? LIMIT 1", (library, spectrum_id),
+        ).fetchone()
+    return None if row is None else row[0]
+
+
 def rows(ids: list[int], db_path: Path = DEFAULT_DB) -> dict[int, tuple]:
     """rowid -> (library, spectrum_id, name, smiles, inchikey, formula, adduct, precursor_mz, SpectrumArray)."""
     out = {}

@@ -83,6 +83,8 @@ class AnnotationTabs(QtCore.QObject):
         self._mirrored = None
         # (target key, SMILES) -> a hypothesis's ScoredCandidate, for the session
         self._hypothesis_scores: dict = {}
+        # (target key, library, spectrum id) -> a library hypothesis's LibraryHit, for the session
+        self._library_hits: dict = {}
 
         self.editor_page, widgets = _editor_page()
         self.editor = AnnotationEditor(**widgets)
@@ -178,15 +180,23 @@ class AnnotationTabs(QtCore.QObject):
         """A candidate / library hit becomes the target's chosen hypothesis, shown in its tab."""
         if self._front() is self.structure_search and (shown := self.structure_search.shown) is not None:
             self._hypothesis_scores[(self._target.key, hypothesis.smiles)] = shown
+        if self._front() is self.spectral and (hit := self.spectral.shown) is not None:
+            self._library_hits[(self._target.key, hit.library, hit.spectrum_id)] = hit
         self.editor.add_hypothesis(hypothesis)
         self.tabs.setCurrentWidget(self.editor_page)
 
     def _on_hypothesis_selected(self, hypothesis: Optional[Hypothesis]):
-        """Mirror a hypothesis: its GLACIER prediction for the target's MS2, scored once per session."""
+        """
+        Mirror a hypothesis: a library hit's library spectrum, else its GLACIER
+        prediction for the target's MS2 (scored once per session).
+        """
         if hypothesis is None or self._target is None:
             self._show_candidate(None)
             return
         key = self._target.key
+        if hypothesis.origin in {c.text() for c in self.spectral.library_checks}:
+            self._show_library_hypothesis(hypothesis)
+            return
         if (scored := self._hypothesis_scores.get((key, hypothesis.smiles))) is not None:
             self._show_candidate(scored)
             return
@@ -235,6 +245,24 @@ class AnnotationTabs(QtCore.QObject):
             f"Structure applied to {len(members)} member(s)"
             + (f"; {n_unscored} can't be scored (no MS2 or GLACIER model)" if n_unscored else "")
         )
+
+    def _show_library_hypothesis(self, hypothesis: Hypothesis):
+        """Mirror the library spectrum a hypothesis was accepted from (re-read from the index if need be)."""
+        from core.cli.search_spectra import library_hit, params_from_config
+        from core.utils.config import load_config
+
+        target, slot = self._target, (self._target.key, hypothesis.origin, hypothesis.db_id)
+        hit = self._library_hits.get(slot)
+        if hit is None and target.ms2 is not None and target.ms2.size and target.precursor_mz is not None:
+            hit = library_hit(target.ms2, target.precursor_mz, hypothesis.origin, hypothesis.db_id,
+                              params_from_config(load_config()))
+            if hit is not None:
+                self._library_hits[slot] = hit
+        if hit is None:
+            self._show_candidate(None)
+            self.sigStatus.emit(f"{hypothesis.origin}:{hypothesis.db_id} isn't in the spectral index")
+            return
+        self._show_hit(hit)
 
     # -- mirror -------------------------------------------------------------
 
