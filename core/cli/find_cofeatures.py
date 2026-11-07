@@ -169,9 +169,12 @@ def _find_nonzero_mass_lanes(
     scan_idxs: np.ndarray,
     min_intsy: float,
 ):
-    mass_lane_intsy_max = scan_array.intsy_arr.toarray()[
-                           :, scan_idxs
-                           ].max(axis=1)
+    # Max over the window's scan columns, kept sparse: densifying the whole
+    # (lanes x scans) matrix on every call dominated ensemble extraction.
+    intsy_csc = scan_array.intsy_arr_csc
+    if intsy_csc is None:
+        intsy_csc = scan_array.intsy_arr.tocsc()
+    mass_lane_intsy_max = intsy_csc[:, scan_idxs].max(axis=1).toarray().ravel()
     nonzero_mass_lane_idxs: np.ndarray = np.where(
         mass_lane_intsy_max > min_intsy,
     )[0]
