@@ -8,7 +8,6 @@ assignment that's already registered. The widget only displays and reports
 the user's pick; what "assign" means (register an assignment, annotate a
 signal, change a registered choice) is up to its host.
 """
-from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtCore, QtGui, QtWidgets
@@ -115,7 +114,7 @@ class FormulaResultsWidget(QtWidgets.QWidget, Ui_Form):
             )
             table.setRowCount(len(self._order))
             for row, idx in enumerate(self._order):
-                self._fill_row(row, a.candidates[idx], chosen=idx == a.chosen_idx)
+                self._fill_row(row, a.candidates[idx])
 
             # Start on the accepted candidate, so reviewing shows the current pick
             if a.chosen_idx is not None and a.chosen_idx in self._order:
@@ -125,17 +124,10 @@ class FormulaResultsWidget(QtWidgets.QWidget, Ui_Form):
 
         self._update_buttons()
 
-    def _fill_row(
-        self,
-        row: int,
-        c: 'AssignedCandidate',
-        chosen: bool,
-    ) -> None:
+    def _fill_row(self, row: int, c: 'AssignedCandidate') -> None:
         formula_html = format_formula_obj_to_html(Formula(c.formula_str))
-        if chosen:
-            formula_html = f"<b>{formula_html}</b>"
         if c.manual:
-            formula_html += " <i>(manual)</i>"
+            formula_html += " (manual)"
         values = [
             formula_html,
             c.adduct or "",
@@ -151,15 +143,6 @@ class FormulaResultsWidget(QtWidgets.QWidget, Ui_Form):
         for col, text in enumerate(values):
             item = QtWidgets.QTableWidgetItem(text)
             item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            if chosen:
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-            tips = (["Currently assigned"] if chosen else []) + (
-                ["Entered manually"] if c.manual else []
-            )
-            if tips:
-                item.setToolTip("; ".join(tips))
             self.tableResults.setItem(row, col, item)
 
     def _selected_candidate_idx(self) -> Optional[int]:
@@ -171,9 +154,8 @@ class FormulaResultsWidget(QtWidgets.QWidget, Ui_Form):
     def _update_buttons(self) -> None:
         a = self._assignment
         idx = self._selected_candidate_idx()
-        self.btnAssignSelected.setEnabled(
-            idx is not None and (a is None or idx != a.chosen_idx)
-        )
+        # Re-assigning the current pick is allowed: it confirms an 'auto' pick as 'user'
+        self.btnAssignSelected.setEnabled(idx is not None)
         self.btnClearAssignment.setVisible(self._allow_clear)
         self.btnClearAssignment.setEnabled(
             a is not None and a.chosen_idx is not None
@@ -206,15 +188,6 @@ def _provenance_text(a: 'FormulaAssignment', note: str = "") -> str:
         parts.append("no Cl/Br pattern")
     n = len(a.candidates)
     parts.append(f"{n} candidate{'' if n == 1 else 's'}")
-    if a.chosen is not None and a.chosen_by is not None:
-        parts.append(
-            "picked by you" if a.chosen_by == 'user' else "picked automatically"
-        )
-    if a.source_kind != 'signal':
-        # Registered assignments: when it was made helps when reviewing
-        parts.append(
-            datetime.fromtimestamp(a.created_at).strftime("%Y-%m-%d %H:%M")
-        )
     if note:
         parts.append(note)
     return " · ".join(parts)

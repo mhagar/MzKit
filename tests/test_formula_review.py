@@ -142,7 +142,7 @@ def test_widget_starts_on_current_pick(qapp):
     w = FormulaResultsWidget()
     w.set_assignment(_assignment(chosen_idx=2), allow_clear=True)
     assert w._selected_candidate_idx() == 2
-    assert not w.btnAssignSelected.isEnabled()      # already the pick
+    assert w.btnAssignSelected.isEnabled()          # re-assign confirms an auto pick
     assert w.btnClearAssignment.isEnabled()
     assert "searched CHNO" in w.labelProvenance.text()
     assert "no Cl/Br pattern" in w.labelProvenance.text()
