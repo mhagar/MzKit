@@ -65,6 +65,7 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
 
         self.config = config
         self.mode = mode
+        self._add_peak_model_checkbox()
 
         # find-mfs sheet manages its own [findmfs] persistence.
         self.findMfsParams.set_config(config)
@@ -225,6 +226,7 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
             # DDA only: gate whether unfragmented coeluting MS1 features are grouped
             "dda_require_ms2": self.checkRequireMs2.isChecked(),
             # peak validation
+            "use_peak_model": self.checkPeakModel.isChecked(),
             "peak_method": self.comboPeakMethod.currentText(),
             "min_peak_width": int(self.spinMinPeakWidth.value()),
             "min_prominence": float(self.spinnerMinProminence.value()),
@@ -292,6 +294,29 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
                 combo.setCurrentIndex(i)
                 return
 
+    def _add_peak_model_checkbox(self) -> None:
+        # Added in code: the generated Ui file must not be hand-edited
+        from core.labeling.peak_model import default_model_path
+        self.checkPeakModel = QtWidgets.QCheckBox("Use learned peak model")
+        has_model = default_model_path().exists()
+        self.checkPeakModel.setEnabled(has_model)
+        self.checkPeakModel.setToolTip(
+            "Replaces the rule knobs (and the smoothing gate) with the model "
+            "trained in the labeling window; also drops plateau cofeatures."
+            if has_model else
+            "No model yet: label peaks (Tools > labeling) and use "
+            "Session > Train peak model."
+        )
+        grid = self.gridLayout_3
+        grid.addWidget(self.checkPeakModel, grid.rowCount(), 0, 1, 2)
+
+        def toggle(on: bool) -> None:
+            for w in (self.comboPeakMethod, self.spinMinPeakWidth,
+                      self.spinnerMinProminence, self.spinBaselinePct,
+                      self.groupSmoothing):
+                w.setEnabled(not on)
+        self.checkPeakModel.toggled.connect(toggle)
+
     def _apply_auto_params(self, p: AutoEnsembleParams) -> None:
         # shared scoring
         self.spinnerMS1Threshold.setValue(p.ms1_corr_threshold)
@@ -307,6 +332,9 @@ class EnsembleExtractionDialog(QtWidgets.QDialog, Ui_Dialog):
         self.spinnerLooseThreshold.setValue(p.loose_corr_threshold)
         self.checkRequireMs2.setChecked(p.dda_require_ms2)
         # peak validation
+        self.checkPeakModel.setChecked(
+            p.use_peak_model and self.checkPeakModel.isEnabled()
+        )
         self._select_combo(self.comboPeakMethod, p.peak_method)
         self.spinMinPeakWidth.setValue(p.min_peak_width)
         self.spinnerMinProminence.setValue(p.min_prominence)

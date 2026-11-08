@@ -135,6 +135,18 @@ class MainController:
             self._handle_filter_alignment_request
         )
 
+        self.main_view.sigAutoEnsembleRequested.connect(
+            self._handle_sidebar_auto_ensemble_request
+        )
+
+        self.main_view.sigAlignEnsemblesRequested.connect(
+            lambda indexes: self._handle_align_ensembles_request([
+                s.uuid
+                for s in self.sample_controller.get_samples_by_index(indexes)
+                if s.injection is not None and s.injection.ensembles
+            ])
+        )
+
         self.main_view.sigFormulaBatchRequested.connect(
             self._handle_formula_batch_request
         )
@@ -478,11 +490,33 @@ class MainController:
                 "Load at least one sample with MS data before labeling.",
             )
             return
+        # Label from the samples selected in the sample list (e.g. the ones with
+        # the troublesome contaminants); with no selection, 3 random samples.
+        view = self.main_view.listViewSamples
+        selected = [
+            s for s in self.sample_controller.get_samples_by_index(view.selectedIndexes())
+            if s.injection is not None
+        ] if view.selectionModel().hasSelection() else []
 
-        dialog = LabelingSessionDialog(parent=self.main_view)
+        from core.cli.generate_ensemble import auto_params_from_config
+        auto = auto_params_from_config(self.config)
+        dialog = LabelingSessionDialog(
+            default_parent_threshold=auto.parent_threshold,
+            default_min_intsy=auto.cofeature_threshold,
+            parent=self.main_view,
+        )
         if dialog.exec_() != dialog.Accepted:
             return
         params = dialog.params()
+
+        from core.labeling import LabelFile
+        from core.labeling.peak_model import default_model_path
+        model_path = default_model_path()
+        labeled = (
+            {(l.sample_uuid, l.lane_idx)
+             for l in LabelFile.from_json(params.label_file_path).lanes}
+            if params.label_file_path.exists() else set()
+        )
 
         # Generate candidates on a background thread so the work + its
         # logs appear in the Process Monitor. The labeling window is
@@ -491,10 +525,14 @@ class MainController:
             module_path="core.labeling.candidate_generator",
             function_name="main",
             parameters={
-                "samples": samples,
+                "samples": selected or samples,
+                "parent_threshold": params.parent_threshold,
                 "min_intsy": params.min_intsy,
-                "window_half_width": 60,
-                "max_per_sample": params.max_per_sample,
+                "n_lanes": params.n_lanes,
+                "max_samples": len(selected) if selected else 3,
+                # with a trained model: queue the lanes it's least sure about
+                "model_path": str(model_path) if model_path.exists() else None,
+                "exclude": labeled,
             },
             on_completion_func=lambda candidates: (
                 self._open_labeling_window(samples, candidates, params)
@@ -514,8 +552,8 @@ class MainController:
             QMessageBox.warning(
                 self.main_view,
                 "No candidates",
-                "Candidate generation produced no peaks. "
-                "Try lowering the minimum intensity.",
+                "No lanes reach the activity floor. "
+                "Try lowering the thresholds.",
             )
             return
 
@@ -525,8 +563,11 @@ class MainController:
             candidates=candidates,
             label_file_path=params.label_file_path,
             annotator=params.annotator,
-            min_intsy=params.min_intsy,
-            max_per_sample=params.max_per_sample,
+            extraction_params={
+                "parent_threshold": params.parent_threshold,
+                "min_intsy": params.min_intsy,
+            },
+            process_controller=self.process_controller,
         )
         self._labeling_window.setAttribute(
             QtCore.Qt.WA_DeleteOnClose, True,
@@ -967,6 +1008,43 @@ class MainController:
                 "method": input_params.method,
             },
             on_completion_func=on_complete,
+        )
+
+    def _handle_sidebar_auto_ensemble_request(
+        self,
+        indexes: list[QtCore.QModelIndex],
+    ):
+        """
+        Sidebar "Auto-generate Ensembles": same AUTO dialog as the Sample
+        Viewer's, listing every sample with MS data, prechecked to the selection.
+        """
+        from gui.dialogues.EnsembleExtractionDialog import (
+            EnsembleExtractionDialog, ExtractionDialogMode,
+        )
+
+        loaded = [
+            (s.uuid, s.name) for s in self.data_registry.get_all_samples()
+            if s.injection is not None
+        ]
+        if not loaded:
+            return
+        selected = {
+            s.uuid for s in self.sample_controller.get_samples_by_index(indexes)
+        }
+        dialog = EnsembleExtractionDialog(
+            config=self.config,
+            mode=ExtractionDialogMode.AUTO,
+            loaded_samples=loaded,
+            selected_uuids=selected,
+            parent=self.main_view,
+        )
+        if dialog.exec_() != dialog.Accepted:
+            return
+        self._handle_auto_ensemble_batch_request(
+            dialog.get_selected_sample_uuids(),
+            dialog.get_auto_params(),
+            dialog.get_findmfs_params(),
+            dialog.get_findmfs_selection(),
         )
 
     def _handle_auto_ensemble_batch_request(

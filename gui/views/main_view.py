@@ -37,6 +37,12 @@ class MainView(
         str,   # 'find' (auto find-mfs) | 'clear' (remove assignments)
         list,  # list[QModelIndex]
     )
+    sigAutoEnsembleRequested = QtCore.pyqtSignal(
+        list,  # list[QModelIndex]
+    )
+    sigAlignEnsemblesRequested = QtCore.pyqtSignal(
+        list,  # list[QModelIndex]
+    )
     sigLabelingRequested = QtCore.pyqtSignal(
         #
     )
@@ -171,6 +177,24 @@ class MainView(
             self._on_trigger_merge_alignments,
         )
 
+        self.actionAutoGenerateEnsembles = QtWidgets.QAction(
+            "Auto-generate Ensembles...",
+        )
+        self.actionAutoGenerateEnsembles.triggered.connect(
+            lambda: self.sigAutoEnsembleRequested.emit(
+                self.listViewSamples.selectedIndexes()
+            )
+        )
+
+        self.actionAlignEnsembles = QtWidgets.QAction(
+            "Align Ensembles Across Samples...",
+        )
+        self.actionAlignEnsembles.triggered.connect(
+            lambda: self.sigAlignEnsemblesRequested.emit(
+                self.listViewSamples.selectedIndexes()
+            )
+        )
+
         # Auto find-mfs / remove formulae, on the selected samples / alignments
         self._formula_actions = {}
         for kind in ('Sample', 'Alignment'):
@@ -231,6 +255,9 @@ class MainView(
 
         menu = QtWidgets.QMenu(self)
         menu.addAction(self.actionShowSelectedSamples)
+        menu.addSeparator()
+        menu.addAction(self.actionAutoGenerateEnsembles)
+        menu.addAction(self.actionAlignEnsembles)
         self._add_formula_actions(menu, 'Sample')
         menu.exec_(self.listViewSamples.mapToGlobal(pos))
 
