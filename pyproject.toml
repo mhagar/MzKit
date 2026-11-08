@@ -45,6 +45,10 @@ packages = ["core", "gui"]
 # TODO: could just move de._co.ini into `oore` and use importlib.resources
 "default_config.ini" = "default_config.ini"
 
+[project.optional-dependencies]
+# Training the 1D CNN peak segmenter (core/labeling/peak_model/) needs torch
+train = ["torch==2.14.1; sys_platform != 'darwin' or platform_machine == 'arm64'"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
@@ -57,6 +61,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 find-mfs = { git = "https://github.com/mhagar/find-mfs", branch = "improve-mf-scoring" }
 #find-mfs = { path = "/home/mh/PycharmProjects/find-mfs", editable = true }
 
@@ -68,3 +73,8 @@ required-environments = [
     "sys_platform == 'darwin'  and platform_machine == 'x86_64'",
     "sys_platform == 'darwin'  and platform_machine == 'arm64'",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

@@ -1,263 +1,211 @@
+"""Choose whole mass lanes for labeling.
+
+Favor seed-capable lanes while retaining some random active lanes. With a
+model, oversample and prefer uncertain lanes. Only selected lanes are densified.
 """
-Generate labeling candidates from a list of Samples.
-
-A Candidate is a (sample, m/z lane, apex scan) tuple paired with
-an XIC window suitable for display to a human annotator.
-
-Candidates are deliberately *not* validated — the whole point of
-labeling is to include ambiguous and poor signals that an
-algorithm might misclassify. Filtering those out before labeling
-defeats the exercise.
-
-Diversity sampling (stratify) reorders candidates so consecutive
-items span different (intensity, width) bins. This ensures the
-annotator sees a representative spread from candidate #1 rather
-than exhausting one regime before seeing another.
-"""
-from dataclasses import dataclass
 import logging
-from typing import TYPE_CHECKING, Iterator
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
-
-from core.cli.segment_chromatogram import find_peak_boundaries
+from numpy.random import Generator
 
 if TYPE_CHECKING:
-    from core.data_structs import Sample, ScanArray
+    from core.data_structs import Sample
     from core.data_structs.uuid_types import SampleUUID
 
 logger = logging.getLogger(__name__)
 
+_RNG: Generator = np.random.default_rng(42)
+
 
 @dataclass
-class Candidate:
+class LaneCandidate:
     sample_uuid: "SampleUUID"
     sample_name: str
-    mz_lane_idx: int
+    lane_idx: int
     mz: float
-    apex_scan_idx: int
-    apex_rt: float
-    apex_intsy: float
-    rough_width: int
-    # XIC window to show the annotator
-    window_start_scan: int
-    window_end_scan: int
     rt_values: np.ndarray
     intsy_values: np.ndarray
 
 
 def main(
     samples: list["Sample"],
+    parent_threshold: float,
     min_intsy: float,
-    window_half_width: int = 60,
-    max_per_sample: int | None = None,
+    n_lanes: int = 100,
+    max_samples: int = 3,
+    random_frac: float = 0.2,
+    model_path: str | None = None,
+    exclude: set | None = None,
+    pool_factor: int = 5,
+    explore: float = 0.2,
     progress_callback=None,  # injected by ProcessRunner; unused here
     cancel_event=None,       # injected by ProcessRunner; unused here
-) -> list["Candidate"]:
-    """
-    Entry point for `ProcessController.start_process` — runs the full
-    candidate pipeline (generate + stratify) and returns the ordered
-    list ready to hand to LabelingWindow.
-    """
-    logger.info(
-        f"Generating candidates: {len(samples)} sample(s), "
-        f"min_intsy={min_intsy}, max_per_sample={max_per_sample}"
-    )
-    raw = generate_candidates(
-        samples=samples,
-        min_intsy=min_intsy,
-        window_half_width=window_half_width,
-        max_per_sample=max_per_sample,
-    )
-    logger.info(f"Raw candidates: {len(raw)}. Stratifying…")
-    ordered = stratify(raw)
-    logger.info(f"Stratified candidate queue ready: {len(ordered)} items")
-    return ordered
+) -> list[LaneCandidate]:
+    """Return labeling candidates, interleaved across randomly selected samples."""
+    model = None
+    if model_path:
+        from core.labeling import peak_model
+        model = peak_model.load_model(model_path)
 
+    selected_samples = select_random_samples(max_samples, samples)
+    exclude = exclude or set()
+    n_per_sample = int(np.ceil(n_lanes / max(1, len(selected_samples))))
+    pool_size = n_per_sample * (pool_factor if model is not None else 1)
 
-def generate_candidates(
-    samples: list["Sample"],
-    min_intsy: float,
-    window_half_width: int = 60,
-    edge_fraction: float = 0.1,
-    min_peak_separation: int = 5,
-    max_per_sample: int | None = None,
-) -> list[Candidate]:
-    """
-    Scan each Sample's MS1 lanes for local maxima above min_intsy.
-    For each maximum, extract an XIC window of ±window_half_width
-    scans around the apex.
-
-    Successive apexes within the same lane must be at least
-    min_peak_separation scans apart (prevents picking every point
-    on a broad plateau as a separate candidate).
-    """
-    out: list[Candidate] = []
-    for sample in samples:
-        if sample.injection is None:
-            continue
-        sa = sample.injection.scan_array_ms1
-        n_lanes = sa.intsy_arr.shape[0]
-
-        # Dense per-lane chromatograms are the simplest way to find
-        # local maxima. Sparse arrays make this awkward.
-        lane_maxes = sa.intsy_arr.max(axis=1).toarray().flatten()
-        active_lanes = np.where(lane_maxes >= min_intsy)[0]
-
-        sample_candidates: list[Candidate] = []
-        for lane_idx in active_lanes:
-            chrom = sa.intsy_arr[int(lane_idx)].toarray().flatten()
-            apexes = _find_local_maxima(chrom, min_intsy, min_peak_separation)
-            for apex_idx in apexes:
-                cand = _build_candidate(
-                    sample=sample,
-                    scan_array=sa,
-                    lane_idx=int(lane_idx),
-                    apex_idx=int(apex_idx),
-                    chromatogram=chrom,
-                    window_half_width=window_half_width,
-                    edge_fraction=edge_fraction,
-                )
-                sample_candidates.append(cand)
-
-        if max_per_sample is not None and len(sample_candidates) > max_per_sample:
-            # Keep the top-N by intensity — a coarse cap, further
-            # diversified by stratify()
-            sample_candidates.sort(key=lambda c: c.apex_intsy, reverse=True)
-            sample_candidates = sample_candidates[:max_per_sample]
-
-        logger.info(
-            f"Sample {sample.name}: {len(sample_candidates)} candidates"
+    queues = [
+        _candidate_queue(
+            sample,
+            parent_threshold=parent_threshold,
+            min_intsy=min_intsy,
+            n_per_sample=n_per_sample,
+            pool_size=pool_size,
+            random_frac=random_frac,
+            exclude=exclude,
+            model=model,
+            explore=explore,
         )
-        out.extend(sample_candidates)
-
-    return out
-
-
-def stratify(
-    candidates: list[Candidate],
-    n_intensity_bins: int = 3,
-    n_width_bins: int = 3,
-    seed: int = 0,
-) -> list[Candidate]:
-    """
-    Reorder candidates so consecutive items span diverse
-    (intensity, width) strata. Uses round-robin across bins.
-
-    The shuffle within each bin is deterministic given `seed`
-    so sessions are reproducible.
-    """
-    if not candidates:
-        return []
-
-    rng = np.random.default_rng(seed)
-
-    intsys = np.array([c.apex_intsy for c in candidates])
-    widths = np.array([c.rough_width for c in candidates])
-
-    intsy_bins = _quantile_bin(intsys, n_intensity_bins)
-    width_bins = _quantile_bin(widths, n_width_bins)
-
-    bucketed: dict[tuple[int, int], list[Candidate]] = {}
-    for cand, ib, wb in zip(candidates, intsy_bins, width_bins):
-        bucketed.setdefault((int(ib), int(wb)), []).append(cand)
-
-    for bucket in bucketed.values():
-        rng.shuffle(bucket)
-
-    # Round-robin across all buckets until drained
-    iters = [iter(v) for v in bucketed.values()]
-    out: list[Candidate] = []
-    while iters:
-        next_iters = []
-        for it in iters:
-            try:
-                out.append(next(it))
-                next_iters.append(it)
-            except StopIteration:
-                continue
-        iters = next_iters
-
-    return out
+        for sample in selected_samples
+    ]
+    return _interleave_queues(queues)
 
 
-def _find_local_maxima(
-    chrom: np.ndarray, min_intsy: float, min_separation: int,
-) -> list[int]:
-    """
-    Return scan indices of local maxima in `chrom` that exceed
-    min_intsy, separated by at least min_separation scans.
+def select_random_samples(
+    max_samples: int,
+    samples: list["Sample"],
+) -> list["Sample"]:
+    """Choose samples with injections without changing their relative order."""
+    samples = [sample for sample in samples if sample.injection is not None]
+    if len(samples) <= max_samples:
+        return samples
 
-    Greedy: pick the tallest untaken point, mark a neighborhood
-    as taken, repeat.
-    """
-    available = chrom >= min_intsy
-    apexes: list[int] = []
-    # Copy because we mutate
-    work = chrom.copy()
-    work[~available] = 0
-
-    while True:
-        idx = int(np.argmax(work))
-        if work[idx] < min_intsy:
-            break
-        # Confirm it's a local max relative to immediate neighbors
-        left = work[idx - 1] if idx > 0 else 0
-        right = work[idx + 1] if idx + 1 < work.size else 0
-        if work[idx] >= left and work[idx] >= right:
-            apexes.append(idx)
-        lo = max(0, idx - min_separation)
-        hi = min(work.size, idx + min_separation + 1)
-        work[lo:hi] = 0
-
-    apexes.sort()
-    return apexes
+    picks = _RNG.choice(len(samples), size=max_samples, replace=False)
+    return [samples[i] for i in sorted(picks)]
 
 
-def _build_candidate(
+def _candidate_queue(
     sample: "Sample",
-    scan_array: "ScanArray",
-    lane_idx: int,
-    apex_idx: int,
-    chromatogram: np.ndarray,
-    window_half_width: int,
-    edge_fraction: float,
-) -> Candidate:
-    seg_start, seg_end = find_peak_boundaries(
-        chromatogram, apex_idx, edge_fraction=edge_fraction,
+    *,
+    parent_threshold: float,
+    min_intsy: float,
+    n_per_sample: int,
+    pool_size: int,
+    random_frac: float,
+    exclude: set,
+    model: dict | None,
+    explore: float,
+) -> list[LaneCandidate]:
+    scan_array = sample.injection.scan_array_ms1
+    lane_maxima = scan_array.intsy_arr.max(axis=1).toarray().ravel()
+
+    excluded_lanes = [lane for uuid, lane in exclude if uuid == sample.uuid]
+    lane_maxima[excluded_lanes] = 0
+    seedable_lanes = np.flatnonzero(lane_maxima >= parent_threshold)
+    active_lanes = np.flatnonzero(lane_maxima >= min_intsy)
+
+    lane_indices = _pick_lane_indices(
+        seedable_lanes,
+        active_lanes,
+        n_lanes=pool_size,
+        random_frac=random_frac,
     )
-    rough_width = max(1, seg_end - seg_start)
+    candidates = [_make_candidate(sample, lane) for lane in lane_indices]
 
-    n_scans = chromatogram.size
-    w_start = max(0, apex_idx - window_half_width)
-    w_end = min(n_scans, apex_idx + window_half_width + 1)
+    if model is not None and len(candidates) > n_per_sample:
+        candidates = _prioritize_by_uncertainty(
+            candidates,
+            model=model,
+            n_keep=n_per_sample,
+            min_intsy=min_intsy,
+            explore=explore,
+        )
 
-    rt_values = scan_array.rt_arr[w_start:w_end]
-    intsy_values = chromatogram[w_start:w_end]
-    mz = float(scan_array.mz_lane_label[lane_idx])
-    apex_rt = float(scan_array.rt_arr[apex_idx])
-    apex_intsy = float(chromatogram[apex_idx])
+    logger.info(
+        f"Sample {sample.name}: {len(lane_indices)} lanes "
+        f"({seedable_lanes.size} seed-capable, {active_lanes.size} active)"
+    )
+    return candidates
 
-    return Candidate(
+
+def _pick_lane_indices(
+    seedable_lanes: np.ndarray,
+    active_lanes: np.ndarray,
+    *,
+    n_lanes: int,
+    random_frac: float,
+) -> list[int]:
+    seedable_slots = n_lanes - round(n_lanes * random_frac)
+    selected_lanes = _random_subset(seedable_lanes, seedable_slots)
+
+    remaining_lanes = np.setdiff1d(active_lanes, selected_lanes)
+    selected_lanes += _random_subset(
+        remaining_lanes,
+        n_lanes - len(selected_lanes),
+    )
+
+    _RNG.shuffle(selected_lanes)
+    return selected_lanes
+
+
+def _random_subset(values: np.ndarray, size: int) -> list[int]:
+    picks = _RNG.choice(values, size=min(size, len(values)), replace=False)
+    return [int(value) for value in picks]
+
+
+def _make_candidate(sample: "Sample", lane_idx: int) -> LaneCandidate:
+    scan_array = sample.injection.scan_array_ms1
+    intsy_values = scan_array.intsy_arr[lane_idx].toarray().ravel()
+    return LaneCandidate(
         sample_uuid=sample.uuid,
         sample_name=sample.name,
-        mz_lane_idx=lane_idx,
-        mz=mz,
-        apex_scan_idx=apex_idx,
-        apex_rt=apex_rt,
-        apex_intsy=apex_intsy,
-        rough_width=rough_width,
-        window_start_scan=w_start,
-        window_end_scan=w_end,
-        rt_values=rt_values,
-        intsy_values=intsy_values,
+        lane_idx=lane_idx,
+        mz=float(scan_array.mz_lane_label[lane_idx]),
+        rt_values=np.asarray(scan_array.rt_arr, dtype=float),
+        intsy_values=intsy_values.astype(float),
     )
 
 
-def _quantile_bin(values: np.ndarray, n_bins: int) -> np.ndarray:
-    """Assign each value to a quantile-based bin [0, n_bins)."""
-    if values.size == 0 or n_bins <= 1:
-        return np.zeros(values.size, dtype=int)
-    quantiles = np.linspace(0, 1, n_bins + 1)[1:-1]
-    thresholds = np.quantile(values, quantiles)
-    return np.searchsorted(thresholds, values)
+def _prioritize_by_uncertainty(
+    candidates: list[LaneCandidate],
+    *,
+    model: dict,
+    n_keep: int,
+    min_intsy: float,
+    explore: float,
+) -> list[LaneCandidate]:
+    from core.labeling import peak_model
+
+    uncertainties = np.array([
+        peak_model.lane_uncertainty(
+            model,
+            candidate.intsy_values,
+            min_intsy,
+            rt=candidate.rt_values,
+        )
+        for candidate in candidates
+    ])
+    uncertainty_order = np.argsort(-uncertainties)
+
+    n_uncertain = round(n_keep * (1 - explore))
+    selected_indices = uncertainty_order[:n_uncertain].tolist()
+    selected_indices += _random_subset(
+        uncertainty_order[n_uncertain:],
+        n_keep - n_uncertain,
+    )
+
+    _RNG.shuffle(selected_indices)
+    return [candidates[i] for i in selected_indices]
+
+
+def _interleave_queues(
+    queues: list[list[LaneCandidate]],
+) -> list[LaneCandidate]:
+    shared_length = min((len(queue) for queue in queues), default=0)
+    shared = [candidate for group in zip(*queues) for candidate in group]
+    tails = [
+        candidate
+        for queue in queues
+        for candidate in queue[shared_length:]
+    ]
+    return shared + tails

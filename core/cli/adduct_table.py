@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import itertools
 from typing import Optional
 
 from molmass import Formula
@@ -15,6 +16,44 @@ ELECTRON_MASS = float(ELECTRON.mass)
 ISOTOPE_SPACING = (
     Formula("[13C]").monoisotopic_mass - Formula("C").monoisotopic_mass
 )  # ~= 1.0033548
+
+
+def _heavy_shift(
+        heavy: str,
+        light: str,
+) -> float:
+    return Formula(heavy).monoisotopic_mass - Formula(light).monoisotopic_mass
+
+
+# M+2 isotopes of S / Cl / Br
+_HEAVY = {
+    "34S": (_heavy_shift("[34S]", "S"), 2),
+    "37Cl": (_heavy_shift("[37Cl]", "Cl"), 3),
+    "81Br": (_heavy_shift("[81Br]", "Br"), 3)
+}
+_MAX_HEAVY = 3  # heavy atoms in total, e.g. Cl3, Br2Cl, SCl2
+
+
+@lru_cache(maxsize=None)
+def _isotope_deltas() -> tuple[tuple[float, str], ...]:
+    """
+    Envelope offsets: up to 2 13C on top of any mix of up to 3 heavy atoms.
+    """
+    names = list(_HEAVY)
+    out = []
+    for counts in itertools.product(*(range(_HEAVY[n][1] + 1) for n in names)):
+        if sum(counts) > _MAX_HEAVY:
+            continue
+        for c13 in range(3):
+            if not sum(counts) and not c13:
+                continue
+            d = c13 * ISOTOPE_SPACING + sum(k * _HEAVY[n][0] for n, k in zip(names, counts))
+            # S/Cl/Br M+2 shifts differ by <1 mDa: not distinguishable at ppm
+            # tolerances, so the label only counts heavy atoms
+            parts = ([f"{c13}x13C"] if c13 else []) + (
+                [f"{sum(counts)}x(34S/37Cl/81Br)"] if sum(counts) else [])
+            out.append((d, "isotope " + "+".join(parts)))
+    return tuple(out)
 
 
 @lru_cache(maxsize=None)
@@ -162,16 +201,17 @@ def relationship_label(
 ) -> Optional[str]:
     """
     If `|cand_mz - seed_mz|` matches a known same-entity relationship
-    (within ppm_tol of seed m/z), return a human-readable label; else
-    None.
+    (within ppm_tol of seed m/z), return a human-readable label;
+    else None.
     """
     delta = abs(cand_mz - seed_mz)
     tol = ppm_tol * 1e-6 * seed_mz
 
-    # Isotopologues.
-    for k in (1, 2):
-        if abs(delta - k * ISOTOPE_SPACING) <= tol:
-            return f"isotope +{k}"
+    # Isotopologues (13C and S/Cl/Br envelopes), either direction from the seed
+    # (abs delta), so it works whichever envelope member is tallest.
+    for d, label in _isotope_deltas():
+        if abs(delta - d) <= tol:
+            return label
 
     # In-source neutral losses (charge-1 m/z delta).
     for name, mass in _NEUTRAL_LOSSES.items():

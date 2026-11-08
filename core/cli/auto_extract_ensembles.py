@@ -49,6 +49,7 @@ from core.cli.segment_chromatogram import (
     survives_smoothing,
 )
 from core.cli.adduct_table import relationship_label
+from core.labeling.peak_model import PLATEAU_C, LaneSegmenter, load_model
 
 if TYPE_CHECKING:
     from core.data_structs import FeaturePointer, ScanArray, Injection
@@ -181,6 +182,12 @@ class ExtractionConfig:
     # scope
     rt_range: Optional[tuple[float, float]] = None
 
+    # Learned segmentation: path to a core.labeling.peak_model .npz. When set,
+    # seeds must sit in a model "peak" span (whose edges become the seed peak
+    # bounds), replacing find_peak_boundaries + is_peak + survives_smoothing, and
+    # recruited lanes sitting on a "plateau" span are dropped.
+    peak_model: Optional[str] = None
+
 
 @dataclass
 class Seed:
@@ -307,6 +314,12 @@ def extract_ensembles(
         else {}
     )
 
+    segmenter = (
+        LaneSegmenter(load_model(config.peak_model), ms1)
+        if config.peak_model else None
+    )
+    provider.segmenter = segmenter  # cofeature claims follow the model too
+
     ensembles: list[Ensemble] = []
     while True:
         if cancel_event is not None and cancel_event.is_set():
@@ -317,9 +330,31 @@ def extract_ensembles(
             break
 
         chrom = provider.seed_chrom(seed)
-        seg_start, seg_end = find_peak_boundaries(
-            chrom, seed.apex, edge_fraction=config.edge_fraction
-        )
+        if segmenter is not None:
+            # Segmented on the RAW lane: neighbouring peaks (even consumed ones)
+            # are real context the model was trained to cut at.
+            span = segmenter.span_at(seed.lane, seed.apex)
+            if span is None or span[2] != "peak":
+                # not a seed: consume the plateau it sits on, or the blip itself
+                provider.consume_rejected(
+                    seed,
+                    *(span[:2] if span else find_peak_boundaries(
+                        chrom, seed.apex, edge_fraction=config.edge_fraction)),
+                )
+                continue
+            seg_start, seg_end = span[0], span[1]
+        else:
+            seg_start, seg_end = find_peak_boundaries(
+                chrom, seed.apex, edge_fraction=config.edge_fraction
+            )
+
+        # Never let the seed's span run into signal earlier ensembles claimed.
+        # The model segments the raw lane, so its span can; the rule path works
+        # on the claims-zeroed lane and is unaffected.
+        seg_start, seg_end = provider.unclaimed_run(seed.lane, seg_start, seg_end, seed.apex)
+        if seg_end - seg_start < 2:  # a sliver left between earlier ensembles' claims
+            provider.consume_rejected(seed, seed.apex, seed.apex + 1)
+            continue
 
         # The seed must be a genuine chromatographic peak (not a slope or a
         # smeared/constant background) to anchor a group at all. Prominence is
@@ -333,7 +368,7 @@ def extract_ensembles(
             if config.peak_method == "prominence"
             else None
         )
-        if not is_peak(
+        if segmenter is None and not is_peak(
             chrom, seed.apex, seg_start, seg_end,
             min_peak_width=config.min_peak_width,
             min_prominence=config.min_prominence,
@@ -348,7 +383,7 @@ def extract_ensembles(
         # Second gate: the apex's rise must be made of coherent (multi-scan)
         # signal, not a spike/jitter that a narrow smooth erases. Judged against
         # the same raw baseline as is_peak so consumed neighbours don't skew it.
-        if config.require_smoothing_survival and not survives_smoothing(
+        if segmenter is None and config.require_smoothing_survival and not survives_smoothing(
             chrom, seed.apex, seg_start, seg_end,
             sigma=config.smoothing_sigma,
             min_survival=config.min_smoothing_survival,
@@ -372,9 +407,13 @@ def extract_ensembles(
             seed, seg_start, seg_end, score_idxs, config
         )
         matched_positions = _recruit_ms1(provider, seed, score_idxs, candidates, config)
+        if segmenter is not None:
+            matched_positions = _drop_plateau_cofeatures(
+                ms1, segmenter, candidates, matched_positions, seg_start, seg_end
+            )
 
         ms1_cofeatures = _build_ms1_cofeatures(
-            ms1, seed, candidates, matched_positions, display_idxs
+            ms1, provider, seed, candidates, matched_positions, display_idxs
         )
         ms2_cofeatures, ms2_scan_count = _attach_ms2(
             injection, config, seed, candidates, matched_positions, display_idxs,
@@ -514,8 +553,31 @@ def _recruit_ms1(
     return np.array(matched, dtype=int)
 
 
+def _drop_plateau_cofeatures(
+    ms1: 'ScanArray',
+    segmenter: LaneSegmenter,
+    candidates: CandidateSet,
+    matched_positions: np.ndarray,
+    seg_start: int,
+    seg_end: int,
+) -> np.ndarray:
+    """
+    Drop recruited lanes whose signal under the seed peak is a model "plateau"
+    (background that scores a high cosine over a short window). Blips and
+    peaks stay recruitable.
+    """
+    if matched_positions.size == 0:
+        return matched_positions
+    lanes = candidates.lane_idxs[matched_positions].astype(int)
+    window = ms1.intsy_arr[lanes, seg_start:seg_end].toarray()
+    apexes = seg_start + window.argmax(axis=1)
+    keep = np.array([cls != PLATEAU_C for cls, _ in segmenter.near(lanes, apexes)])
+    return matched_positions[keep]
+
+
 def _build_ms1_cofeatures(
     ms1: 'ScanArray',
+    provider: 'SeedProvider',
     seed: Seed,
     candidates: CandidateSet,
     matched_positions: np.ndarray,
@@ -523,19 +585,40 @@ def _build_ms1_cofeatures(
 ) -> list['FeaturePointer']:
     """
     One MS1 FeaturePointer per distinct mass lane (seed first), each spanning the
-    window. Deduplicated by lane so an over-split elution (or a same-lane DDA
+    window clipped to the stretch of its lane no earlier ensemble claimed (around
+    the lane's own unclaimed apex). Recruitment already scores with claimed scans
+    zeroed; clipping keeps the emitted traces from overlapping other ensembles'
+    signal too. Deduplicated by lane so an over-split elution (or a same-lane DDA
     precursor on another peak) collapses to a single trace.
     """
+    w0, w1 = int(window_idxs[0]), int(window_idxs[-1]) + 1
+
+    def pointer(lane: int, apex: int) -> Optional['FeaturePointer']:
+        a, b = provider.unclaimed_run(lane, w0, w1, apex)
+        return ms1.make_feature_pointer(lane, np.arange(a, b)) if b - a >= 2 else None
+
+    seed_ptr = pointer(seed.lane, seed.apex)
     cofeatures: list['FeaturePointer'] = [
-        ms1.make_feature_pointer(seed.lane, window_idxs.copy())
+        seed_ptr if seed_ptr is not None
+        else ms1.make_feature_pointer(seed.lane, window_idxs.copy())
     ]
+    lanes = []
     seen: set[int] = {seed.lane}
     for pos in matched_positions:
         lane = int(candidates.lane_idxs[pos])
-        if lane in seen:
-            continue
-        seen.add(lane)
-        cofeatures.append(ms1.make_feature_pointer(lane, window_idxs.copy()))
+        if lane not in seen:
+            seen.add(lane)
+            lanes.append(lane)
+    if not lanes:
+        return cofeatures
+    unclaimed = provider.window_intensity(np.array(lanes), w0, w1)  # claims zeroed
+    for lane, row in zip(lanes, unclaimed):
+        k = int(np.argmax(row))
+        if row[k] <= 0:
+            continue  # all of its signal here belongs to earlier ensembles
+        ptr = pointer(lane, w0 + k)
+        if ptr is not None:
+            cofeatures.append(ptr)
     return cofeatures
 
 
@@ -661,6 +744,13 @@ class SeedProvider:
     where the next seed comes from, which candidates are eligible in a window,
     and how the search space is consumed after a seed is rejected or emitted.
     """
+    # Learned segmenter (set by extract_ensembles when config.peak_model is on)
+    segmenter: Optional[LaneSegmenter] = None
+
+    def unclaimed_run(self, lane: int, lo: int, hi: int, scan: int) -> tuple[int, int]:
+        """The stretch of [lo, hi) around `scan` no earlier ensemble claimed on
+        `lane`. Providers that don't track claims return [lo, hi) unchanged."""
+        return lo, hi
 
     def next_seed(self) -> Optional[Seed]:
         raise NotImplementedError
@@ -891,6 +981,12 @@ class LaneMaxSeedProvider(SeedProvider):
         # window would otherwise leave tails that a later ensemble could re-seed
         # or re-recruit at an offset — enforcing one-peak-one-ensemble.
         self._zero_region(seed.lane, seg_start, seg_end)
+        if self.segmenter is not None:  # one batched model pass for all claims
+            todo = [(f.mz_lane_idx, self._cofeature_apex(f.mz_lane_idx, f.scan_start, f.scan_end))
+                    for f in ms1_cofeatures if f.mz_lane_idx != seed.lane]
+            todo = [(lane, apex) for lane, apex in todo if apex is not None]
+            if todo:
+                self.segmenter.near(*zip(*todo))
         affected: set[int] = set()
         for ftr in ms1_cofeatures:
             lane = ftr.mz_lane_idx
@@ -913,18 +1009,41 @@ class LaneMaxSeedProvider(SeedProvider):
         Measured on the *working* (already-consumed) chromatogram so the claimed
         span naturally stops at regions earlier ensembles already hold, and never
         exceeds this lane's own peak (find_peak_boundaries cuts at valleys). Falls
-        back to the window itself if the lane has no signal there.
+        back to the window itself if the lane has no signal there. With the
+        learned model on, a cofeature sitting in a model peak span claims that.
         """
+        apex = self._cofeature_apex(lane, w_start, w_end)
+        if apex is None:
+            return (w_start, w_end)
+        chrom = self._lane_chrom(lane)
+        if self.segmenter is not None:
+            # claim the model's peak span on this lane (from your labels); blips
+            # ("other") have no span and keep the rule-based extent below
+            span = self.segmenter.near([lane], [apex])[0][1]
+            if span is not None and span[2] == "peak":
+                return span[0], span[1]
+        return find_peak_boundaries(
+            chrom, apex, edge_fraction=self.config.edge_fraction
+        )
+
+    def unclaimed_run(self, lane: int, lo: int, hi: int, scan: int) -> tuple[int, int]:
+        for a, b in self.assigned_ranges.get(lane, []):
+            if b <= scan:
+                lo = max(lo, b)
+            elif a > scan:
+                hi = min(hi, a)
+            else:  # `scan` itself is claimed
+                return scan, scan
+        return lo, hi
+
+    def _cofeature_apex(self, lane: int, w_start: int, w_end: int) -> Optional[int]:
+        """Cofeature's apex on its working lane within [w_start, w_end], or None."""
         chrom = self._lane_chrom(lane)
         lo = max(0, w_start)
         hi = min(chrom.size, w_end + 1)  # w_end is an inclusive scan index
         if hi <= lo or chrom[lo:hi].max() <= 0:
-            return (w_start, w_end)
-        apex = lo + int(np.argmax(chrom[lo:hi]))
-        apex = _climb_to_apex(chrom, apex)
-        return find_peak_boundaries(
-            chrom, apex, edge_fraction=self.config.edge_fraction
-        )
+            return None
+        return _climb_to_apex(chrom, lo + int(np.argmax(chrom[lo:hi])))
 
     def _zero_region(self, lane: int, seg_start: int, seg_end: int) -> None:
         self.assigned_ranges[lane].append((seg_start, seg_end))

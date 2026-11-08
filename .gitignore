@@ -29,7 +29,8 @@ trash
 /pubchem.bio/
 
 # MS2DeepScore weights (see tools/ms2deepscore/)
-/models/
+/models/*
+!/models/peak_model.npz
 
 # Compound database dumps + SQLite cache (core/utils/compound_db.py)
 /coconut/

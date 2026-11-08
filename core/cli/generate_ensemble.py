@@ -373,6 +373,10 @@ class AutoEnsembleParams(NamedTuple):
     # DDA-only: require MS2 to ensemble a feature (see class docstring). Default
     # False -> group DDA data DIA-style, keeping real triggered MS2 where present.
     dda_require_ms2: bool = False
+    # Learned segmentation (models/peak_model.npz, trained in the labeling
+    # window): replaces the edge_fraction / is_peak / smoothing knobs for seeds
+    # and drops recruited cofeatures that aren't peaks (plateaus).
+    use_peak_model: bool = False
 
 
 # Config section holding the persisted auto-generation defaults. Single source of
@@ -432,6 +436,7 @@ def auto_params_from_config(config: 'ConfigParser') -> AutoEnsembleParams:
         rt_range=rt_range,
         method=config.get(s, "method", fallback=DEFAULT_COFEATURE_METRIC),
         dda_require_ms2=config.getboolean(s, "dda_require_ms2", fallback=False),
+        use_peak_model=config.getboolean(s, "use_peak_model", fallback=False),
     )
 
 
@@ -480,6 +485,7 @@ def auto_params_to_config(
     setv("adduct_ppm_tol", params.adduct_ppm_tol)
     setv("polarity", params.polarity)
     setv("dda_require_ms2", params.dda_require_ms2)
+    setv("use_peak_model", params.use_peak_model)
     setv("rt_restrict", params.rt_range is not None)
     if params.rt_range is not None:
         setv("rt_start_min", params.rt_range[0] / 60.0)
@@ -518,6 +524,17 @@ def auto_generate_ensembles(
     :param params: AutoEnsembleParams controlling thresholds
     :return: List of generated Ensembles
     """
+    peak_model = None
+    if params.use_peak_model:
+        from core.labeling.peak_model import default_model_path
+        path = default_model_path()
+        if not path.exists():
+            raise FileNotFoundError(
+                f"use_peak_model is on but no model at {path}; train one from "
+                "the labeling window (Session > Train peak model)"
+            )
+        peak_model = str(path)
+
     is_dda = injection.acquisition_mode == 'dda'
     if is_dda and params.dda_require_ms2:
         config = dda_config(
@@ -538,6 +555,7 @@ def auto_generate_ensembles(
             adduct_ppm_tol=params.adduct_ppm_tol,
             polarity=params.polarity,
             rt_range=params.rt_range,
+            peak_model=peak_model,
             # NB: the smoothing-survival filter is intentionally not
             # forwarded here, the filter is designed for DIA problems
         )
@@ -574,6 +592,7 @@ def auto_generate_ensembles(
             polarity=params.polarity,
             ms2_corr_threshold=params.ms2_corr_threshold,
             rt_range=params.rt_range,
+            peak_model=peak_model,
             **ms2_override,
         )
     return extract_ensembles(

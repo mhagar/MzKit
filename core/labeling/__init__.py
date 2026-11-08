@@ -1,11 +1,9 @@
 from core.labeling.schema import (
-    MorphologyClass,
-    Label,
+    LaneLabel,
     LabelFile,
+    PEAK,
+    PLATEAU,
     SCHEMA_VERSION,
+    insert_span,
 )
-from core.labeling.candidate_generator import (
-    Candidate,
-    generate_candidates,
-    stratify,
-)
+from core.labeling.candidate_generator import LaneCandidate

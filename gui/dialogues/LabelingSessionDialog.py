@@ -1,14 +1,16 @@
 """
-Small pre-session dialog for the peak-morphology labeling tool.
+Small pre-session dialog for chromatogram labeling tool
+(i.e. for for generating training data for chrom segmentation)
 
 Asks the annotator for:
   - Output label file path (resumes if it exists)
-  - Candidate floor (min intensity to consider)
-  - Max candidates per sample
+  - Seed feature threshold (lanes reaching it are favoured)
+  - Intensity floor (min lane max for the random share of lanes)
+  - Number of lanes to queue
   - Annotator name
 
-Kept as a plain QDialog in code rather than a .ui file — the
-field list is short and likely to evolve while the tool matures.
+Kept as a plain QDialog in code rather than a .ui file for now.
+# TODO: turn this into .ui when tool is mature
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -21,8 +23,9 @@ from PyQt5 import QtCore, QtWidgets
 @dataclass
 class LabelingSessionParams:
     label_file_path: Path
+    parent_threshold: float
     min_intsy: float
-    max_per_sample: Optional[int]
+    n_lanes: int
     annotator: str
 
 
@@ -30,8 +33,9 @@ class LabelingSessionDialog(QtWidgets.QDialog):
     def __init__(
         self,
         default_label_file: Optional[Path] = None,
+        default_parent_threshold: float = 10000.0,
         default_min_intsy: float = 1000.0,
-        default_max_per_sample: int = 200,
+        default_n_lanes: int = 100,
         default_annotator: str = "",
         parent: Optional[QtWidgets.QWidget] = None,
     ):
@@ -49,29 +53,34 @@ class LabelingSessionDialog(QtWidgets.QDialog):
         path_row.addWidget(self._label_file_edit, 1)
         path_row.addWidget(browse_btn)
 
+        self._parent_spin = QtWidgets.QDoubleSpinBox()
+        self._parent_spin.setRange(0.0, 1e12)
+        self._parent_spin.setDecimals(1)
+        self._parent_spin.setValue(default_parent_threshold)
+        self._parent_spin.setSingleStep(1000.0)
+
         self._min_intsy_spin = QtWidgets.QDoubleSpinBox()
         self._min_intsy_spin.setRange(0.0, 1e12)
         self._min_intsy_spin.setDecimals(1)
         self._min_intsy_spin.setValue(default_min_intsy)
         self._min_intsy_spin.setSingleStep(100.0)
 
-        self._max_per_sample_spin = QtWidgets.QSpinBox()
-        self._max_per_sample_spin.setRange(0, 100_000)
-        self._max_per_sample_spin.setValue(default_max_per_sample)
-        self._max_per_sample_spin.setSpecialValueText("No limit")
+        self._n_lanes_spin = QtWidgets.QSpinBox()
+        self._n_lanes_spin.setRange(1, 10_000)
+        self._n_lanes_spin.setValue(default_n_lanes)
 
         self._annotator_edit = QtWidgets.QLineEdit(default_annotator)
 
         form = QtWidgets.QFormLayout()
         form.addRow("Label file:", path_row)
-        form.addRow("Candidate floor (min intensity):", self._min_intsy_spin)
-        form.addRow("Max candidates per sample:", self._max_per_sample_spin)
+        form.addRow("Seed feature threshold (favoured lanes):", self._parent_spin)
+        form.addRow("Activity floor (random lanes):", self._min_intsy_spin)
+        form.addRow("Lanes to queue (from <= random samples):", self._n_lanes_spin)
         form.addRow("Annotator:", self._annotator_edit)
 
         self._hint = QtWidgets.QLabel(
-            "If the label file exists, already-labeled candidates will be skipped."
+            "If label file exists, already labeled candidates will be skipped."
         )
-        self._hint.setStyleSheet("color: gray;")
         self._hint.setWordWrap(True)
 
         buttons = QtWidgets.QDialogButtonBox(
@@ -112,10 +121,10 @@ class LabelingSessionDialog(QtWidgets.QDialog):
 
     # ------------------------------------------------------------------
     def params(self) -> LabelingSessionParams:
-        max_per = self._max_per_sample_spin.value()
         return LabelingSessionParams(
             label_file_path=Path(self._label_file_edit.text().strip()),
+            parent_threshold=float(self._parent_spin.value()),
             min_intsy=float(self._min_intsy_spin.value()),
-            max_per_sample=max_per if max_per > 0 else None,
+            n_lanes=int(self._n_lanes_spin.value()),
             annotator=self._annotator_edit.text().strip(),
         )

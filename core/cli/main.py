@@ -552,6 +552,7 @@ def _auto_extract_overrides(args: argparse.Namespace) -> dict:
         'smoothing_sigma': args.smoothing_sigma,
         'min_smoothing_survival': args.min_smoothing_survival,
         'method': args.method,
+        'use_peak_model': args.peak_model,
     }
     overrides.update({k: v for k, v in simple.items() if v is not None})
 
@@ -1012,6 +1013,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help='RT window start in minutes (needs --rt-end-min)')
     p_auto.add_argument('--rt-end-min', type=float, default=None,
                         help='RT window end in minutes (needs --rt-start-min)')
+    p_auto.add_argument('--peak-model', action=argparse.BooleanOptionalAction, default=None,
+                        help='Use the learned peak model (models/peak_model.npz) '
+                             'instead of the peak rules (default: config use_peak_model)')
     p_auto.set_defaults(func=cmd_auto_extract)
 
     # --- auto-find-mfs ---
