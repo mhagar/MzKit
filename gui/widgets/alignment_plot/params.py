@@ -36,6 +36,10 @@ class RenderParams:
     # Cluster (dendrogram) mode: strip width (s) -> leaf-slot units
     cluster_width_scale: float = 0.02
 
+    # Colour mode (toolbar): 'alignments' (per analyte), 'annotations'
+    # (annotated vs not) or 'groups' (by EnsembleGroup)
+    color_mode: str = 'alignments'
+
     @property
     def stagger_base(self) -> float:
         """Vertical offset that centres the stagger spread on the lane."""

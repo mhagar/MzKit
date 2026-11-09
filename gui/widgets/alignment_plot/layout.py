@@ -45,6 +45,8 @@ SINGLETON_COLOR = QColor(135, 206, 250, 200)
 # way on the map, the chromatogram and the Inspector's compare table.
 ANCHOR_COLOR = QColor(255, 165, 0)
 CURRENT_COLOR = QColor(0, 200, 255)
+# Annotation colour mode: analytes with any annotated member
+ANNOTATED_COLOR = QColor(60, 220, 90)
 
 
 class LaneMap(NamedTuple):
@@ -181,6 +183,21 @@ def strip_geometry(
         height,
     )
     return rect, QPointF(cx, cy)
+
+
+def is_annotated(ensemble: 'Ensemble') -> bool:
+    """An accepted formula, a compound annotation or an identity."""
+    fa = ensemble.formula_assignment
+    return bool(
+        (fa is not None and fa.chosen is not None)
+        or (ensemble.annotation is not None and not ensemble.annotation.is_empty)
+        or ensemble.identity
+    )
+
+
+def group_color(group_idx: int) -> QColor:
+    """A stable, distinct colour per EnsembleGroup (by its index)."""
+    return pg.intColor(group_idx, hues=9, minValue=200, maxValue=255, sat=200)
 
 
 def analyte_color(analyte_idx: int, is_singleton: bool) -> QColor:

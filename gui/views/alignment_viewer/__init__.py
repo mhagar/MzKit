@@ -231,6 +231,20 @@ class AlignmentViewer(
         )
         self.btnRenderParams.setText("Display…")
         self.btnRenderParams.setToolTip("Edit strip / line display settings")
+        self.comboColorMode = QtWidgets.QComboBox()
+        for text, mode in (("Colour: Alignments", 'alignments'),
+                           ("Colour: Annotations", 'annotations'),
+                           ("Colour: Groups", 'groups')):
+            self.comboColorMode.addItem(text, mode)
+        self.comboColorMode.setToolTip(
+            "Alignments: a colour per analyte. Annotations: highlight analytes "
+            "with an accepted formula or compound annotation. Groups: a colour "
+            "per ensemble group"
+        )
+        self.horizontalLayout.insertWidget(
+            self.horizontalLayout.indexOf(self.btnRenderParams) + 1,
+            self.comboColorMode,
+        )
         self.btnClusterMode.setText("By MS2")
         self.btnClusterMode.setToolTip(
             "Order analytes by hierarchical clustering of their MS2 "
@@ -291,6 +305,7 @@ class AlignmentViewer(
         self.btnLinkRT.toggled.connect(self._update_rt_link)
         self.btnFrameSelection.toggled.connect(self.detail_panel.set_frame_selection)
         self.btnRenderParams.clicked.connect(self._show_params_dialog)
+        self.comboColorMode.currentIndexChanged.connect(self._on_color_mode_changed)
         self.btnClusterMode.toggled.connect(self._on_cluster_mode_toggled)
         self.plotDendrogram.sigSubtreeClicked.connect(self._select_analytes)
         self.plotDendrogram.sigNodeHovered.connect(self._on_node_hovered)
@@ -556,7 +571,13 @@ class AlignmentViewer(
         self._params_dialog.raise_()
 
     def _on_params_changed(self, params: RenderParams):
+        # The colour mode belongs to the toolbar, not the Display dialog
+        params.color_mode = self._params.color_mode
         self._params = params
+        self._render(preserve_range=True, preserve_selection=True)
+
+    def _on_color_mode_changed(self, index: int):
+        self._params.color_mode = self.comboColorMode.itemData(index)
         self._render(preserve_range=True, preserve_selection=True)
 
     def _update_rt_link(self):
@@ -769,6 +790,8 @@ class AlignmentViewer(
         """Re-show the tree and analyte panel (e.g. a formula or annotation changed)."""
         self._show_tree()
         self._show_focus()
+        if self._params.color_mode == 'annotations':
+            self._render(preserve_range=True, preserve_selection=True)
 
     def _refresh_details(self):
         """
@@ -984,7 +1007,10 @@ class AlignmentViewer(
     # -- ensemble groups ----------------------------------------------------
 
     def _on_groups_changed(self, _group):
-        self._refresh_groups()
+        if self._params.color_mode == 'groups':
+            self._render(preserve_range=True, preserve_selection=True)   # also refreshes groups
+        else:
+            self._refresh_groups()
 
     def _analyte_of(self) -> dict:
         """EnsembleUUID -> AnalyteUUID over the shown alignment's members."""
@@ -1003,6 +1029,7 @@ class AlignmentViewer(
             self.plotGroupTrack.set_groups(
                 self.data_source.groups_for_ensembles(analyte_of),
                 self._x_of_analyte, analyte_of,
+                colored=self._params.color_mode == 'groups',
             )
         self.plotGroupTrack.setVisible(
             self._alignment is not None and self.plotGroupTrack.has_visible_groups()

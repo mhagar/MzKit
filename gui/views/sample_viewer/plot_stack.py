@@ -642,6 +642,10 @@ class SampleStackView(
         self._show_ensembles = show_ensembles
         self.refresh_all_plots()
 
+    def on_show_formulae_toggled(self, show_formulae: bool):
+        self.ensemble_ui_mgr.show_formulae = show_formulae
+        self.refresh_all_plots()
+
     def refresh_ensemble_label(
         self,
         ensemble_uuid: 'EnsembleUUID',

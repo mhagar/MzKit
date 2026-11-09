@@ -21,6 +21,7 @@ from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPicture, QPolygonF
 
 from gui.widgets.alignment_plot.indicators import BandIndicator, OutlineIndicator
+from gui.widgets.alignment_plot.layout import group_color
 
 if TYPE_CHECKING:
     from core.data_structs.ensemble_group import EnsembleGroup
@@ -71,6 +72,7 @@ class _Row(NamedTuple):
     xs: list[float]               # their x, same order
     n_hidden: int                 # member ensembles not in view
     lane: int
+    color: QColor
 
     @property
     def left(self) -> float:
@@ -105,8 +107,8 @@ class GroupTrackItem(pg.GraphicsObject):
         self._picture = QPicture()
 
         painter = QPainter(self._picture)
-        painter.setPen(_cosmetic_pen(QColor(180, 180, 180, 220), 1))
         for row in rows:
+            painter.setPen(_cosmetic_pen(row.color, 1))
             for shape in row.shapes():
                 painter.drawPolyline(shape)
         painter.end()
@@ -212,28 +214,32 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
         groups: list['EnsembleGroup'],
         x_of_analyte: dict['AnalyteUUID', float],
         analyte_of: dict['EnsembleUUID', 'AnalyteUUID'],
+        colored: bool = False,
     ):
         """
         Draw `groups` at their members' analytes (`analyte_of`); members
-        whose analyte is missing from `x_of_analyte` are skipped.
+        whose analyte is missing from `x_of_analyte` are skipped. `colored`
+        draws each group in the map's group colour (by its index in `groups`),
+        else grey.
         """
         self.clear_groups()
         visible = []
-        for group in groups:
+        for idx, group in enumerate(groups):
             shown = [u for u in group.ensemble_uuids if analyte_of.get(u) in x_of_analyte]
             uuids = list(dict.fromkeys(analyte_of[u] for u in shown))
             if uuids:
                 visible.append((
                     group, uuids, [float(x_of_analyte[u]) for u in uuids],
                     len(group.ensemble_uuids) - len(shown),
+                    group_color(idx) if colored else QColor(180, 180, 180, 220),
                 ))
         if not visible:
             return
 
-        lanes = pack_lanes([(min(xs), max(xs)) for _, _, xs, _ in visible])
+        lanes = pack_lanes([(min(xs), max(xs)) for _, _, xs, _, _ in visible])
         self._rows = [
-            _Row(group, uuids, xs, n_hidden, lane)
-            for (group, uuids, xs, n_hidden), lane in zip(visible, lanes)
+            _Row(group, uuids, xs, n_hidden, lane, color)
+            for (group, uuids, xs, n_hidden, color), lane in zip(visible, lanes)
         ]
         self._item = GroupTrackItem(self._rows)
         self._item.sigRowHovered.connect(self._on_row_hovered)
@@ -244,7 +250,7 @@ class AlignmentGroupTrackWidget(pg.PlotWidget):
         font = QFont()
         font.setPointSize(LABEL_PT)
         for row in self._rows:
-            label = pg.TextItem(row.group.title, color=(200, 200, 200), anchor=(0, 1))
+            label = pg.TextItem(row.group.title, color=row.color, anchor=(0, 1))
             label.setFont(font)
             label.setPos(row.left, row.lane + TICK_Y[0])
             self.pi.addItem(label)

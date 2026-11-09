@@ -1,5 +1,6 @@
-from PyQt5 import QtCore, QtGui
-import pyqtgraph as pg
+from PyQt5 import QtCore
+
+from gui.widgets.alignment_plot.layout import SINGLETON_COLOR
 
 from core.utils.formula_formatting import (
     format_assignment_formula_text,
@@ -33,6 +34,7 @@ class EnsembleUIManager(QtCore.QObject):
         super().__init__()
         self._model = model
         self._widget_mgr = widget_manager
+        self.show_formulae: bool = True
 
     def set_model(
         self,
@@ -96,14 +98,16 @@ class EnsembleUIManager(QtCore.QObject):
             # Get base cofeature chrom.
             chrom_arr = ensemble.get_base_chromatogram(ms_level)
 
-            assignment = self._model.getAssignment(ensemble_uuid)
-
             widget.addPeak(
                 chrom=chrom_arr,
                 uuid=ensemble_uuid,
-                color=_generate_ensemble_color(ensemble_uuid),
-                html_label=_ensemble_label_html(ensemble, assignment),
+                color=SINGLETON_COLOR,   # the Alignment Viewer's default
+                html_label=self._label_html(ensemble),
             )
+
+    def _label_html(self, ensemble: 'Ensemble') -> str:
+        assignment = self._model.getAssignment(ensemble.uuid) if self.show_formulae else None
+        return _ensemble_label_html(ensemble, assignment)
 
     def refresh_ensemble_label(
         self,
@@ -120,11 +124,9 @@ class EnsembleUIManager(QtCore.QObject):
             if not injection or ensemble_uuid not in injection.ensembles:
                 continue
 
-            ensemble = injection.ensembles[ensemble_uuid]
-            assignment = self._model.getAssignment(ensemble_uuid)
             widget.setPeakLabel(
                 uuid=ensemble_uuid,
-                html_label=_ensemble_label_html(ensemble, assignment),
+                html_label=self._label_html(injection.ensembles[ensemble_uuid]),
             )
             return
 
@@ -226,19 +228,4 @@ def _ensemble_label_html(
         parts.append(formula_html)
 
     return "<br>".join(parts)
-
-
-def _generate_ensemble_color(
-    idx: int,
-) -> QtGui.QColor:
-    """
-    Avoids generating grey, which is used for raw data
-    """
-    return pg.intColor(
-        idx,
-        hues=12,
-        minValue=150,
-        maxValue=255,
-        sat=128,
-    )
 

@@ -23,6 +23,10 @@ from gui.widgets.alignment_plot.layout import (
     strip_geometry,
     scale_line_opacity,
     analyte_color,
+    group_color,
+    is_annotated,
+    SINGLETON_COLOR,
+    ANNOTATED_COLOR,
 )
 
 if TYPE_CHECKING:
@@ -73,6 +77,7 @@ class EnsembleStripsItem(pg.GraphicsObject):
         self.polylines: dict[int, QPolygonF] = {} # aid -> polyline (multi only)
         self._ensembles: dict[tuple, object] = {} # (aid, sample_uuid) -> Ensemble
         self._analytes: dict[int, object] = {}    # aid -> AlignedAnalyte
+        self.colors: dict[int, QColor] = {}       # aid -> strip colour
 
         self._x_range: tuple[float, float] = (0.0, 1.0)
         self._picture = QPicture()
@@ -89,6 +94,13 @@ class EnsembleStripsItem(pg.GraphicsObject):
     def _build_picture(self):
         painter = QPainter(self._picture)
         min_x, max_x = None, None
+        mode = self._params.color_mode
+        group_of: dict = {}   # EnsembleUUID -> its oldest group's index
+        if mode == 'groups':
+            members = [e for a in self._alignment.analytes for e in a.ensemble_map.values()]
+            for idx, group in enumerate(self._data_source.groups_for_ensembles(members)):
+                for e in group.ensemble_uuids:
+                    group_of.setdefault(e, idx)
 
         for aid, analyte in enumerate(self._alignment.analytes):
             self._analytes[aid] = analyte
@@ -97,8 +109,19 @@ class EnsembleStripsItem(pg.GraphicsObject):
                 if u in analyte.ensemble_map
             ]
             is_singleton = len(samples) < 2
-            color = analyte_color(aid, is_singleton)
+            if mode == 'annotations':
+                annotated = any(
+                    e is not None and is_annotated(e)
+                    for e in (resolve_ensemble(analyte, u, self._data_source) for u in samples)
+                )
+                color = QColor(ANNOTATED_COLOR if annotated else SINGLETON_COLOR)
+            elif mode == 'groups':
+                idxs = [group_of[e] for e in analyte.ensemble_map.values() if e in group_of]
+                color = group_color(min(idxs)) if idxs else QColor(SINGLETON_COLOR)
+            else:
+                color = analyte_color(aid, is_singleton)
 
+            self.colors[aid] = color
             painter.setPen(pg.mkPen(color))
             fill = QColor(color)
             fill.setAlpha(110)

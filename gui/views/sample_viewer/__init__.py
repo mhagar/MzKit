@@ -1,6 +1,8 @@
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt, QPointF
 import pyqtgraph as pg
+
+from gui.widgets.alignment_plot.layout import SINGLETON_COLOR
 import numpy as np
 
 from core.utils.config import load_config
@@ -134,6 +136,11 @@ class SampleViewer(
         self.checkShowEnsembles.toggled.connect(
             self.viewSampleStack.on_show_ensembles_toggled
         )
+        self.checkShowFormulae.toggled.connect(
+            self.viewSampleStack.on_show_formulae_toggled
+        )
+        # Formulae are drawn on the ensemble overlays
+        self.checkShowEnsembles.toggled.connect(self.checkShowFormulae.setEnabled)
 
         # View/hide ensemble preview
         self.checkShowEnsemblePreview.toggled.connect(
@@ -742,13 +749,7 @@ class SampleViewer(
 
         # Update preview MS plot
         self.plotEnsembleMS.setSpectrumPlotPen(
-            pg.mkPen(pg.intColor(   # Temporary color gen
-                ensemble_uuid,      # TODO: use func in ensemble_ui_manager.py
-                hues=12,
-                minValue=150,
-                maxValue=255,
-                sat=128,
-            ))
+            pg.mkPen(SINGLETON_COLOR)   # the overlays' default colour
         )
         self.plotEnsembleMS.update_label(
             f"Selected: {ensemble.base_mz:.4f} m/z @ {ensemble.peak_rt:.2f}s "
