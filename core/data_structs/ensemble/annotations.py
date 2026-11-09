@@ -5,6 +5,7 @@ Annotation types are primitive-only, so persistence round-trips them with
 plain `asdict` / `Cls(**d)`.
 """
 from dataclasses import dataclass, field, replace
+import re
 import uuid
 from typing import Literal, Optional, TYPE_CHECKING
 
@@ -263,20 +264,18 @@ class IonAnnotation:
         returns the isotope envelope as a numpy array
         (used for plotting)
         """
-        # TODO: Crude/inelegant. Can probably just fix on find-mfs side
-        # Assemble formula:
-        ion_formula = self.formula
-        if self.adduct:
-            ion_formula += self.adduct
-
-            charge = Formula(self.formula).charge
-            if charge > 0:
-                ion_formula += "+"*charge
-            if charge < 0:
-                ion_formula += "-"*charge
+        # molmass can't parse '-' in a formula string ('C6H12O6-OH'),
+        # so apply each signed adduct term ('Na', '-H', '+H-H2O') arithmetically
+        ion_formula = Formula(self.formula)
+        for sign, term in re.findall(r'([+-]?)([^+-]+)', self.adduct or ''):
+            try:
+                ion_formula = (ion_formula - Formula(term) if sign == '-'
+                               else ion_formula + Formula(term))
+            except ValueError:  # adduct removes atoms the core lacks
+                return np.empty((0, 2), dtype=np.float32)
 
         envelope = get_isotope_envelope(
-            formula=Formula(ion_formula),
+            formula=ion_formula,
             mz_tolerance=0.1,
             threshold=0.005,
         )

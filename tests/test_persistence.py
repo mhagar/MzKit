@@ -206,3 +206,13 @@ def test_old_generic_annotation_loads_as_multi_peak():
         {'cofeature_idx': 3, 'ms_level': 1, 'text': 'x', 'uuid': 1, 'source': 'user'}
     )
     assert a.cofeature_idxs == [3] and a.text == 'x'
+
+
+def test_isotope_envelope_subtractive_adducts():
+    from core.data_structs.ensemble.annotations import IonAnnotation
+    env = lambda adduct: IonAnnotation([0], 1, 'C12H15Cl2NO5S', 1.0, adduct=adduct).isotope_envelope
+    base = env(None)[0, 0]
+    assert abs(env('-OH')[0, 0] - (base - 17.0027)) < 0.01  # used to raise FormulaError
+    assert abs(env('-H')[0, 0] - (base - 1.0078)) < 0.01
+    assert abs(env('+H-H2O')[0, 0] - (base - 17.0027)) < 0.01
+    assert env('-Na').size == 0  # adduct removes atoms the core lacks
