@@ -13,7 +13,7 @@
   <property name="windowTitle">
    <string>Form</string>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout_2" stretch="2,1">
+  <layout class="QVBoxLayout" name="verticalLayout_2">
    <property name="spacing">
     <number>0</number>
    </property>
@@ -30,7 +30,29 @@
     <number>0</number>
    </property>
    <item>
+    <widget class="QSplitter" name="splitterSidebar">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="childrenCollapsible">
+      <bool>false</bool>
+     </property>
+     <widget class="QTabWidget" name="tabsAnnotation"/>
+     <widget class="QSplitter" name="splitterMisc">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+      </property>
+      <widget class="QWidget" name="widgetSpectra" native="true">
     <layout class="QVBoxLayout" name="verticalLayout" stretch="0,0,1,1,0">
+     <property name="leftMargin">
+      <number>0</number>
+     </property>
+     <property name="topMargin">
+      <number>0</number>
+     </property>
+     <property name="rightMargin">
+      <number>0</number>
+     </property>
      <property name="spacing">
       <number>0</number>
      </property>
@@ -229,26 +251,10 @@
          </property>
         </spacer>
        </item>
-       <item>
-        <widget class="QCheckBox" name="checkShowMiscPlots">
-         <property name="text">
-          <string>Show misc. plots</string>
-         </property>
-        </widget>
-       </item>
       </layout>
      </item>
     </layout>
-   </item>
-   <item>
-    <layout class="QVBoxLayout" name="verticalLayout_3">
-     <property name="spacing">
-      <number>0</number>
-     </property>
-     <property name="topMargin">
-      <number>0</number>
-     </property>
-     <item>
+      </widget>
       <widget class="QTabWidget" name="tabWidget">
        <property name="currentIndex">
         <number>0</number>
@@ -345,8 +351,8 @@
         </layout>
        </widget>
       </widget>
-     </item>
-    </layout>
+     </widget>
+    </widget>
    </item>
   </layout>
   <action name="actionScan">
@@ -471,22 +477,5 @@
   </customwidget>
  </customwidgets>
  <resources/>
- <connections>
-  <connection>
-   <sender>checkShowMiscPlots</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>tabWidget</receiver>
-   <slot>setVisible(bool)</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>717</x>
-     <y>316</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>476</x>
-     <y>590</y>
-    </hint>
-   </hints>
-  </connection>
- </connections>
+ <connections/>
 </ui>

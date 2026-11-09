@@ -29,6 +29,18 @@ def informative_mask(mz: np.ndarray, precursor_mz: Optional[float]) -> np.ndarra
     return mz < float(precursor_mz) - PRECURSOR_MARGIN
 
 
+def scored_mask(mz: np.ndarray, intsy: np.ndarray, precursor_mz: Optional[float], min_rel: float = 0.0) -> np.ndarray:
+    """
+    Peaks an MS2 similarity scores: nonzero, in the informative window, and at
+    least `min_rel` x the most intense of those (above the grass)
+    """
+    intsy = np.asarray(intsy)
+    keep = (intsy > 0.0) & informative_mask(mz, precursor_mz)
+    if min_rel > 0.0 and keep.any():
+        keep &= intsy >= min_rel * intsy[keep].max()
+    return keep
+
+
 def informative_max(spec: np.ndarray, precursor_mz: Optional[float]) -> float:
     """
     Max intensity over the informative window, or the global max if it is

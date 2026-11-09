@@ -200,12 +200,13 @@ class DetailPanel:
         matches: list[tuple[int, int]],
         top_precursor: Optional[float] = None,
         bottom_precursor: Optional[float] = None,
+        excluded: Optional[tuple] = None,
     ):
         """MS2 only (e.g. observed vs predicted), labelled on the right; MS1 is left as is."""
         ms_x = self._ms_x_range
         self.ms2_plot.set_mirror_spectra(
             top, bottom, top_label, bottom_label, matched=matches, labels_right=True,
-            top_precursor=top_precursor, bottom_precursor=bottom_precursor,
+            top_precursor=top_precursor, bottom_precursor=bottom_precursor, excluded=excluded,
         )
         _set_label(self.ms2_plot, "")
         self.ms2_plot.update_bpc_label("")

@@ -26,32 +26,12 @@
    <item>
     <layout class="QHBoxLayout" name="layoutQuery">
      <item>
-      <widget class="QComboBox" name="comboMode">
-       <property name="toolTip">
-        <string>Query by molecular formula, neutral mass +/- [glacier] mass_ppm, a typed SMILES, or text (name, organism, ID, NP class)</string>
-       </property>
-       <item>
-        <property name="text">
-         <string>Formula</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Mass</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLineEdit" name="editQuery"/>
-     </item>
-     <item>
       <widget class="QPushButton" name="btnRank">
        <property name="toolTip">
         <string>Query the ticked databases and rank the hits by GLACIER-predicted MS2</string>
        </property>
        <property name="text">
-        <string>Rank</string>
+        <string>Search</string>
        </property>
       </widget>
      </item>

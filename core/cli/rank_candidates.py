@@ -10,7 +10,9 @@ Two scores, kept separate:
  - cosine (CosineGreedy): the tiebreaker, with its matched peak pairs.
 
 Candidates come from the compound cache (core/utils/compound_db.py).
-Parameters: the `[glacier]` config section.
+Parameters: the `[glacier]` config section, on top of the peak matching
+ones it shares with `[spectral_search]` (mz_tolerance, precursor_tol_da,
+min_rel_intensity).
 """
 import logging
 import threading
@@ -21,7 +23,7 @@ import numpy as np
 
 from core.utils import compound_db
 from core.utils.array_types import to_spec_arr
-from core.utils.spectra import informative_mask
+from core.utils.spectra import scored_mask
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -30,31 +32,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SECTION = 'glacier'
+SHARED_SECTION = 'spectral_search'   # mz_tolerance, precursor_tol_da, min_rel_intensity
 
 
 class RankParams(NamedTuple):
-    """See the `[glacier]` section of default_config.ini."""
+    """See the `[glacier]` (and shared `[spectral_search]`) sections of default_config.ini."""
     collision_energy: float = 30.0
     instrument: str = 'Orbitrap'
     mz_tolerance: float = 0.01
     top_n_peaks: int = 10
-    min_exp_rel: float = 0.05
-    min_pred_rel: float = 0.01
-    mass_ppm: float = 5.0
+    min_rel_intensity: float = 0.01
+    precursor_tol_da: float = 0.02
     batch_size: int = 32
 
 
 def rank_params_from_config(config: 'ConfigParser') -> RankParams:
-    """RankParams from `[glacier]`, falling back to the defaults per key."""
+    """RankParams from `[glacier]` and `[spectral_search]`, falling back to the defaults per key."""
     d = RankParams()
     return RankParams(
         collision_energy=config.getfloat(SECTION, 'collision_energy', fallback=d.collision_energy),
         instrument=config.get(SECTION, 'instrument', fallback=d.instrument),
-        mz_tolerance=config.getfloat(SECTION, 'mz_tolerance', fallback=d.mz_tolerance),
+        mz_tolerance=config.getfloat(SHARED_SECTION, 'mz_tolerance', fallback=d.mz_tolerance),
         top_n_peaks=config.getint(SECTION, 'top_n_peaks', fallback=d.top_n_peaks),
-        min_exp_rel=config.getfloat(SECTION, 'min_exp_rel', fallback=d.min_exp_rel),
-        min_pred_rel=config.getfloat(SECTION, 'min_pred_rel', fallback=d.min_pred_rel),
-        mass_ppm=config.getfloat(SECTION, 'mass_ppm', fallback=d.mass_ppm),
+        min_rel_intensity=config.getfloat(SHARED_SECTION, 'min_rel_intensity', fallback=d.min_rel_intensity),
+        precursor_tol_da=config.getfloat(SHARED_SECTION, 'precursor_tol_da', fallback=d.precursor_tol_da),
         batch_size=config.getint(SECTION, 'batch_size', fallback=d.batch_size),
     )
 
@@ -103,6 +104,7 @@ class ScoredCandidate:
     # the H shift GLACIER applied to its fragment
     ions: list[str] = field(default_factory=list)
     h_shifts: list[int] = field(default_factory=list)
+    params: RankParams = field(default=RankParams(), repr=False)   # as scored (mirror colours, hover pairing)
 
 
 @dataclass
@@ -119,14 +121,14 @@ def fetch_candidates(
     sources: list[str],
     formula: Optional[str] = None,
     mass: Optional[float] = None,
-    ppm: float = RankParams().mass_ppm,
+    tol_da: float = RankParams().precursor_tol_da,
     db_path=compound_db.DEFAULT_DB,
     text_field: Optional[str] = None,
     text: Optional[str] = None,
 ) -> tuple[list[DbCandidate], bool]:
     """
     Compounds matching `formula`, else `text` in `text_field` (a
-    compound_db.TEXT_FIELDS label, e.g. 'Name'), else neutral `mass` +/- `ppm`,
+    compound_db.TEXT_FIELDS label, e.g. 'Name'), else neutral `mass` +/- `tol_da`,
     in each of `sources`, merged in source order, one per InChIKey-14
     (stereoisomers and cross-database duplicates collapse onto the first seen).
 
@@ -142,7 +144,7 @@ def fetch_candidates(
         elif text_field is not None:
             rows = compound_db.search_text(source, text_field, text, db_path)
         else:
-            rows = compound_db.search_mass(source, mass, ppm, db_path)
+            rows = compound_db.search_mass(source, mass, tol_da / mass * 1e6, db_path)
         capped |= len(rows) >= compound_db.MAX_RESULTS
         for row in rows:
             db_id, name, smiles, formula_, _mass, inchikey, org_type, genus, organisms, np_class = row[:10]
@@ -188,13 +190,9 @@ def considered_peaks(
 ) -> np.ndarray:
     """
     Indices into `ms2` of the peaks explained-k/N is scored over: the most
-    intense fragments in the informative window (below the precursor
-    region), relative to the base fragment there.
+    intense of the fragments cosine scores (see `scored_mask`).
     """
-    idx = np.flatnonzero(informative_mask(ms2['mz'], precursor_mz))
-    if not idx.size:
-        return idx
-    idx = idx[ms2['intsy'][idx] >= params.min_exp_rel * ms2['intsy'][idx].max()]
+    idx = np.flatnonzero(scored_mask(ms2['mz'], ms2['intsy'], precursor_mz, params.min_rel_intensity))
     return idx[np.argsort(-ms2['intsy'][idx], kind='stable')][:params.top_n_peaks]
 
 
@@ -202,12 +200,11 @@ def explained_peaks(
     ms2: 'SpectrumArray',
     considered: np.ndarray,
     prediction: 'SpectrumArray',
+    precursor_mz: Optional[float],
     params: RankParams,
 ) -> list[int]:
-    """The `considered` experimental peaks a predicted peak above the grass explains."""
-    if not prediction.size:
-        return []
-    pred = prediction['mz'][prediction['intsy'] >= params.min_pred_rel * prediction['intsy'].max()]
+    """The `considered` experimental peaks a predicted peak cosine scores (above the grass) explains."""
+    pred = prediction['mz'][scored_mask(prediction['mz'], prediction['intsy'], precursor_mz, params.min_rel_intensity)]
     return [
         int(i) for i in considered
         if pred.size and np.abs(pred - ms2['mz'][i]).min() <= params.mz_tolerance
@@ -232,6 +229,39 @@ def _predict(model, smiles: list[str], adduct: str, params: RankParams) -> list[
         return out
 
 
+def scored_prediction(
+    model,
+    cand: DbCandidate,
+    pred: dict,
+    ms2: 'SpectrumArray',
+    precursor_mz: float,
+    adduct: str,
+    considered: np.ndarray,
+    params: RankParams,
+) -> ScoredCandidate:
+    """One GLACIER prediction (`_predict`'s dict, made as `adduct`) scored against `ms2`."""
+    from matchms.similarity import CosineGreedy
+
+    from core.cli.align_ensembles import _cosine_with_matches
+    from core.utils import glacier
+
+    mz, intsy, src = glacier.merge_peaks(pred['spec'])
+    prediction = to_spec_arr(mz, intsy)
+    cosine = CosineGreedy(tolerance=params.mz_tolerance, mz_power=0.0, intensity_power=1.0)
+    # Both sides share the precursor: GLACIER's intact-ion peak must not score
+    score, matches = _cosine_with_matches(cosine, ms2, prediction, precursor_mz, precursor_mz,
+                                          params.min_rel_intensity)
+    explained = explained_peaks(ms2, considered, prediction, precursor_mz, params)
+    return ScoredCandidate(
+        cand, len(explained), score, prediction, pred['frag'][src],
+        matches, explained,
+        ions=[glacier.ion_formula(pred['form'][r], pred['h_shift'][r], adduct,
+                                  pred['radical'][r], model.elements) for r in src],
+        h_shifts=pred['h_shift'][src].tolist(),
+        params=params,
+    )
+
+
 def rank_candidates(
     ms2: 'SpectrumArray',
     precursor_mz: float,
@@ -245,15 +275,11 @@ def rank_candidates(
     Predict each candidate's MS2 and score it against `ms2`; best first by
     (explained, cosine). None if cancelled.
     """
-    from matchms.similarity import CosineGreedy
-
-    from core.cli.align_ensembles import _cosine_with_matches
     from core.utils import glacier
 
     model = glacier.load_model()
     used_adduct, fallback = glacier_adduct(adduct, model.meta['ion2onehot_pos'])
     considered = considered_peaks(ms2, precursor_mz, params)
-    cosine = CosineGreedy(tolerance=params.mz_tolerance, mz_power=0.0, intensity_power=1.0)
 
     scored: list[ScoredCandidate] = []
     skipped: list[DbCandidate] = []
@@ -266,18 +292,7 @@ def rank_candidates(
             if pred is None:
                 skipped.append(cand)
                 continue
-            mz, intsy, src = glacier.merge_peaks(pred['spec'])
-            prediction = to_spec_arr(mz, intsy)
-            # Both sides share the precursor: GLACIER's intact-ion peak must not score
-            score, matches = _cosine_with_matches(cosine, ms2, prediction, precursor_mz, precursor_mz)
-            explained = explained_peaks(ms2, considered, prediction, params)
-            scored.append(ScoredCandidate(
-                cand, len(explained), score, prediction, pred['frag'][src],
-                matches, explained,
-                ions=[glacier.ion_formula(pred['form'][r], pred['h_shift'][r], used_adduct,
-                                          pred['radical'][r], model.elements) for r in src],
-                h_shifts=pred['h_shift'][src].tolist(),
-            ))
+            scored.append(scored_prediction(model, cand, pred, ms2, precursor_mz, used_adduct, considered, params))
         if progress_callback is not None:
             done = min(start + step, len(candidates))
             progress_callback(100 * done / len(candidates), f"GLACIER {done}/{len(candidates)}")

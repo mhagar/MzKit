@@ -72,6 +72,10 @@ def test_ranking_select_mirror_accept(data_registry, sample, ensemble, monkeypat
     assert panel.structure._caption == "C3H7O+\n-2H"
     viewer._on_ms2_mirror_left()
     assert panel.structure._caption == ""
+    # An observed peak lights the predicted peak it pairs with
+    viewer._on_ms2_mirror_hovered(('top', 0, 50.0, 1.0))
+    assert panel.structure._caption == "C2H5+\n±0H"
+    viewer._on_ms2_mirror_left()
 
     panel.accept_btn.click()
     annotation = ensemble.annotation
@@ -183,8 +187,31 @@ def test_query_and_spectrum_follow_the_focused_member():
     assert panel.table.rowCount() == 1
 
 
-def test_matches_formula():
-    from gui.widgets.annotation_editor import matches_formula
-    assert matches_formula('CCO', 'C2H6O') and matches_formula('OCC', 'H6C2O')
-    assert not matches_formula('CCO', 'C2H4O')
-    assert matches_formula('not smiles', 'C2H4O') and matches_formula('CCO', 'nonsense')
+def test_structure_formula_and_origin_label():
+    from core.data_structs.ensemble import GLACIER, MS2DS, SPECTRUM_IDENTITY, Hypothesis
+    from core.formula.delta import delta_formula
+    from gui.widgets.annotation_editor import origin_label, structure_formula
+    assert structure_formula('CCO') == structure_formula('OCC') == 'C2H6O'
+    assert structure_formula('not smiles') == ''
+    assert delta_formula('C2H6O', structure_formula('CCCO')) == '+CH2'
+    assert origin_label(Hypothesis('C')) == "User"
+    assert origin_label(Hypothesis('C', origin='GNPS', origin_type=SPECTRUM_IDENTITY)) == "GNPS (Spectrum identity)"
+    assert origin_label(Hypothesis('C', origin='GNPS', origin_type=MS2DS)) == "GNPS (MS2DS)"
+    assert origin_label(Hypothesis('C', origin='COCONUT', origin_type=GLACIER)) == "COCONUT (GLACIER)"
+    assert origin_label(Hypothesis('C', origin='GNPS', origin_type='spec2vec')) == "GNPS (spec2vec)"
+
+
+def test_legacy_origin_type():
+    """Hypotheses saved before origin_type get it inferred from what was saved with them."""
+    from core.data_structs.ensemble import EnsembleAnnotation
+    ann = EnsembleAnnotation.from_dict({'hypotheses': [
+        {'smiles': 'C'},
+        {'smiles': 'C', 'origin': 'COCONUT', 'scores': {'explained': '3/10', 'cosine': 0.5}},
+        {'smiles': 'C', 'origin': 'GNPS', 'scores': {'cosine': 0.9, 'mod_cosine': 0.8}},
+        {'smiles': 'C', 'origin': 'GNPS', 'claim': 'analogue', 'scores': {'ms2deepscore': 0.9, 'mod_cosine': 0.8}},
+        {'smiles': 'C', 'origin': 'GNPS', 'claim': 'analogue', 'scores': {'spec2vec': 0.9, 'mod_cosine': 0.8}},
+        {'smiles': 'C', 'origin': 'GNPS', 'origin_type': 'spectrum_identity', 'scores': {}},
+    ]})
+    assert [h.origin_type for h in ann.hypotheses] == [
+        'user', 'glacier', 'spectrum_identity', 'ms2ds', 'spec2vec', 'spectrum_identity',
+    ]

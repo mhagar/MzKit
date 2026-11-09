@@ -32,7 +32,7 @@ from matchms import Spectrum
 from matchms.similarity import CosineGreedy
 from matchms.similarity.spectrum_similarity_functions import collect_peak_pairs
 
-from core.utils.spectra import informative_mask
+from core.utils.spectra import scored_mask
 from core.data_structs.alignment import (
     AlignmentParams,
     AlignedAnalyte,
@@ -141,13 +141,15 @@ def _spectrum_from(
     mz: np.ndarray,
     intsy: np.ndarray,
     precursor_mz: Optional[float] = None,
+    min_rel: float = 0.0,
 ) -> Spectrum:
     """
     Build an m/z-sorted matchms Spectrum,
      dropping zero-intensity peaks and, given an MS2's `precursor_mz`,
-      peaks outside the informative window (see `informative_mask`)
+      peaks outside the informative window, and those below `min_rel` of
+       the base peak (see `scored_mask`)
     """
-    spectrum, _ = _spectrum_and_order_from(mz, intsy, precursor_mz)
+    spectrum, _ = _spectrum_and_order_from(mz, intsy, precursor_mz, min_rel)
     return spectrum
 
 
@@ -155,15 +157,14 @@ def _spectrum_and_order_from(
     mz: np.ndarray,
     intsy: np.ndarray,
     precursor_mz: Optional[float] = None,
+    min_rel: float = 0.0,
 ) -> tuple[Spectrum, np.ndarray]:
     """
     As `_spectrum_from`, but also returns the indices into the *input*
      arrays of each peak kept in the Spectrum (in Spectrum order), so
       matched peaks can be mapped back onto the source array
     """
-    keep = np.flatnonzero(
-        (np.asarray(intsy) > 0.0) & informative_mask(mz, precursor_mz)
-    )
+    keep = np.flatnonzero(scored_mask(mz, intsy, precursor_mz, min_rel))
     order = keep[np.argsort(np.asarray(mz)[keep], kind='stable')]  # matchms requires ascending m/z
     spectrum = Spectrum(
         mz=np.ascontiguousarray(np.asarray(mz)[order], dtype=float),
@@ -244,16 +245,18 @@ def _cosine_with_matches(
     spec_b: 'SpectrumArray',
     prec_a: Optional[float] = None,
     prec_b: Optional[float] = None,
+    min_rel: float = 0.0,
 ) -> tuple[float, list[tuple[int, int]]]:
     """
     CosineGreedy score, plus the greedily-matched peak pairs
      (mirrors matchms' `score_best_matches` peak assignment)
 
     For MS2, pass each side's precursor m/z: only the informative window
-     is scored (indices still refer to the full input arrays)
+     is scored (indices still refer to the full input arrays); `min_rel`
+      drops each side's peaks below that fraction of its base peak
     """
-    mspec_a, order_a = _spectrum_and_order_from(spec_a['mz'], spec_a['intsy'], prec_a)
-    mspec_b, order_b = _spectrum_and_order_from(spec_b['mz'], spec_b['intsy'], prec_b)
+    mspec_a, order_a = _spectrum_and_order_from(spec_a['mz'], spec_a['intsy'], prec_a, min_rel)
+    mspec_b, order_b = _spectrum_and_order_from(spec_b['mz'], spec_b['intsy'], prec_b, min_rel)
     if not order_a.size or not order_b.size:
         return 0.0, []
 
@@ -278,6 +281,28 @@ def _cosine_with_matches(
             matches.append((int(order_a[i]), int(order_b[j])))
 
     return score, matches
+
+
+def peak_pairing(
+    spec_a: 'SpectrumArray',
+    spec_b: 'SpectrumArray',
+    prec_a: Optional[float],
+    prec_b: Optional[float],
+    tolerance: float,
+) -> dict[int, int]:
+    """
+    spec_a peak idx -> the spec_b peak CosineGreedy would pair it with, grass
+    included (no min. relative intensity): what a hovered peak would match
+    """
+    return dict(_cosine_with_matches(CosineGreedy(tolerance=tolerance), spec_a, spec_b, prec_a, prec_b)[1])
+
+
+def nearest_peak(spec: 'SpectrumArray', mz: float, tolerance: float) -> Optional[int]:
+    """Index of `spec`'s peak nearest `mz`, if within `tolerance` (None otherwise)."""
+    if not len(spec):
+        return None
+    i = int(np.abs(spec['mz'] - mz).argmin())
+    return i if abs(spec['mz'][i] - mz) <= tolerance else None
 
 
 def score_spectrum_pair(

@@ -35,7 +35,7 @@ def test_ensemble_viewer_ranks_mirrors_and_accepts(data_registry, sample, ensemb
     assert np.array_equal(panel.ms2, ensemble.composite_spectrum.ms2)
     assert tabs.editor.label_target.text().startswith(sample.injection.name)
 
-    viewer.tabWidget.setCurrentWidget(panel)
+    viewer.tabsAnnotation.setCurrentWidget(panel)
     tabs.set_ranking(key, RankResult([_scored('NPA2', 'CCCO', 2, 0.9)], n_considered=2, adduct='[M+H]+',
                                      adduct_fallback=False, params=RankParams()))
     assert panel.table.rowCount() == 1
@@ -44,7 +44,7 @@ def test_ensemble_viewer_ranks_mirrors_and_accepts(data_registry, sample, ensemb
 
     panel.accept_btn.click()
     assert ensemble.annotation.chosen.smiles == 'CCCO'
-    assert viewer.tabWidget.currentWidget() is tabs.editor_page
+    assert viewer.tabsAnnotation.currentWidget() is tabs.editor_page
     assert tabs.editor.tree.topLevelItem(0).text(1) == "★ npa2"
 
     tabs.editor.tree.clearSelection()

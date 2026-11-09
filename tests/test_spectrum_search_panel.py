@@ -57,10 +57,18 @@ def test_search_select_mirror_accept(data_registry, sample, ensemble, monkeypatc
     viewer.sigSpectralSearchRequested.connect(lambda slot, kwargs: requests.append((slot, kwargs)))
     panel.btnSearch.click()
     (slot, kwargs), = requests
-    assert slot == ((analyte.uuid, None), IDENTITY) and kwargs['libraries'] == ['GNPS']
+    assert slot[:2] == ((analyte.uuid, None), IDENTITY) and kwargs['libraries'] == ['GNPS']
+    assert slot[2][0] in ('mz', 'formula')
 
-    result = SearchResult([_hit('CCMS2', 'propanol', 'CCCO', 0.95), _hit('CCMS1', 'no structure', '', 0.5)],
-                          IDENTITY, 10, SpectralSearchParams())
+    hits = [_hit('CCMS2', 'propanol', 'CCCO', 0.95), _hit('CCMS1', 'no structure', '', 0.5)]
+    # The search's GLACIER prediction for the hit's structure (library peak 50.0 -> predicted 50.004)
+    from core.cli.rank_candidates import DbCandidate, ScoredCandidate
+    hits[0].glacier = ScoredCandidate(
+        DbCandidate('GNPS', 'CCMS2', 'propanol', 'CCCO', ''), 0, 0.5,
+        to_spec_arr(np.array([50.004, 30.0]), np.array([1.0, 0.5])), np.ones((2, 4), bool),
+        ions=['C3H7O+', 'CH4N+'], h_shifts=[1, 0],
+    )
+    result = SearchResult(hits, IDENTITY, 10, SpectralSearchParams())
     tabs.set_spectral_result(slot, result)
     assert panel.table.rowCount() == 2
     assert panel.table.item(0, 2).text() == "0.950" and panel.table.item(0, 3).text() == "0.80 (2)"
@@ -69,6 +77,14 @@ def test_search_select_mirror_accept(data_registry, sample, ensemble, monkeypatc
     assert not panel.btnAccept.isEnabled()   # no SMILES: can't be a hypothesis
     panel.table.selectRow(0)
     assert tabs.mirrored is panel.shown and viewer.plotMS2.is_mirror()
+    # Hovering a library peak, or the observed peak paired with it, lights the nearest predicted fragment
+    viewer._on_ms2_mirror_hovered(('bottom', 0, 50.0, 0.5))
+    assert panel.structure._caption == "C3H7O+\n+1H"
+    viewer._on_ms2_mirror_left()
+    viewer._on_ms2_mirror_hovered(('top', 0, 50.0, 1.0))
+    assert panel.structure._caption == "C3H7O+\n+1H"
+    viewer._on_ms2_mirror_left()
+    assert panel.structure._caption == ""
 
     panel.btnAccept.click()
     annotation = ensemble.annotation
@@ -90,7 +106,7 @@ def test_search_select_mirror_accept(data_registry, sample, ensemble, monkeypatc
     tabs._library_hits.clear()
     found = []
     monkeypatch.setattr('core.cli.search_spectra.library_hit',
-                        lambda ms2, mz, library, spectrum_id, params: found.append((library, spectrum_id)) or accepted)
+                        lambda ms2, mz, library, spectrum_id, params, **_: found.append((library, spectrum_id)) or accepted)
     tree.clearSelection()
     tree.topLevelItem(0).setSelected(True)
     assert found == [('GNPS', 'CCMS2')] and tabs.mirrored is accepted and not requests

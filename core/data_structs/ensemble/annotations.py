@@ -300,7 +300,9 @@ class IonPairAnnotation:
 
 ####    Structure annotation    ####
 
-USER = "user"   # Hypothesis.origin of a hand-typed structure
+USER = "user"   # Hypothesis.origin (and origin_type) of a hand-typed structure
+# Hypothesis.origin_type: how the structure was found (else an imported embedder's name)
+GLACIER, SPECTRUM_IDENTITY, MS2DS = 'glacier', 'spectrum_identity', 'ms2ds'
 
 
 @dataclass(frozen=True)
@@ -314,6 +316,21 @@ class Hypothesis:
     claim: str = 'structure'
     db_id: str = ""
     scores: dict = field(default_factory=dict)   # against this ensemble's MS2, e.g. {"cosine": 0.61}
+    origin_type: str = USER   # USER, GLACIER, SPECTRUM_IDENTITY, MS2DS or an imported embedder's name
+
+
+def _legacy_origin_type(h: dict) -> str:
+    """origin_type for a hypothesis saved before it existed, from what was saved with it."""
+    scores = h.get('scores') or {}
+    if h.get('origin', USER) == USER:
+        return USER
+    if 'explained' in scores:
+        return GLACIER
+    if h.get('claim') == 'analogue':   # scored under the embedder's own key (SpectralSearchWidget._accept)
+        embedder = next((k for k in scores if k not in ('cosine', 'mod_cosine', 'matched', 'delta_mz')), None)
+        return MS2DS if embedder in (None, 'ms2deepscore') else embedder
+    # shortcut: an unscored database hypothesis is taken as GLACIER; only pre-origin_type files guess
+    return SPECTRUM_IDENTITY if 'mod_cosine' in scores else GLACIER
 
 
 @dataclass(frozen=True)
@@ -370,4 +387,6 @@ class EnsembleAnnotation:
         """Inverse of dataclasses.asdict (persistence); None passes through."""
         if d is None:
             return None
-        return cls(**{**d, 'hypotheses': tuple(Hypothesis(**h) for h in d.get('hypotheses', ()))})
+        return cls(**{**d, 'hypotheses': tuple(
+            Hypothesis(**{'origin_type': _legacy_origin_type(h), **h}) for h in d.get('hypotheses', ())
+        )})

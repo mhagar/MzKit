@@ -5,7 +5,8 @@ representative member's when an analyte is focused; the header says which, and
 what the other members say). Its name (the chosen
 hypothesis's unless typed over), notes, and one row per hypothesis (★ the
 chosen structure). The last row takes a typed / pasted SMILES as a new user
-hypothesis. A structure whose formula isn't that ensemble's is drawn red.
+hypothesis. Formula and Δ give each structure's formula and its difference from
+the ensemble's assigned formula.
 
 Edits go out as a whole new annotation (sigAnnotationChanged) for the host
 to set on the ensemble; the registry's change signal re-shows it here.
@@ -19,7 +20,8 @@ from typing import Optional, TYPE_CHECKING
 from PyQt5 import QtCore, QtGui, QtWidgets
 from rdkit import Chem
 
-from core.data_structs.ensemble import USER, EnsembleAnnotation, Hypothesis
+from core.data_structs.ensemble import GLACIER, MS2DS, SPECTRUM_IDENTITY, USER, EnsembleAnnotation, Hypothesis
+from core.formula.delta import delta_formula
 from core.formula.manual import canonical_formula
 from core.utils.glacier import neutral_formula
 from core.utils.formula_formatting import format_assignment_formula_text
@@ -32,23 +34,30 @@ if TYPE_CHECKING:
     from gui.widgets.annotation_target import AnnotationTarget
     from gui.widgets.StructureWidget import StructureView
 
-STRUCTURE, NAME, ORIGIN = range(3)
+STRUCTURE, NAME, FORMULA, DELTA, ORIGIN = range(5)
 ROW_HEIGHT = 48
 # On a row's Name cell: its index into `hypotheses` (None: the add row), and its bare name
 IDX_ROLE = QtCore.Qt.UserRole + 1
 RAW_ROLE = QtCore.Qt.UserRole + 2
 ADD_TEXT = "Add SMILES…"
-MISMATCH = "SMILES does not match formula"
+_ORIGIN_TYPES = {GLACIER: "GLACIER", SPECTRUM_IDENTITY: "Spectrum identity", MS2DS: "MS2DS"}
 
 
 @lru_cache(maxsize=256)
-def matches_formula(smiles: str, formula: str) -> bool:
-    """False only if both parse and differ."""
+def structure_formula(smiles: str) -> str:
+    """A SMILES's neutral formula ("" if it doesn't parse)."""
     mol = Chem.MolFromSmiles(smiles)
     try:
-        return mol is None or canonical_formula(neutral_formula(mol)) == canonical_formula(formula)
+        return "" if mol is None else canonical_formula(neutral_formula(mol))
     except ValueError:
-        return True
+        return ""
+
+
+def origin_label(h: Hypothesis) -> str:
+    """e.g. "GNPS (Spectrum identity)", "COCONUT (GLACIER)"; "User" for a typed structure."""
+    if h.origin_type == USER:
+        return "User"
+    return f"{h.origin} ({_ORIGIN_TYPES.get(h.origin_type, h.origin_type)})"
 
 
 def _parses(smiles: str) -> bool:
@@ -94,6 +103,8 @@ class AnnotationEditor(QtCore.QObject):
         tree.setItemDelegateForColumn(NAME, _NameDelegate(tree))
         tree.setColumnWidth(STRUCTURE, ROW_HEIGHT * 3 // 2)
         tree.setColumnWidth(NAME, 140)
+        for col in (FORMULA, DELTA, ORIGIN):
+            tree.header().setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeToContents)
         tree.itemChanged.connect(self._on_item_changed)
         tree.itemSelectionChanged.connect(self._on_selected)
 
@@ -159,7 +170,11 @@ class AnnotationEditor(QtCore.QObject):
         self._on_selected()
 
     def _row(self, idx: int, h: Hypothesis, chosen: bool) -> QtWidgets.QTreeWidgetItem:
-        item = QtWidgets.QTreeWidgetItem(["", f"★ {h.name}" if chosen else h.name, h.origin])
+        formula = structure_formula(h.smiles)
+        item = QtWidgets.QTreeWidgetItem([
+            "", f"★ {h.name}" if chosen else h.name, formula,
+            delta_formula(self._formula or "", formula), origin_label(h),
+        ])
         item.setSizeHint(STRUCTURE, QtCore.QSize(ROW_HEIGHT * 3 // 2, ROW_HEIGHT))
         item.setData(STRUCTURE, QtCore.Qt.UserRole, h.smiles)
         item.setData(STRUCTURE, NAME_ROLE, h.name)
@@ -171,10 +186,6 @@ class AnnotationEditor(QtCore.QObject):
             font.setBold(True)
             item.setFont(NAME, font)
         tips = [f"{k}: {v}" for k, v in h.scores.items()]
-        if self._formula and not matches_formula(h.smiles, self._formula):
-            tips.insert(0, MISMATCH)
-            for col in range(self.tree.columnCount()):
-                item.setForeground(col, QtGui.QColor('red'))
         for col in range(self.tree.columnCount()):
             item.setToolTip(col, "\n".join(tips))
         return item

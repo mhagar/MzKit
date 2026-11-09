@@ -100,10 +100,15 @@ class ParamSheet(QtWidgets.QDialog):
 def spectral_sheet(parent=None) -> ParamSheet:
     from core.cli.search_spectra import SECTION, SpectralSearchParams
     return ParamSheet("Spectral search parameters", SECTION, SpectralSearchParams(), [
-        Field('precursor_tolerance', "Precursor tolerance",
-              "Identity: library precursors within this many Da (Da, not ppm: older GNPS entries only give 2 decimals)",
+        Field('precursor_tol_da', "Precursor tolerance",
+              "Identity: library precursors within this many Da (Da, not ppm: older GNPS entries only give 2 decimals). "
+              "Also the structure search's neutral mass window",
               0.0001, 5.0, 4, " Da"),
-        Field('mz_tolerance', "Peak m/z tolerance", "Matching peaks (cosine, modified cosine)", 0.0001, 1.0, 4, " Da"),
+        Field('mz_tolerance', "Peak m/z tolerance",
+              "Matching peaks (cosine, modified cosine; also GLACIER's)", 0.0001, 1.0, 4, " Da"),
+        Field('min_rel_intensity', "Min. relative intensity",
+              "Every cosine (and GLACIER's explained k/N) scores only peaks of at least this fraction of "
+              "the base peak, on both spectra", 0.0, 1.0, 3),
         Field('min_matched_peaks', "Min. matched peaks", "Identity hits need at least this many matched peaks", 1, 100),
         Field('max_hits', "Max. hits", "Identity: keep the best this many", 1, 100000),
         Field('top_k', "Analogue hits", "Analogue (embedding) search: this many nearest library spectra", 1, 100000),
@@ -115,11 +120,7 @@ def glacier_sheet(parent=None) -> ParamSheet:
     return ParamSheet("Structure search (GLACIER) parameters", SECTION, RankParams(), [
         Field('collision_energy', "Collision energy", "Predicted at this collision energy", 0.0, 300.0, 1, " eV"),
         Field('instrument', "Instrument", "", choices=('Orbitrap', 'QTOF', 'IT-FT', 'Unknown')),
-        Field('mz_tolerance', "Peak m/z tolerance", "Matching experimental to predicted peaks", 0.0001, 1.0, 4, " Da"),
         Field('top_n_peaks', "Explained: top N peaks",
-              "Explained k/N counts the N most intense experimental fragments (precursor region excluded)", 1, 200),
-        Field('min_exp_rel', "Min. experimental peak", "...of at least this fraction of the base peak", 0.0, 1.0, 3),
-        Field('min_pred_rel', "Min. predicted peak",
-              "...explained by a predicted peak of at least this fraction of its base peak", 0.0, 1.0, 3),
-        Field('mass_ppm', "Mass query tolerance", "Neutral mass queries: +/- this many ppm", 0.1, 1000.0, 1, " ppm"),
+              "Explained k/N counts the N most intense scored experimental fragments (precursor region "
+              "and peaks below the spectral search's min. relative intensity excluded)", 1, 200),
     ], parent)

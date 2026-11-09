@@ -23,18 +23,18 @@ def test_default_config_matches_defaults():
 
 
 def test_considered_peaks_drops_precursor_and_small_and_caps():
-    params = RankParams(top_n_peaks=2, min_exp_rel=0.05, mz_tolerance=0.01)
+    params = RankParams(top_n_peaks=2, min_rel_intensity=0.05, mz_tolerance=0.01)
     ms2 = spec((100.0, 50), (150.0, 100), (200.0, 3), (250.0, 80), (300.005, 1000))
     # 300.005 is the precursor; 200 is under 5% of the base fragment (150)
     assert considered_peaks(ms2, 300.0, params).tolist() == [1, 3]
 
 
 def test_explained_ignores_grass_and_tolerance():
-    params = RankParams(min_pred_rel=0.01, mz_tolerance=0.01)
+    params = RankParams(min_rel_intensity=0.01, mz_tolerance=0.01)
     ms2 = spec((100.0, 1), (150.0, 1), (200.0, 1))
     pred = spec((100.005, 0.02), (150.0, 0.005), (200.05, 1.0))
     # 150 is in the grass, 200.05 out of tolerance
-    assert explained_peaks(ms2, np.array([0, 1, 2]), pred, params) == [0]
+    assert explained_peaks(ms2, np.array([0, 1, 2]), pred, None, params) == [0]
 
 
 def test_fetch_candidates_dedupes_across_sources(db):  # noqa: F811
@@ -44,7 +44,7 @@ def test_fetch_candidates_dedupes_across_sources(db):  # noqa: F811
     assert [(c.source, c.db_id) for c in cands] == [
         ('COCONUT', 'CNP1'), ('COCONUT', 'CNP2'), ('AntiMarin', 'AM1'), ('AntiMarin', 'AM2'),
     ]
-    by_mass, _ = fetch_candidates(['NPAtlas'], mass=46.0419, ppm=5, db_path=db)
+    by_mass, _ = fetch_candidates(['NPAtlas'], mass=46.0419, tol_da=0.001, db_path=db)
     assert [c.db_id for c in by_mass] == ['NPA1']
     assert by_mass[0].organism == 'Fungi: Aspergillus'
     by_text, _ = fetch_candidates(['NPAtlas'], text_field='Organism', text='aspergil', db_path=db)

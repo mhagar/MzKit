@@ -20,6 +20,9 @@ from PyQt5.QtCore import QRectF
 from typing import Callable, Optional
 import uuid
 
+# Mirror mode: peaks the similarity score ignored (precursor region, below min. relative intensity)
+EXCLUDED_COLOR = '#2848a8'
+
 
 class ClickableTextItem(pg.TextItem):
     """
@@ -631,6 +634,7 @@ class MSPlotWidget(pg.PlotWidget):
         labels_right: bool = False,
         top_precursor: Optional[float] = None,
         bottom_precursor: Optional[float] = None,
+        excluded: Optional[tuple[np.ndarray, np.ndarray]] = None,
     ) -> None:
         """
         Draws `top` as normal and `bottom` flipped below zero. Each
@@ -649,10 +653,13 @@ class MSPlotWidget(pg.PlotWidget):
             (e.g. from matchms CosineGreedy). If given, matched peaks are
             drawn in the normal colour and unmatched peaks dimmed.
             If None, all peaks are drawn in the normal colour.
+        :param excluded: (top, bottom) bool masks of peaks the score
+            ignored (precursor region, grass): with `matched`, drawn in a
+            third colour instead of dimmed. Still drawn and hoverable.
         """
         self.pi.set_mirror_spectra(
             top, bottom, top_label, bottom_label, matched, labels_right,
-            top_precursor, bottom_precursor,
+            top_precursor, bottom_precursor, excluded,
         )
 
     def clear_mirror(self) -> None:
@@ -782,6 +789,14 @@ class MSPlotItem(pg.PlotItem):
         self.addItem(
             self.mirror_dim_plot,
         )
+        # ...and peaks the score ignored (precursor region, grass)
+        self.mirror_excluded_plot: pg.PlotDataItem = pg.PlotDataItem(
+            connect='pairs', pen=pg.mkPen(EXCLUDED_COLOR),
+        )
+        self.mirror_excluded_plot.setVisible(False)
+        self.addItem(
+            self.mirror_excluded_plot,
+        )
         self.zero_line: pg.InfiniteLine = pg.InfiniteLine(
             pos=0,
             angle=0,
@@ -873,6 +888,7 @@ class MSPlotItem(pg.PlotItem):
         labels_right: bool = False,
         top_precursor: Optional[float] = None,
         bottom_precursor: Optional[float] = None,
+        excluded: Optional[tuple[np.ndarray, np.ndarray]] = None,
     ) -> None:
         n_top = len(top)
 
@@ -891,12 +907,14 @@ class MSPlotItem(pg.PlotItem):
             for top_idx, bottom_idx in matched:
                 matched_mask[top_idx] = True
                 matched_mask[n_top + bottom_idx] = True
+        excluded_mask = None if excluded is None else np.concatenate(excluded).astype(bool)
 
         self.set_mirror_state({
             'top': top,
             'bottom': bottom,
             'n_top': n_top,
             'matched_mask': matched_mask,
+            'excluded_mask': excluded_mask,
         })
         self.mirror_labels_right = labels_right
         self.mirror_labels['top'].setPlainText(top_label)
@@ -931,6 +949,7 @@ class MSPlotItem(pg.PlotItem):
 
         self.zero_line.setVisible(active)
         self.mirror_dim_plot.setVisible(active)
+        self.mirror_excluded_plot.setVisible(active)
         for label in self.mirror_labels.values():
             label.setVisible(active)
 
@@ -985,15 +1004,18 @@ class MSPlotItem(pg.PlotItem):
         if matched_mask is None:
             normal = self.spectrum_array
             self.mirror_dim_plot.setData(x=[], y=[])
+            self.mirror_excluded_plot.setData(x=[], y=[])
         else:
             normal = self.spectrum_array[matched_mask]
-            dimmed = self.spectrum_array[~matched_mask]
-            self.mirror_dim_plot.setData(
-                *zero_pad_arrays(
-                    mz_arr=dimmed['mz'],
-                    intsy_arr=dimmed['intsy'],
-                )
-            )
+            excluded_mask = self.mirror.get('excluded_mask')
+            if excluded_mask is None:
+                excluded_mask = np.zeros_like(matched_mask)
+            for plot, mask in ((self.mirror_dim_plot, ~matched_mask & ~excluded_mask),
+                               (self.mirror_excluded_plot, ~matched_mask & excluded_mask)):
+                plot.setData(*zero_pad_arrays(
+                    mz_arr=self.spectrum_array['mz'][mask],
+                    intsy_arr=self.spectrum_array['intsy'][mask],
+                ))
 
         self.spectrum_plot.setData(
             *zero_pad_arrays(

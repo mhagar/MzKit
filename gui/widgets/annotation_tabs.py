@@ -6,7 +6,8 @@ QTabWidget.
 
 The host hands in an AnnotationTarget for its focus (`set_target`) and draws
 what `sigMirror` asks for on its MS2 plot, feeding hovers back through
-`mirror_hovered`. Background work goes out through sigRankRequested /
+`mirror_hovered` (either half: an observed peak goes by the peak cosine would
+pair it with). Background work goes out through sigRankRequested /
 sigSpectralSearchRequested (MainController runs it) and comes back through
 `set_ranking` / `set_spectral_result`. Edits go to the ensemble through
 `data_source.update_ensemble`.
@@ -16,8 +17,10 @@ from typing import NamedTuple, Optional, TYPE_CHECKING
 
 from PyQt5 import QtCore, QtWidgets
 
+from core.cli.align_ensembles import nearest_peak, peak_pairing
 from core.cli.rank_candidates import ScoredCandidate
-from core.data_structs.ensemble import EnsembleAnnotation, Hypothesis
+from core.utils.spectra import scored_mask
+from core.data_structs.ensemble import GLACIER, USER, EnsembleAnnotation, Hypothesis
 from gui.widgets.annotation_editor import AnnotationEditor
 from gui.widgets.annotation_target import AnnotationTarget, ensemble_adduct
 from gui.widgets.spectral_search_widget import SpectralSearchWidget
@@ -38,6 +41,7 @@ class MirrorSpec(NamedTuple):
     matches: list
     top_precursor: Optional[float]
     bottom_precursor: Optional[float]
+    excluded: Optional[tuple] = None   # (top, bottom) bool masks of peaks the score ignored
 
 
 def _editor_page() -> tuple[QtWidgets.QWidget, dict]:
@@ -58,7 +62,7 @@ def _editor_page() -> tuple[QtWidgets.QWidget, dict]:
     tree.setRootIsDecorated(False)
     tree.setUniformRowHeights(True)
     tree.setWordWrap(False)
-    tree.setHeaderLabels(["Structure", "Name", "Origin"])
+    tree.setHeaderLabels(["Structure", "Name", "Formula", "Δ", "Origin"])
     structure = StructureView()
     splitter.addWidget(tree)
     splitter.addWidget(structure)
@@ -80,6 +84,8 @@ class AnnotationTabs(QtCore.QObject):
         self._target: Optional[AnnotationTarget] = None
         # The MS2 mirror on show: a structure's ScoredCandidate, or a LibraryHit (None: not mirroring)
         self._mirrored = None
+        # Observed peak idx -> the mirrored peak cosine would pair it with, grass included (hovers)
+        self._pairing: dict = {}
         # (target key, SMILES) -> a hypothesis's ScoredCandidate, for the session
         self._hypothesis_scores: dict = {}
         # (target key, library, spectrum id) -> a library hypothesis's LibraryHit, for the session
@@ -171,14 +177,29 @@ class AnnotationTabs(QtCore.QObject):
         """After query embeddings were imported."""
         self.spectral.refresh_modes()
 
-    def mirror_hovered(self, peak_idx: Optional[int]):
-        """A predicted peak of the mirror hovered (None: left): light up its fragment."""
-        if not isinstance(self._mirrored, ScoredCandidate):
-            return
-        if self._front() is self.structure_search:
-            self.structure_search.highlight_fragment(peak_idx)
-        else:
-            self.editor.highlight_fragment(self._mirrored, peak_idx)
+    def mirror_hovered(self, signal: Optional[tuple]):
+        """
+        A peak of the mirror hovered ((half, idx, ...) from the MS2 plot; None:
+        left): light up the GLACIER fragment that would explain it. An observed
+        peak goes by the peak it pairs with; a library peak by the nearest peak
+        of the hit's GLACIER prediction.
+        """
+        idx = None if signal is None else signal[1]
+        if signal is not None and signal[0] == 'top':
+            idx = self._pairing.get(idx)
+        m = self._mirrored
+        if isinstance(m, ScoredCandidate):
+            if self._front() is self.structure_search:
+                self.structure_search.highlight_fragment(idx)
+            else:
+                self.editor.highlight_fragment(m, idx)
+        elif m is not None and m.glacier is not None:   # a LibraryHit with a prediction
+            if idx is not None:
+                idx = nearest_peak(m.glacier.prediction, float(m.peaks['mz'][idx]), m.glacier.params.mz_tolerance)
+            if self._front() is self.spectral:
+                self.spectral.highlight_fragment(idx)
+            else:
+                self.editor.highlight_fragment(m.glacier, idx)
 
     # -- accept / hypotheses ------------------------------------------------
 
@@ -200,7 +221,7 @@ class AnnotationTabs(QtCore.QObject):
             self._show_candidate(None)
             return
         key = self._target.key
-        if hypothesis.origin in {c.text() for c in self.spectral.library_checks}:
+        if hypothesis.origin_type not in (USER, GLACIER):   # a spectral library's
             self._show_library_hypothesis(hypothesis)
             return
         if (scored := self._hypothesis_scores.get((key, hypothesis.smiles))) is not None:
@@ -254,14 +275,17 @@ class AnnotationTabs(QtCore.QObject):
 
     def _show_library_hypothesis(self, hypothesis: Hypothesis):
         """Mirror the library spectrum a hypothesis was accepted from (re-read from the index if need be)."""
+        from core.cli.rank_candidates import rank_params_from_config
         from core.cli.search_spectra import library_hit, params_from_config
         from core.utils.config import load_config
 
         target, slot = self._target, (self._target.key, hypothesis.origin, hypothesis.db_id)
         hit = self._library_hits.get(slot)
         if hit is None and target.ms2 is not None and target.ms2.size and target.precursor_mz is not None:
+            config = load_config()
+            # shortcut: GLACIER runs in the GUI thread here (once per hypothesis per session)
             hit = library_hit(target.ms2, target.precursor_mz, hypothesis.origin, hypothesis.db_id,
-                              params_from_config(load_config()))
+                              params_from_config(config), glacier_params=rank_params_from_config(config))
             if hit is not None:
                 self._library_hits[slot] = hit
         if hit is None:
@@ -281,10 +305,10 @@ class AnnotationTabs(QtCore.QObject):
             return
         search = self.structure_search
         self._mirrored = scored
-        self.sigMirror.emit(MirrorSpec(
+        self._emit_mirror(
             search.ms2, scored.prediction, "Observed", "Predicted (GLACIER)", scored.matches,
-            search.precursor_mz, search.precursor_mz,
-        ))
+            search.precursor_mz, search.precursor_mz, scored.params,
+        )
 
     def _show_hit(self, hit):
         """Mirror the target's MS2 against library hit `hit`'s spectrum (None: back to normal)."""
@@ -292,10 +316,21 @@ class AnnotationTabs(QtCore.QObject):
             self._show_candidate(None)
             return
         self._mirrored = hit
-        self.sigMirror.emit(MirrorSpec(
+        self._emit_mirror(
             self.spectral.ms2, hit.peaks, "Observed",
-            f"Library ({hit.library}: {hit.name or hit.spectrum_id})", hit.matches,
-            self.spectral.precursor_mz, hit.precursor_mz,
+            f"Library ({hit.library}: {hit.label})", hit.matches,
+            self.spectral.precursor_mz, hit.precursor_mz, hit.params,
+        )
+
+    def _emit_mirror(self, top, bottom, top_label, bottom_label, matches, top_precursor, bottom_precursor, params):
+        """Ask the host for a mirror, marking the peaks `params`' scoring ignored; keep the hover pairing."""
+        excluded = tuple(
+            ~scored_mask(spec['mz'], spec['intsy'], precursor, params.min_rel_intensity)
+            for spec, precursor in ((top, top_precursor), (bottom, bottom_precursor))
+        )
+        self._pairing = peak_pairing(top, bottom, top_precursor, bottom_precursor, params.mz_tolerance)
+        self.sigMirror.emit(MirrorSpec(
+            top, bottom, top_label, bottom_label, matches, top_precursor, bottom_precursor, excluded,
         ))
 
     def forget_mirror(self):

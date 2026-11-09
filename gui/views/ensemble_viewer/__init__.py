@@ -124,7 +124,11 @@ class EnsembleViewer(
         self._setup_actions()
         self._setup_tool_listeners()
         self._connect_signals()
-        self._hide_misc_plots()
+        # Misc plots start collapsed under the spectra (drag the handle up); annotation sidebar on the
+        # left, collapsible by dragging its handle to the edge (the plots aren't)
+        self.splitterMisc.setSizes([1, 0])
+        self.splitterSidebar.setCollapsible(0, True)
+        self.splitterSidebar.setSizes([350, 600])
         self._add_status_bar()
         self._setup_annotation_tabs()
 
@@ -135,17 +139,15 @@ class EnsembleViewer(
 
     def _setup_annotation_tabs(self):
         """
-        Annotation / Search tabs for the ensemble on screen, in the misc-plots
-        tab widget; their mirror takes over the MS2 plot.
+        Annotation / Search tabs for the ensemble on screen, in the right-hand
+        sidebar; their mirror takes over the MS2 plot.
         """
-        tabs = self.annotation_tabs = AnnotationTabs(self.tabWidget, self.data_source)
+        tabs = self.annotation_tabs = AnnotationTabs(self.tabsAnnotation, self.data_source)
         tabs.sigRankRequested.connect(self.sigRankCandidatesRequested)
         tabs.sigSpectralSearchRequested.connect(self.sigSpectralSearchRequested)
         tabs.sigMirror.connect(self._on_mirror)
         tabs.sigStatus.connect(self.status_bar.showMessage)
-        self.ms2_plot.sigMirrorSignalHovered.connect(
-            lambda signal: signal[0] == 'bottom' and tabs.mirror_hovered(signal[1])
-        )
+        self.ms2_plot.sigMirrorSignalHovered.connect(tabs.mirror_hovered)
         self.ms2_plot.sigMSpectrumLeaved.connect(lambda: tabs.mirror_hovered(None))
 
     def _annotation_target(self) -> Optional[AnnotationTarget]:
@@ -175,6 +177,7 @@ class EnsembleViewer(
         self.ms2_plot.set_mirror_spectra(
             spec.top, spec.bottom, spec.top_label, spec.bottom_label, matched=spec.matches,
             labels_right=True, top_precursor=spec.top_precursor, bottom_precursor=spec.bottom_precursor,
+            excluded=spec.excluded,
         )
 
     def _add_status_bar(self):
@@ -601,14 +604,6 @@ class EnsembleViewer(
 
         self.refresh_assignment_display()
         self.annotation_tabs.set_target(None)
-
-    def _hide_misc_plots(self):
-        self.checkShowMiscPlots.setChecked(False)
-        self.tabWidget.setVisible(False)
-
-    def _show_misc_plots(self):
-        self.checkShowMiscPlots.setChecked(True)
-        self.tabWidget.setVisible(True)
 
     def initialize_plots(
         self,

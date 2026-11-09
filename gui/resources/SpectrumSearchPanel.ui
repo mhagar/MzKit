@@ -28,7 +28,7 @@
      <item>
       <widget class="QComboBox" name="comboMode">
        <property name="toolTip">
-        <string>Identity: cosine against library spectra within [spectral_search] precursor_tolerance. Analogue: nearest library spectra by embedding (MS2DeepScore, or an imported embedder)</string>
+        <string>Identity: cosine against library spectra within [spectral_search] precursor_tol_da (or with the queried formula). Analogue: nearest library spectra by embedding (MS2DeepScore, or an imported embedder)</string>
        </property>
        <property name="sizeAdjustPolicy">
         <enum>QComboBox::AdjustToContents</enum>

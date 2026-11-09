@@ -17,11 +17,12 @@ from PyQt5 import QtCore, QtWidgets
 from core.cli.rank_candidates import (
     DbCandidate, fetch_candidates, neutral_mass, rank_params_from_config,
 )
-from core.data_structs.ensemble import USER, Hypothesis
+from core.data_structs.ensemble import GLACIER, USER, Hypothesis
 from core.utils import compound_db, glacier
 from core.utils.config import load_config
 from gui.dialogues.CompoundDbDialog import NumberItem
 from gui.resources.AnnotationPanel import Ui_AnnotationPanel
+from gui.widgets.query_edit import FORMULA, MASS, QueryEdit
 from gui.widgets.StructureWidget import NAME_ROLE, StructureDelegate
 
 if TYPE_CHECKING:
@@ -33,8 +34,8 @@ if TYPE_CHECKING:
 ROW_HEIGHT = 80
 # Candidate row's first cell: its index into RankResult.scored
 SCORED_ROLE = QtCore.Qt.UserRole + 1
-# Query modes: the .ui's Formula and Mass, then a typed SMILES and compound_db's text fields
-FORMULA, MASS, SMILES = 0, 1, 2
+# Query modes: QueryEdit's Formula and Mass, then a typed SMILES and compound_db's text fields
+SMILES = 2
 _PLACEHOLDERS = {FORMULA: "e.g. C20H34O2", MASS: "neutral mass, e.g. 359.2672", SMILES: "SMILES"}
 
 
@@ -65,15 +66,18 @@ class StructureSearchWidget(
         self._shown: Optional['ScoredCandidate'] = None
 
         self.setupUi(self)
-        # Short names for the .ui's widgets
-        self.mode_combo, self.query_edit, self.rank_btn = self.comboMode, self.editQuery, self.btnRank
+        self.query = QueryEdit("Mass", _PLACEHOLDERS, ["SMILES", *compound_db.TEXT_FIELDS], "contains…")
+        self.query.combo.setToolTip(
+            "Query by molecular formula, neutral mass, a typed SMILES, or text (name, organism, ID, NP class)"
+        )
+        self.layoutQuery.insertWidget(0, self.query, stretch=1)
+        self._query_values = None   # the (formula, neutral mass) the query box was last filled with
+        # Short names for the widgets
+        self.mode_combo, self.query_edit, self.rank_btn = self.query.combo, self.query.edit, self.btnRank
         self.status_label, self.accept_btn = self.labelStatus, self.btnAccept
 
         self.rank_btn.clicked.connect(self._rank)
         self.query_edit.returnPressed.connect(self._rank)
-        self.mode_combo.addItem("SMILES")
-        self.mode_combo.addItems(list(compound_db.TEXT_FIELDS))
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self._params_sheet = None
         self.btnParams.clicked.connect(self._show_params)
 
@@ -107,10 +111,6 @@ class StructureSearchWidget(
             self.layoutSources.addWidget(check)
         self.layoutSources.addStretch(1)
 
-    def _on_mode_changed(self):
-        mode = self.mode_combo.currentIndex()
-        self.query_edit.setPlaceholderText(_PLACEHOLDERS.get(mode, "contains…"))
-
     def _show_params(self):
         from gui.widgets.search_param_sheet import glacier_sheet
         if self._params_sheet is None:
@@ -129,26 +129,25 @@ class StructureSearchWidget(
     def set_target(self, target: Optional['AnnotationTarget']):
         """
         Follow the host's focus (None clears). Rank uses the target's MS2 and
-        precursor, and the query is prefilled with its formula and adduct.
-        Each target key keeps its own ranking; re-showing the same key keeps
-        its state (a typed query included).
+        precursor, and the query is prefilled with its formula (else its
+        neutral mass). Each target key keeps its own ranking; re-showing the
+        same key keeps its state (a typed query included), unless its formula
+        or adduct changed, which refills the query.
         """
         key = None if target is None else target.key
-        if key is not None and key == self._key:
-            self._target = target
-            return
+        same = key is not None and key == self._key
         self._target, self._key = target, key
         self.ms2, self._precursor_mz = (None, None) if target is None else (target.ms2, target.precursor_mz)
         self._adduct = None if target is None else target.adduct
-        formula = None if target is None else target.formula
-        with QtCore.QSignalBlocker(self.mode_combo):
-            self.mode_combo.setCurrentIndex(FORMULA if formula or target is None else MASS)
-        self._on_mode_changed()
-        self.query_edit.setText(
-            formula if formula
-            else "" if target is None or self._precursor_mz is None
-            else f"{neutral_mass(self._precursor_mz, self._adduct):.4f}"
+        values = (
+            None if target is None else target.formula,
+            None if self._precursor_mz is None else neutral_mass(self._precursor_mz, self._adduct),
         )
+        if not same or values != self._query_values:
+            self._query_values = values
+            self.query.set_values(*values)
+        if same:
+            return
 
         if target is None:
             problem = "Focus an analyte or open an ensemble to annotate it"
@@ -158,7 +157,7 @@ class StructureSearchWidget(
             problem = f"This {target.noun} has no MS2"
         else:
             problem = ""
-        for w in (self.mode_combo, self.query_edit, self.rank_btn):
+        for w in (self.query, self.rank_btn):
             w.setEnabled(not problem)
 
         if problem:
@@ -181,8 +180,7 @@ class StructureSearchWidget(
             return
         params = rank_params_from_config(load_config())   # picks up config edits
         sources = [c.text() for c in self.source_checks if c.isChecked()]
-        text = self.query_edit.text().strip()
-        mode = self.mode_combo.currentIndex()
+        text, mode = self.query.text(), self.query.mode()
         if mode == SMILES:
             from rdkit import Chem
             if not text or Chem.MolFromSmiles(text) is None:
@@ -211,7 +209,7 @@ class StructureSearchWidget(
                     mass = float(text)
                 except ValueError:
                     raise ValueError(f"Not a mass: {text!r}") from None
-                candidates, capped = fetch_candidates(sources, mass=mass, ppm=params.mass_ppm)
+                candidates, capped = fetch_candidates(sources, mass=mass, tol_da=params.precursor_tol_da)
         except ValueError as e:
             self.status_label.setText(str(e))
             return
@@ -336,7 +334,7 @@ class StructureSearchWidget(
         c = s.candidate
         self.sigAccepted.emit(Hypothesis(
             c.smiles, c.label, origin=c.source, db_id=c.db_id,
-            scores=scores_of(s, result),
+            scores=scores_of(s, result), origin_type=GLACIER,
         ))
 
 

@@ -20,14 +20,6 @@ class Ui_AnnotationPanel(object):
         self.verticalLayout.setObjectName("verticalLayout")
         self.layoutQuery = QtWidgets.QHBoxLayout()
         self.layoutQuery.setObjectName("layoutQuery")
-        self.comboMode = QtWidgets.QComboBox(AnnotationPanel)
-        self.comboMode.setObjectName("comboMode")
-        self.comboMode.addItem("")
-        self.comboMode.addItem("")
-        self.layoutQuery.addWidget(self.comboMode)
-        self.editQuery = QtWidgets.QLineEdit(AnnotationPanel)
-        self.editQuery.setObjectName("editQuery")
-        self.layoutQuery.addWidget(self.editQuery)
         self.btnRank = QtWidgets.QPushButton(AnnotationPanel)
         self.btnRank.setObjectName("btnRank")
         self.layoutQuery.addWidget(self.btnRank)
@@ -82,11 +74,8 @@ class Ui_AnnotationPanel(object):
 
     def retranslateUi(self, AnnotationPanel):
         _translate = QtCore.QCoreApplication.translate
-        self.comboMode.setToolTip(_translate("AnnotationPanel", "Query by molecular formula, neutral mass +/- [glacier] mass_ppm, a typed SMILES, or text (name, organism, ID, NP class)"))
-        self.comboMode.setItemText(0, _translate("AnnotationPanel", "Formula"))
-        self.comboMode.setItemText(1, _translate("AnnotationPanel", "Mass"))
         self.btnRank.setToolTip(_translate("AnnotationPanel", "Query the ticked databases and rank the hits by GLACIER-predicted MS2"))
-        self.btnRank.setText(_translate("AnnotationPanel", "Rank"))
+        self.btnRank.setText(_translate("AnnotationPanel", "Search"))
         self.btnParams.setToolTip(_translate("AnnotationPanel", "[glacier] GLACIER prediction and scoring parameters"))
         self.btnParams.setText(_translate("AnnotationPanel", "Parameters…"))
         item = self.table.horizontalHeaderItem(0)

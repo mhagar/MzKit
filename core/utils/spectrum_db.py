@@ -17,6 +17,7 @@ doesn't cover, or couldn't embed, are NaN and never score.
 import logging
 import os
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -30,7 +31,7 @@ DB_DIR = Path(get_project_root()) / 'spectra'
 DEFAULT_DB = DB_DIR / 'spectra.sqlite'
 
 # Bump when the table layout changes; older caches must be rebuilt
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 2: formula filled from SMILES, Hill order
 
 MS2DEEPSCORE = 'ms2deepscore'
 
@@ -47,6 +48,24 @@ def _spectrum_id(spectrum, library: str, ordinal: int) -> str:
     return str(spectrum.get('spectrum_id') or f"{library}:{ordinal}")
 
 
+@lru_cache(maxsize=65536)   # libraries repeat structures across spectra
+def _formula(formula: str, smiles: str) -> str:
+    """
+    The library's formula, else its SMILES's neutral one, in Hill order (as
+    `by_formula` queries it); as given if it doesn't parse.
+    """
+    from rdkit import Chem
+    from core.formula.manual import canonical_formula
+    from core.utils.glacier import neutral_formula
+
+    if not formula and smiles and (mol := Chem.MolFromSmiles(smiles)) is not None:
+        formula = neutral_formula(mol)
+    try:
+        return canonical_formula(formula) if formula else ""
+    except ValueError:
+        return formula
+
+
 def _row(spectrum, library: str, ordinal: int) -> Optional[tuple]:
     """A table row for a harmonized matchms Spectrum; None if it's unusable or negative mode."""
     # MzKit has no negative-mode support yet, so those entries could never match
@@ -61,7 +80,7 @@ def _row(spectrum, library: str, ordinal: int) -> Optional[tuple]:
     return (
         library, _spectrum_id(spectrum, library, ordinal), get('compound_name'), get('smiles'),
         get('inchikey') or get('inchi_aux'),   # MZmine exports put the InChIKey in INCHIAUX
-        get('formula'), get('adduct'), float(precursor),
+        _formula(get('formula'), get('smiles')), get('adduct'), float(precursor),
         np.column_stack([mz, intsy]).astype(np.float32).tobytes(),
     )
 
@@ -121,6 +140,7 @@ def build_db(
             ids.extend(r[:2] for r in batch)
             logging.info(f"{library}: {n + len(batch)} spectra")
         con.execute("CREATE INDEX ix_precursor ON spectra(library, precursor_mz)")
+        con.execute("CREATE INDEX ix_formula ON spectra(library, formula)")
         con.commit()
         last_rowid = con.execute("SELECT max(rowid) FROM spectra").fetchone()[0] or 0
         assert last_rowid == len(ids), "rowids must be contiguous: embedding row i is rowid i + 1"
@@ -252,6 +272,20 @@ def window(libraries: list[str], mz: float, tol: float, db_path: Path = DEFAULT_
         return [r[0] for r in con.execute(
             f"SELECT rowid FROM spectra WHERE {_in(libraries)} AND precursor_mz BETWEEN ? AND ?",
             (*libraries, mz - tol, mz + tol),
+        )]
+
+
+def by_formula(libraries: list[str], formula: str, db_path: Path = DEFAULT_DB) -> list[int]:
+    """
+    Rowids in `libraries` whose (neutral) formula is `formula`.
+
+    :raises ValueError: if `formula` doesn't parse.
+    """
+    from core.formula.manual import canonical_formula
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as con:
+        return [r[0] for r in con.execute(
+            f"SELECT rowid FROM spectra WHERE {_in(libraries)} AND formula = ?",
+            (*libraries, canonical_formula(formula)),
         )]
 
 

@@ -834,9 +834,8 @@ class AlignmentViewer(
             self.detail_panel.show_ms2_mirror(*spec)
 
     def _on_ms2_mirror_hovered(self, signal: tuple):
-        """(half, spec_idx, mz, intsy): a predicted peak lights up its fragment."""
-        if signal[0] == 'bottom':
-            self.annotation_tabs.mirror_hovered(signal[1])
+        """(half, spec_idx, mz, intsy): a peak lights up the fragment that would explain it."""
+        self.annotation_tabs.mirror_hovered(signal)
 
     def _on_ms2_mirror_left(self):
         self.annotation_tabs.mirror_hovered(None)

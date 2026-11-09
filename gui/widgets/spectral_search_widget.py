@@ -1,12 +1,13 @@
 """
 Spectral search: search the spectral libraries (core/utils/spectrum_db.py) for
 the host's AnnotationTarget's MS2, by identity (cosine within the precursor
-window) or by analogue (embedding similarity; core/cli/search_spectra.py, run
-in the background by MainController), and accept a hit as a Hypothesis
-(sigAccepted).
+window, or against the entries with a given formula) or by analogue
+(embedding similarity at the queried precursor m/z; formula queries are
+identity only; core/cli/search_spectra.py, run in the background by
+MainController), and accept a hit as a Hypothesis (sigAccepted).
 
 The host mirrors the selected hit's library spectrum against the target's MS2.
-Results are cached per (target key, mode) for the session. The index is
+Results are cached per (target key, mode, query) for the session. The index is
 rebuilt, and query embeddings imported, from Tools > Libraries & databases.
 """
 from pathlib import Path
@@ -14,13 +15,16 @@ from typing import Optional, TYPE_CHECKING
 
 from PyQt5 import QtCore, QtWidgets
 
+from core.cli.rank_candidates import rank_params_from_config
 from core.cli.search_spectra import IDENTITY, params_from_config
-from core.data_structs.ensemble import Hypothesis
+from core.data_structs.ensemble import MS2DS, SPECTRUM_IDENTITY, Hypothesis
+from core.formula.manual import canonical_formula
 from core.utils import spectrum_db
 from core.utils.config import load_config
 from gui.dialogues.CompoundDbDialog import NumberItem
 from gui.resources.SpectrumSearchPanel import Ui_SpectrumSearchPanel
 from gui.widgets.annotation_editor import _parses
+from gui.widgets.query_edit import FORMULA, MASS, QueryEdit
 from gui.widgets.StructureWidget import NAME_ROLE, StructureDelegate
 
 if TYPE_CHECKING:
@@ -67,16 +71,24 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         self.ms2: Optional['SpectrumArray'] = None
         self._precursor_mz: Optional[float] = None
         self._key = None   # the target's key
-        self._results: dict = {}   # (focus key, mode) -> (SearchResult, status text)
+        self._results: dict = {}   # (focus key, mode, query) -> (SearchResult, status text)
         self._pending: set = set()
         self._shown: Optional['LibraryHit'] = None
         self._params_sheet = None
 
         self.setupUi(self)
+        self.query = QueryEdit("Precursor m/z", {
+            FORMULA: "e.g. C20H34O2", MASS: "precursor m/z, e.g. 360.2745",
+        })
+        self.query.combo.setToolTip("Search by precursor m/z, or (identity only) the library entries with a formula")
+        self.layoutQuery.insertWidget(1, self.query, stretch=1)
+        self._query_values = None   # the (formula, precursor m/z) the query box was last filled with
+        self.query.edit.textChanged.connect(self._show_current)   # an edited query hides the old one's hits
+        self.query.edit.returnPressed.connect(self._search)
         self.btnSearch.clicked.connect(self._search)
         self.btnParams.clicked.connect(self._show_params)
         self.btnAccept.clicked.connect(self._accept)
-        self.comboMode.currentIndexChanged.connect(self._show_current)
+        self.comboMode.currentIndexChanged.connect(self._on_search_mode_changed)
 
         self.library_checks: list[QtWidgets.QCheckBox] = []
         self.table.setItemDelegateForColumn(0, StructureDelegate(self.table))
@@ -138,18 +150,32 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
                 elif self._query_embedding(embedder) is not None:
                     self.comboMode.addItem(f"Analogue ({embedder})", embedder)
             self.comboMode.setCurrentIndex(max(self.comboMode.findData(current), 0))
+        self.query.set_formula_enabled(self.comboMode.currentData() == IDENTITY)
+
+    def _on_search_mode_changed(self):
+        self.query.set_formula_enabled(self.comboMode.currentData() == IDENTITY)
+        self._show_current()
 
     # -- focus --------------------------------------------------------------
 
     def set_target(self, target: Optional['AnnotationTarget']):
-        """Follow the host's focus (None clears): search the target's MS2 at its precursor."""
+        """
+        Follow the host's focus (None clears): search the target's MS2, the query
+        prefilled with its formula (else its precursor m/z). Re-showing the same
+        key keeps a typed query, unless the target's formula changed.
+        """
         key = None if target is None else target.key
-        self._target = target
-        if key is not None and key == self._key:
-            return
-        self._key = key
+        same = key is not None and key == self._key
+        self._target, self._key = target, key
         self.ms2, self._precursor_mz = (None, None) if target is None else (target.ms2, target.precursor_mz)
-        self._fill_modes()
+        values = (None if target is None else target.formula, self._precursor_mz)
+        if same and values == self._query_values:
+            return   # e.g. an accepted hit re-annotated the ensemble: keep the selected hit
+        self._query_values = values
+        with QtCore.QSignalBlocker(self.query.edit):   # shown below, once
+            self.query.set_values(*values)
+        if not same:
+            self._fill_modes()
         self._refresh_state()
 
     def _query_embedding(self, embedder: str):
@@ -171,40 +197,71 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
 
     def _refresh_state(self):
         problem = self._problem()
-        for w in (self.comboMode, self.btnSearch):
+        for w in (self.comboMode, self.query, self.btnSearch):
             w.setEnabled(not problem)
         self._show_current(problem=problem)
 
+    def _query(self) -> tuple[Optional[tuple], str]:
+        """
+        The query box's ('formula', Hill formula) or ('mz', precursor m/z), and
+        a problem with it ("": none).
+        """
+        text = self.query.text()
+        if self.query.mode() == FORMULA:
+            try:
+                return ('formula', canonical_formula(text)), ""
+            except ValueError as e:
+                return None, str(e)
+        try:
+            return ('mz', round(float(text), 4)), ""
+        except ValueError:
+            return None, f"Not an m/z: {text!r}"
+
+    def _slot(self) -> Optional[tuple]:
+        """The current (target key, mode, query): what results are cached by (None: the query doesn't parse)."""
+        query, _ = self._query()
+        return None if query is None else (self._key, self.comboMode.currentData(), query)
+
     def _show_current(self, *_, problem: Optional[str] = None):
         problem = self._problem() if problem is None else problem
-        slot = (self._key, self.comboMode.currentData())
-        if problem:
-            self._show_result(None, problem)
+        query, query_problem = self._query()
+        slot = self._slot()
+        if problem or query_problem:
+            self._show_result(None, problem or query_problem)
         elif slot in self._results:
             self._show_result(*self._results[slot])
         elif slot in self._pending:
             self._show_result(None, "Searching…")
         else:
-            self._show_result(None, f"Precursor m/z {self._precursor_mz:.4f}")
+            kind, value = query
+            self._show_result(None, f"Precursor m/z {value:.4f}" if kind == 'mz' else f"Formula {value}")
 
     # -- search -------------------------------------------------------------
 
     def _search(self):
         mode = self.comboMode.currentData()
-        slot = (self._key, mode)
+        (query, query_problem), slot = self._query(), self._slot()
         if self._problem() or slot in self._pending:
+            return
+        if query_problem:
+            self.labelStatus.setText(query_problem)
             return
         libraries = [c.text() for c in self.library_checks if c.isChecked()]
         if not libraries:
             self.labelStatus.setText("Tick at least one library")
             return
+        kind, value = query
         kwargs = {
             'ms2': self.ms2,
-            'precursor_mz': float(self._precursor_mz),
+            # A formula search scores against the target's own precursor
+            'precursor_mz': value if kind == 'mz' else float(self._precursor_mz),
             'libraries': libraries,
             'mode': mode,
-            'params': params_from_config(load_config()),   # picks up config edits
+            'params': params_from_config(config := load_config()),   # picks up config edits
+            'glacier_params': rank_params_from_config(config),   # hits' predictions, for fragment hovers
         }
+        if kind == 'formula':
+            kwargs['formula'] = value
         if mode not in (IDENTITY, spectrum_db.MS2DEEPSCORE):
             kwargs['query_embedding'] = self._query_embedding(mode)
         self._pending.add(slot)
@@ -224,11 +281,11 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         else:
             status = f"{len(result.hits)} hits of {result.n_searched} library spectra searched"
             self._results[slot] = (result, status)
-        if slot == (self._key, self.comboMode.currentData()):
+        if slot == self._slot():
             self._show_result(result, status)
 
     def result(self) -> Optional['SearchResult']:
-        entry = self._results.get((self._key, self.comboMode.currentData()))
+        entry = self._results.get(self._slot())
         return entry[0] if entry else None
 
     def _show_result(self, result: Optional['SearchResult'], status: str):
@@ -243,9 +300,9 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
                 structure = QtWidgets.QTableWidgetItem()
                 structure.setData(QtCore.Qt.UserRole, h.smiles)
                 structure.setData(HIT_ROLE, row)
-                structure.setData(NAME_ROLE, h.name)
+                structure.setData(NAME_ROLE, h.label)
                 for col, item in enumerate((
-                    structure, QtWidgets.QTableWidgetItem(h.name),
+                    structure, QtWidgets.QTableWidgetItem(h.label),
                     _number(f"{h.score:.3f}", h.score),
                     _number(f"{h.mod_cosine:.2f} ({h.n_matched})", (h.mod_cosine, h.n_matched)),
                     _number(f"{h.delta_mz:+.4f}", h.delta_mz), QtWidgets.QTableWidgetItem(h.adduct),
@@ -270,9 +327,15 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         if self._shown is None or not self._shown.smiles:
             self.structure.hide()
         else:
-            self.structure.set_structure(self._shown.smiles, self._shown.name)
+            self.structure.set_structure(self._shown.smiles, self._shown.label)
             self.structure.show()
         self.sigHitSelected.emit(self._shown)
+
+    def highlight_fragment(self, peak_idx: Optional[int]):
+        """Draw the shown hit, with its GLACIER predicted peak `peak_idx`'s fragment lit (None: none)."""
+        if self._shown is not None and self._shown.glacier is not None:
+            from gui.widgets.structure_search_widget import show_fragment
+            show_fragment(self.structure, self._shown.glacier, peak_idx)
 
     def reselect(self):
         """Re-announce the selected hit (its tab came back to the front)."""
@@ -283,7 +346,7 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
         if h is None or result is None or self._target is None:
             return
         self.sigAccepted.emit(Hypothesis(
-            h.smiles, h.name, origin=h.library,
+            h.smiles, h.label, origin=h.library,
             claim='structure' if result.mode == IDENTITY else 'analogue',
             db_id=h.spectrum_id,
             scores={
@@ -292,6 +355,7 @@ class SpectralSearchWidget(QtWidgets.QWidget, Ui_SpectrumSearchPanel):
                 'matched': h.n_matched,
                 'delta_mz': round(h.delta_mz, 4),
             },
+            origin_type={IDENTITY: SPECTRUM_IDENTITY, spectrum_db.MS2DEEPSCORE: MS2DS}.get(result.mode, result.mode),
         ))
 
 

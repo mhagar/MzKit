@@ -35,6 +35,7 @@ SPECTRUMID=7
 NAME=beta
 INCHIAUX=VURLRACCOCGFDB-UHFFFAOYSA-N
 SMILES=CCN
+FORMULA=NC2H7
 ADDUCT=[M+Na]+
 PEPMASS=172.04
 CHARGE=1
@@ -67,10 +68,12 @@ def test_both_dialects_harmonized(db):
     assert len(rows) == 2   # the negative-mode entry was skipped
     by_id = {r[1]: r for r in rows.values()}
     assert by_id['CCMSLIB1'][:8] == (
-        'GNPS', 'CCMSLIB1', 'alpha', 'CCO', 'LFQSCWFLJHTTHZ-UHFFFAOYSA-N', '', '[M+H]1+', 183.07,
+        'GNPS', 'CCMSLIB1', 'alpha', 'CCO', 'LFQSCWFLJHTTHZ-UHFFFAOYSA-N', 'C2H6O', '[M+H]1+', 183.07,
     )
     beta = by_id['7']
     assert (beta[0], beta[2], beta[4], beta[7]) == ('inhouse', 'beta', 'VURLRACCOCGFDB-UHFFFAOYSA-N', 172.04)
+    # Formulas: alpha's from its SMILES, beta's own put in Hill order (as by_formula queries them)
+    assert by_id['CCMSLIB1'][5] == 'C2H6O' and beta[5] == 'C2H7N'
     np.testing.assert_allclose(beta[-1]['mz'], [m for m, _ in PEAKS_B], rtol=1e-6)
 
 
@@ -84,6 +87,16 @@ def test_identity_search_finds_itself(db):
     # Outside the precursor window / other library: nothing
     assert not search_spectra(_spec(PEAKS_A), 190.0, ['GNPS'], IDENTITY, db_path=db).hits
     assert not search_spectra(_spec(PEAKS_A), 183.07, ['inhouse'], IDENTITY, db_path=db).hits
+
+
+def test_identity_search_by_formula_ignores_the_precursor_window(db):
+    result = search_spectra(_spec(PEAKS_A), 400.0, ['GNPS', 'inhouse'], IDENTITY, db_path=db, formula='OC2H6')
+    assert [h.spectrum_id for h in result.hits] == ['CCMSLIB1'] and result.n_searched == 1
+    assert not search_spectra(_spec(PEAKS_A), 183.07, ['GNPS'], IDENTITY, db_path=db, formula='C3H8O').hits
+    with pytest.raises(ValueError):
+        search_spectra(_spec(PEAKS_A), 183.07, ['GNPS'], IDENTITY, db_path=db, formula='not a formula')
+    with pytest.raises(ValueError, match="identity"):
+        search_spectra(_spec(PEAKS_A), 183.07, ['GNPS'], 'toy', db_path=db, formula='C2H6O')
 
 
 def test_library_hit_rebuilds_an_accepted_hit(db):

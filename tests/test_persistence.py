@@ -131,8 +131,10 @@ def test_ensemble_structure_annotation_roundtrip(data_registry, sample, ensemble
         name="Psammaplin A", notes="from the sponge",
         hypotheses=(
             Hypothesis("CCO", "ethanol", origin="NPAtlas", db_id="NPA1",
-                       scores={"explained": "7/10", "cosine": 0.61}),
+                       scores={"explained": "7/10", "cosine": 0.61}, origin_type="glacier"),
             Hypothesis("CCCO"),
+            # Unscored: inference would say GLACIER, so this checks origin_type itself is saved
+            Hypothesis("CCCCO", origin="GNPS", db_id="CCMSLIB1", origin_type="spectrum_identity"),
         ),
         chosen_idx=1,
     )

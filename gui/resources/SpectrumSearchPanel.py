@@ -82,7 +82,7 @@ class Ui_SpectrumSearchPanel(object):
 
     def retranslateUi(self, SpectrumSearchPanel):
         _translate = QtCore.QCoreApplication.translate
-        self.comboMode.setToolTip(_translate("SpectrumSearchPanel", "Identity: cosine against library spectra within [spectral_search] precursor_tolerance. Analogue: nearest library spectra by embedding (MS2DeepScore, or an imported embedder)"))
+        self.comboMode.setToolTip(_translate("SpectrumSearchPanel", "Identity: cosine against library spectra within [spectral_search] precursor_tol_da (or with the queried formula). Analogue: nearest library spectra by embedding (MS2DeepScore, or an imported embedder)"))
         self.btnSearch.setToolTip(_translate("SpectrumSearchPanel", "Search the ticked spectral libraries for the target\'s MS2"))
         self.btnSearch.setText(_translate("SpectrumSearchPanel", "Search"))
         self.btnParams.setToolTip(_translate("SpectrumSearchPanel", "[spectral_search] tolerances and limits (libraries and indexes: Tools > Libraries & databases)"))
