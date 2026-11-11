@@ -18,7 +18,7 @@ Sample cluster mode orders the lanes by a sample clustering
 combines with either analyte layout. By default that's Jaccard similarity
 of analyte presence, optionally over MS2 groups cut from the analyte
 clustering (computed on demand; the analyte layout is unaffected), or an
-imported lineage (e.g. a taxonomy). Parameters: the sample cluster
+imported lineage (e.g. a taxonomy) or a sample metadata field. Parameters: the sample cluster
 button's menu (sample_cluster_params_dialog.py). Exports
 (MainController) use both modes' applied settings (`export_settings`).
 
@@ -49,7 +49,7 @@ from core.cli.cluster_analytes import (
     scoring_name, similarity_provenance,
 )
 from core.cli.cluster_samples import (
-    LINEAGE, SampleClusterParams, SampleClustering, cluster_samples_by,
+    METADATA, RANKED, SampleClusterParams, SampleClustering, cluster_samples_by,
     sample_cluster_params_from_config,
 )
 from core.data_structs.similarity_matrix import SimilarityMatrix
@@ -135,7 +135,7 @@ class AlignmentViewer(
         self._sample_params: SampleClusterParams = (
             sample_cluster_params_from_config(config)
         )
-        # sample name -> ranks (coarse to fine), for a LINEAGE _sample_params
+        # sample name -> ranks (coarse to fine), for a RANKED _sample_params
         self._sample_ranks: Optional[dict[str, tuple[str, ...]]] = None
         self._sample_clustering: Optional[SampleClustering] = None
         self._sample_inputs: tuple = (None, None, None)
@@ -252,8 +252,8 @@ class AlignmentViewer(
         )
         self.btnSampleClusterMode.setText("By sample")
         self.btnSampleClusterMode.setToolTip(
-            "Order samples by hierarchical clustering of their composition "
-            "or an imported lineage instead of by name (arrow: parameters)"
+            "Order samples by hierarchical clustering of their composition, "
+            "an imported lineage or a metadata field instead of by name (arrow: parameters)"
         )
         for btn, slot in ((self.btnClusterMode, self._show_cluster_dialog),
                           (self.btnSampleClusterMode, self._show_sample_dialog)):
@@ -404,7 +404,7 @@ class AlignmentViewer(
         self.plotSampleDendrogram.clear_clustering()
         self.plotSampleDendrogram.hide()
         self._sample_ranks = None
-        if self._sample_params.method == LINEAGE:
+        if self._sample_params.method in RANKED:
             self._sample_params = self._sample_params._replace(
                 method=SampleClusterParams().method,
             )
@@ -486,6 +486,10 @@ class AlignmentViewer(
             self.plotSampleDendrogram.set_clustering(
                 self._sample_clustering, self._sample_clustering.sample_uuids,
             )
+            if self._sample_params.method == METADATA:
+                self.plotSampleDendrogram.set_leaf_groups(
+                    group_runs([self._sample_ranks.get(names[u]) for u in self._sample_clustering.sample_uuids])
+                )
         self.plotSampleDendrogram.show()
         return self._sample_clustering.sample_uuids
 
@@ -495,8 +499,8 @@ class AlignmentViewer(
             return
         similarity, n = info
         params, _ranks, analytes = self._sample_inputs
-        if params.method == LINEAGE:
-            kind = "lineage similarity"
+        if params.method in RANKED:
+            kind = f"{params.method} similarity"
         elif analytes is not None:
             kind = f"Jaccard similarity (MS2-grouped ≥ {params.ms2_threshold:.2f})"
         else:
@@ -517,13 +521,13 @@ class AlignmentViewer(
     def _grouping_clustering(self) -> Optional['AnalyteClustering']:
         """The analyte clustering sample MS2 grouping cuts (None: not used / not computed)."""
         params = self._sample_params
-        if params.method == LINEAGE or not params.ms2_grouping:
+        if params.method in RANKED or not params.ms2_grouping:
             return None
         return self._current_clustering()
 
     def _on_sample_cluster_mode_toggled(self, checked: bool):
         params = self._sample_params
-        if (checked and self._alignment is not None and params.method != LINEAGE
+        if (checked and self._alignment is not None and params.method not in RANKED
                 and params.ms2_grouping and self._current_clustering() is None):
             # Lanes show plain Jaccard until the analyte clustering lands
             self._request_clustering()
@@ -536,8 +540,9 @@ class AlignmentViewer(
             )
             self._sample_dialog.sigApply.connect(self._on_sample_params)
         if self._alignment is not None:
-            self._sample_dialog.set_sample_names({
-                self._ctx.sample_name(u) for u in self._alignment.sample_uuids
+            samples = (self.data_source.get_sample(u) for u in self._alignment.sample_uuids)
+            self._sample_dialog.set_sample_metadata({
+                s.name: s.metadata for s in samples if s is not None
             })
         self._sample_dialog.show()
         self._sample_dialog.raise_()
@@ -1248,3 +1253,14 @@ def _locate_ensemble(
             if ens_uuid == ensemble_uuid:
                 return aid, sample_uuid
     return None
+
+
+def group_runs(ranks: list) -> list[tuple[int, int, str]]:
+    """(first lane, last lane, value) per run of equal leaf-order ranks; rankless lanes are skipped."""
+    labels, start = [], 0
+    for i in range(1, len(ranks) + 1):
+        if i == len(ranks) or ranks[i] != ranks[start]:
+            if ranks[start]:
+                labels.append((start, i - 1, " / ".join(ranks[start])))
+            start = i
+    return labels

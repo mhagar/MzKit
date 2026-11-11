@@ -43,7 +43,7 @@ from typing import Callable, Literal, Mapping, Optional, TYPE_CHECKING
 from core.cli.cluster_analytes import (
     ClusterParams, cluster_matrix, compute_similarity_matrix,
 )
-from core.cli.cluster_samples import LINEAGE, SampleClusterParams, cluster_samples_by
+from core.cli.cluster_samples import RANKED, SampleClusterParams, cluster_samples_by
 from core.cli.export_ensemble import build_ensemble_export
 from core.cli.export_network import build_matrix_network_graphml
 from core.cli.import_similarity import ANALYTE_ID_TAG, write_similarity_csv
@@ -255,7 +255,7 @@ def export_feature_table_to_file(
         are cut from.
     :param min_edge_score: network edges scoring below this are dropped.
     :param sample_params: how to score sample similarity; None skips it.
-    :param sample_ranks: sample name -> ranks, for a LINEAGE `sample_params`.
+    :param sample_ranks: sample name -> ranks, for a RANKED `sample_params`.
     :return: the written paths (matrix-dependent ones are skipped if
         cancelled).
     """
@@ -297,7 +297,7 @@ def export_feature_table_to_file(
         )
 
     grouping = (
-        sample_params is not None and sample_params.method != LINEAGE
+        sample_params is not None and sample_params.method not in RANKED
         and sample_params.ms2_grouping
     )
     if matrix is None and (write_graphml or grouping):

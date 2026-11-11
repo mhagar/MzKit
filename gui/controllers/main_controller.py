@@ -66,6 +66,7 @@ class MainController:
             mdi_area=self.main_view.mdiArea,
             process_controller=self.process_controller,
             data_registry=self.data_registry,
+            config=self.config,
         )
         self.subwindow_manager.initialize_all_windows()
         # Tools > Libraries & databases, created on first use
@@ -659,7 +660,7 @@ class MainController:
             MS2DEEPSCORE, ClusterParams, cluster_params_from_config,
             linkage_from_config, similarity_provenance,
         )
-        from core.cli.cluster_samples import LINEAGE, sample_cluster_params_from_config
+        from core.cli.cluster_samples import RANKED, sample_cluster_params_from_config
         from core.utils import ms2deepscore
         from core.utils.config import load_config
 
@@ -741,7 +742,7 @@ class MainController:
                 "matrix": matrix,
                 "analyte_linkage": analyte_linkage,
                 "sample_params": sample_params,
-                "sample_ranks": sample_ranks if sample_params.method == LINEAGE else None,
+                "sample_ranks": sample_ranks if sample_params.method in RANKED else None,
             },
             on_completion_func=lambda written: print(
                 "Exported:\n" + "\n".join(f"  - {p}" for p in written or [])

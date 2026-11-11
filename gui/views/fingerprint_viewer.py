@@ -116,6 +116,7 @@ class FingerprintViewerWindow(
         sample: 'Sample',
     ):
         self._update_state()
+        self.metadata_selection_model.addMetadataFieldsFromSample(sample)
 
     def onFinishedInputSampleFilter(self):
         """
@@ -410,8 +411,7 @@ class FingerprintTableModel(
 
             match self.col_to_type(section):
                 case 'metadata':
-                    if section:
-                        return self.get_metadata_field_by_col_num(section)
+                    return self.get_metadata_field_by_col_num(section)
 
                 case 'fingerprint':
                     return QVariant()

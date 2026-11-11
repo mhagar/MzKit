@@ -9,6 +9,8 @@ core/cli/cluster_samples.py):
    config section.
  - Imported sample lineage: ranks per sample name from a CSV. Kept for the
    session only, so each session starts on composition.
+ - Sample metadata: samples sharing a value of one metadata field group
+   together (`metadata_ranks`). Session only, like lineage.
 
 Clustering is recomputed on "Apply".
 """
@@ -19,8 +21,8 @@ from typing import Optional
 from PyQt5 import QtCore, QtWidgets
 
 from core.cli.cluster_samples import (
-    COMPOSITION, LINEAGE, SAMPLE_CLUSTERING_SECTION, SampleClusterParams,
-    sample_cluster_params_to_config,
+    COMPOSITION, LINEAGE, METADATA, SAMPLE_CLUSTERING_SECTION,
+    SampleClusterParams, metadata_ranks, sample_cluster_params_to_config,
 )
 from core.utils.config import load_config, save_config
 from gui.resources.SampleClusterParamsDialog import Ui_Dialog
@@ -30,13 +32,14 @@ from gui.views.alignment_viewer.cluster_params_dialog import LINKAGE_METHODS
 METHODS = (
     ("Sample composition", COMPOSITION),
     ("Imported sample lineage", LINEAGE),
+    ("Sample metadata", METADATA),
 )
 
 Ranks = dict[str, tuple[str, ...]]
 
 
 class SampleClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
-    # SampleClusterParams, ranks (None unless LINEAGE)
+    # SampleClusterParams, ranks (None unless RANKED)
     sigApply = QtCore.pyqtSignal(object, object)
 
     def __init__(
@@ -52,6 +55,7 @@ class SampleClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
         self._ranks = ranks
         self._ranks_path: Optional[str] = None
         self._sample_names: set[str] = set()
+        self._metadata: dict[str, dict] = {}   # sample name -> metadata
 
         for text, method in METHODS:
             self.comboMethod.addItem(text, method)
@@ -65,6 +69,7 @@ class SampleClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
             self.stackMethod.setCurrentIndex
         )
         self.btnLoadLineage.clicked.connect(self._load_lineage)
+        self.comboMetadataField.currentTextChanged.connect(self._update_metadata_report)
 
         box = QtWidgets.QDialogButtonBox
         self.buttonBox.button(box.Apply).clicked.connect(self._apply)
@@ -75,11 +80,29 @@ class SampleClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
 
         self.set_params(params)
         self._update_lineage_labels()
+        self._update_metadata_report()
 
-    def set_sample_names(self, names: set[str]):
-        """The shown alignment's sample names, for the lineage match report."""
-        self._sample_names = names
+    def set_sample_metadata(self, metadata: dict[str, dict]):
+        """The shown alignment's sample name -> metadata (match reports, metadata fields)."""
+        self._metadata = metadata
+        self._sample_names = set(metadata)
         self._update_lineage_labels()
+        field = self.comboMetadataField.currentText()
+        self.comboMetadataField.clear()
+        self.comboMetadataField.addItems(sorted({k for md in metadata.values() for k in md}))
+        self.comboMetadataField.setCurrentIndex(max(self.comboMetadataField.findText(field), 0))
+        self._update_metadata_report()
+
+    def _update_metadata_report(self):
+        field = self.comboMetadataField.currentText()
+        if not field:
+            self.labelMetadataReport.setText("<i>No sample metadata imported</i>")
+            return
+        ranks = metadata_ranks(self._metadata, field)
+        self.labelMetadataReport.setText(
+            f"{len(set(ranks.values()))} groups; {len(ranks)} of {len(self._metadata)} "
+            "samples have a value (the rest are unrelated to all)."
+        )
 
     def _method(self) -> str:
         return self.comboMethod.currentData()
@@ -140,7 +163,14 @@ class SampleClusterParamsDialog(QtWidgets.QDialog, Ui_Dialog):
                 self, "No lineage", "Load a sample lineage CSV first.",
             )
             return
+        field = self.comboMetadataField.currentText()
+        if params.method == METADATA and not field:
+            QtWidgets.QMessageBox.warning(
+                self, "No metadata", "Import sample metadata first (File > Import Sample Metadata).",
+            )
+            return
         config = load_config()
         sample_cluster_params_to_config(config, params)
         save_config(config, [SAMPLE_CLUSTERING_SECTION])
-        self.sigApply.emit(params, self._ranks if params.method == LINEAGE else None)
+        ranks = {LINEAGE: self._ranks, METADATA: metadata_ranks(self._metadata, field)}
+        self.sigApply.emit(params, ranks.get(params.method))

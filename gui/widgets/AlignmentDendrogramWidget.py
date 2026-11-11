@@ -27,6 +27,8 @@ LEFT_AXIS_WIDTH = 130
 # Fixed y range (distance), padded so the end tick labels aren't clipped
 Y_RANGE = (-0.08, 1.08)
 SIMILARITY_TICKS = [[(0.0, "1.0"), (0.5, "0.5"), (1.0, "0.0")]]
+# Width (in distance) of `set_leaf_groups` bars
+GROUP_BAR_W = 0.06
 # Pixel half-height of a merge bar's hit test
 BAR_HIT_PX = 5.0
 
@@ -205,6 +207,24 @@ class AlignmentDendrogramWidget(pg.PlotWidget):
         self._highlight.setTransform(self._item.transform())
         if self._orientation != 'left':
             self.pi.setYRange(*Y_RANGE, padding=0)
+
+    def set_leaf_groups(self, groups: list[tuple[int, int, str]]):
+        """
+        'left' only: a labelled bar per (first leaf, last leaf, text), just
+        left of the leaves - flat groups (merging at similarity 1) are
+        otherwise a hairline on the leaf edge.
+        """
+        color = self.palette().color(self.foregroundRole())
+        for i, (lo, hi, text) in enumerate(groups):
+            fill = QColor(color)
+            fill.setAlpha(170 if i % 2 else 90)   # adjacent groups stay distinct
+            bar = QtWidgets.QGraphicsRectItem(-GROUP_BAR_W, lo - 0.45, GROUP_BAR_W, hi - lo + 0.9)
+            bar.setPen(pg.mkPen(None))
+            bar.setBrush(fill)
+            self.pi.addItem(bar, ignoreBounds=True)
+            label = pg.TextItem(text, color=color, anchor=(1, 0.5))
+            label.setPos(-GROUP_BAR_W - 0.02, (lo + hi) / 2)
+            self.pi.addItem(label, ignoreBounds=True)
 
     def clear_clustering(self):
         self.pi.clear()

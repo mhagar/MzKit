@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from PyQt5.QtWidgets import QMdiArea
     from core.controllers.ProcessController import ProcessController
     from core.data_structs import DataRegistry
+    from configparser import ConfigParser
 
 
 class _HideOnCloseFilter(QObject):
@@ -59,7 +60,7 @@ class SubWindowManager(QObject):
         },
         'sample_viewer': {
             'class': SampleViewer,
-            'dependencies': ['data_registry'],
+            'dependencies': ['data_registry', 'config'],
             'title': 'Sample Viewer'
         },
         'fingerprint_viewer': {
@@ -69,7 +70,7 @@ class SubWindowManager(QObject):
         },
         'ensemble_viewer': {
             'class': EnsembleViewer,
-            'dependencies': ['data_registry'],
+            'dependencies': ['data_registry', 'config'],
             'title': 'Ensemble Viewer',
         },
         'alignment_viewer': {
@@ -83,13 +84,15 @@ class SubWindowManager(QObject):
         self,
         mdi_area: 'QMdiArea',
         process_controller: 'ProcessController',
-        data_registry: 'DataRegistry'
+        data_registry: 'DataRegistry',
+        config: Optional['ConfigParser'] = None,
     ):
         super().__init__()
         self.mdi_area = mdi_area
         self.dependencies = {
             'process_controller': process_controller,
-            'data_registry': data_registry
+            'data_registry': data_registry,
+            'config': config,
         }
         
         # Track created windows
@@ -124,6 +127,8 @@ class SubWindowManager(QObject):
                 kwargs['process_controller'] = self.dependencies['process_controller']
             elif dep_name == 'data_registry':
                 kwargs['data_source'] = self.dependencies['data_registry']
+            elif dep_name == 'config':
+                kwargs['config'] = self.dependencies['config']
         
         # Create the window
         window = config['class'](**kwargs)

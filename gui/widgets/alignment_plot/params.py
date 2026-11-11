@@ -13,28 +13,28 @@ from dataclasses import dataclass, replace
 @dataclass
 class RenderParams:
     # Intensity reference window (linear values; mapped in log space).
-    intsy_floor: float = 1e4
-    intsy_ceiling: float = 5e7
+    intsy_floor: float = 5.2e5
+    intsy_ceiling: float = 6e6
 
     # Strip width (retention-time seconds).
     width_min: float = 0.1
-    width_max: float = 45.0
+    width_max: float = 1.0
 
     # Strip height (lane units; 1.0 == one whole sample lane).
     height_min: float = 0.04
-    height_max: float = 0.10
+    height_max: float = 0.98
 
     # Vertical stagger within a lane (keeps overlapping strips clickable).
-    stagger_count: int = 7
-    stagger_step: float = 0.13
+    stagger_count: int = 4
+    stagger_step: float = 0.03
 
     # Analyte connecting-line opacity (0..255), scaled by the analyte's
     # max ensemble intensity.
     line_opacity_min: int = 40
-    line_opacity_max: int = 220
+    line_opacity_max: int = 40
 
     # Cluster (dendrogram) mode: strip width (s) -> leaf-slot units
-    cluster_width_scale: float = 0.02
+    cluster_width_scale: float = 0.35
 
     # Colour mode (toolbar): 'alignments' (per analyte), 'annotations'
     # (annotated vs not) or 'groups' (by EnsembleGroup)

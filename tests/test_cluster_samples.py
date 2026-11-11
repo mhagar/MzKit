@@ -8,8 +8,8 @@ from core.cli.cluster_analytes import NODE_DTYPE, AnalyteClustering
 from configparser import ConfigParser
 
 from core.cli.cluster_samples import (
-    LINEAGE, SampleClusterParams, cluster_samples, cluster_samples_by,
-    cluster_samples_by_ranks, ms2_groups, sample_cluster_params_from_config,
+    LINEAGE, METADATA, SampleClusterParams, cluster_samples, cluster_samples_by,
+    cluster_samples_by_ranks, metadata_ranks, ms2_groups, sample_cluster_params_from_config,
     sample_cluster_params_to_config,
 )
 from core.data_structs.alignment import AlignedAnalyte, EnsembleAlignment
@@ -122,6 +122,23 @@ def test_cluster_samples_by_dispatches():
     lineage = SampleClusterParams(method=LINEAGE)
     ranks = {'S1': ('Fam', 'GenA'), 'S2': ('Fam', 'GenB')}
     assert np.isclose(similarity(lineage, ranks=ranks), 0.5)
+
+
+def test_metadata_ranks_group_by_field():
+    metadata = {
+        'S1': {'mech': 'DNA'}, 'S2': {'mech': 'DNA'}, 'S3': {'mech': 'MAPK'},
+        'S4': {'mech': float('nan')}, 'S5': {'mech': None}, 'S6': {},
+    }
+    ranks = metadata_ranks(metadata, 'mech')
+    assert ranks == {'S1': ('DNA',), 'S2': ('DNA',), 'S3': ('MAPK',)}
+
+    alignment, names = _build({i: [0] for i in range(1, 7)})
+    result = cluster_samples_by(alignment, names, SampleClusterParams(method=METADATA), ranks)
+    at = {names[u]: i for i, u in enumerate(result.sample_uuids)}
+    sim = lambda a, b: result.similarity[at[a], at[b]]
+    assert sim('S1', 'S2') == 1.0
+    assert sim('S1', 'S3') == 0.0
+    assert sim('S4', 'S5') == 0.0   # no value: unrelated even to each other
 
 
 def test_sample_config_round_trip_omits_method():

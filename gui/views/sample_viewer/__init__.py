@@ -72,10 +72,12 @@ class SampleViewer(
     def __init__(
         self,
         data_source: 'SampleViewerDataSource',
+        config: Optional['ConfigParser'] = None,
     ):
         super().__init__()
         self.setupUi(self)
-        self.config = load_config()
+        # Share MainController's config, so edits made here reach its runs
+        self.config = config if config is not None else load_config()
         self.data_source = data_source
 
         # Subscribe to samples being *updated* in the data registry

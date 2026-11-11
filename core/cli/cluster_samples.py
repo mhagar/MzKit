@@ -40,12 +40,16 @@ SAMPLE_CLUSTERING_SECTION = "sample_clustering"
 
 COMPOSITION = 'composition'
 LINEAGE = 'lineage'
+METADATA = 'metadata'
+# Methods clustering by per-sample ranks (`cluster_samples_by_ranks`)
+RANKED = (LINEAGE, METADATA)
 
 
 class SampleClusterParams(NamedTuple):
     """
-    method: COMPOSITION (Jaccard of analyte presence) or LINEAGE (an
-        imported hierarchy, see `cluster_samples_by_ranks`).
+    method: COMPOSITION (Jaccard of analyte presence), LINEAGE (an
+        imported hierarchy, see `cluster_samples_by_ranks`) or METADATA
+        (one sample metadata field as a single rank, `metadata_ranks`).
     ms2_grouping: (composition) pool analytes into MS2 groups first, given
         an analyte clustering (`ms2_groups`).
     ms2_threshold: the similarity those groups are cut at.
@@ -61,7 +65,7 @@ class SampleClusterParams(NamedTuple):
 def sample_cluster_params_from_config(config: 'ConfigParser') -> SampleClusterParams:
     """
     The ``[sample_clustering]`` section, with defaults for missing keys.
-    `method` isn't stored: a lineage lives only for a session.
+    `method` isn't stored: ranks live only for a session.
     """
     s = SAMPLE_CLUSTERING_SECTION
     d = SampleClusterParams()
@@ -131,9 +135,9 @@ def cluster_samples_by(
     Cluster samples as `params` says. LINEAGE needs `ranks`; MS2 grouping
     applies only when `analytes` is given (else plain Jaccard).
     """
-    if params.method == LINEAGE:
+    if params.method in RANKED:
         if ranks is None:
-            raise ValueError("Lineage clustering needs sample ranks")
+            raise ValueError(f"{params.method} clustering needs sample ranks")
         return cluster_samples_by_ranks(alignment, names, ranks)
     labels = (
         ms2_groups(analytes, params.ms2_threshold)
@@ -204,6 +208,20 @@ def cluster_samples_by_ranks(
                 shared += 1
             similarity[i, j] = similarity[j, i] = shared / depth
     return _cluster(uuids, similarity, names, linkage_method)
+
+
+def metadata_ranks(
+    metadata: dict[str, dict],
+    field: str,
+) -> dict[str, tuple[str, ...]]:
+    """
+    Sample name -> (value of `field`,), from sample name -> metadata.
+    Samples without a value (missing, None, NaN) are left out: unrelated to all.
+    """
+    return {
+        name: (str(md[field]),) for name, md in metadata.items()
+        if md.get(field) is not None and md[field] == md[field]  # NaN != NaN
+    }
 
 
 def _cluster(uuids, similarity, names, linkage_method) -> SampleClustering:

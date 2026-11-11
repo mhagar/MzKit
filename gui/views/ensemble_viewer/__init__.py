@@ -70,8 +70,8 @@ class EnsembleViewer(
         self.setupUi(self)
         self.data_source = data_source
 
-        # TODO: TEMPORARY. NEED TO REFACTOR WINDOW MGMT
-        self.config = load_config()
+        # Share MainController's config, so find-mfs edits here reach its auto runs
+        self.config = config if config is not None else load_config()
         self.tool_manager = ToolManager()
 
         self.ensemble: Optional['Ensemble'] = None
