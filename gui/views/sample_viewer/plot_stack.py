@@ -88,6 +88,9 @@ class SampleStackView(
         self.container_layout.setSpacing(0)
         self.setWidget(self.container_widget)
         self.setWidgetResizable(True)
+        # macOS overlay scrollbars stay hidden (plots eat the wheel); Fusion's are always drawn
+        self._vbar_style = QtWidgets.QStyleFactory.create('Fusion')
+        self.verticalScrollBar().setStyle(self._vbar_style)
 
         if model:
             self.setModel(model)

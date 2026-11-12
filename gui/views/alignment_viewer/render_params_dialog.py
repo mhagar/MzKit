@@ -36,6 +36,8 @@ class RenderParamsDialog(QtWidgets.QDialog):
 
         form = QtWidgets.QFormLayout()
         for f in fields(RenderParams):
+            if f.name not in _FIELD_SPECS:  # e.g. color_mode lives on the toolbar
+                continue
             label, lo, hi, decimals, step = _FIELD_SPECS[f.name]
             if f.type in (int, 'int'):
                 editor = QtWidgets.QSpinBox()
@@ -72,7 +74,7 @@ class RenderParamsDialog(QtWidgets.QDialog):
         self.sigParamsChanged.emit(self._params.copy())
 
     def _restore_defaults(self):
-        self._params = RenderParams()
+        self._params = RenderParams(color_mode=self._params.color_mode)
         for name, editor in self._editors.items():
             with QtCore.QSignalBlocker(editor):
                 editor.setValue(getattr(self._params, name))
